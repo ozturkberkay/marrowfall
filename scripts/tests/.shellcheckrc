@@ -1,0 +1,4 @@
+# Mock functions in tests are invoked indirectly via the sourced scripts under
+# test, so shellcheck cannot see the call sites. SC2317 fires on the same
+# pattern when shellcheck cannot trace function bodies through bashunit.
+disable=SC2329,SC2317

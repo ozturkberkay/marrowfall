@@ -1,0 +1,12 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.7
+reloadable = true
+
+[libraries]
+macos.debug = "res://../target/debug/librender.dylib"
+macos.release = "res://../target/release/librender.dylib"
+linux.debug.x86_64 = "res://../target/debug/librender.so"
+linux.release.x86_64 = "res://../target/release/librender.so"
+windows.debug.x86_64 = "res://../target/debug/render.dll"
+windows.release.x86_64 = "res://../target/release/render.dll"

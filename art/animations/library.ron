@@ -1,0 +1,30 @@
+// Every animation available to every character.
+//
+// Motion is bought or authored once and shared: the skeleton it drives, whether
+// it repeats, and where it came from all belong to the animation rather than to
+// whoever plays it. A character spec lists names only.
+//
+// `skeleton` is what makes sharing safe. Animations address bones by name, so a
+// motion only fits a character rigged onto the same skeleton — "humanoid" here
+// means this project's standard biped (24 bones, Mixamo naming, no fingers),
+// which is what Meshy's auto-rigger produces and what a hand-built rig must
+// match to be interchangeable.
+AnimationLibrary(
+    animations: {
+        "idle": Animation(
+            skeleton: "humanoid",
+            loops: true,
+            source: Meshy(action_id: 251),
+        ),
+        "run": Animation(
+            skeleton: "humanoid",
+            loops: true,
+            source: Meshy(action_id: 15),
+        ),
+        "walk_back": Animation(
+            skeleton: "humanoid",
+            loops: true,
+            source: Meshy(action_id: 544),
+        ),
+    },
+)

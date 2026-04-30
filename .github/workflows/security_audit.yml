@@ -1,0 +1,44 @@
+name: Security Audit
+
+on:
+  workflow_call:
+    inputs:
+      rust:
+        description: Audit Rust dependencies
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      rust:
+        type: boolean
+        default: true
+  schedule:
+    # Advisories are published continuously, so a clean PR is not proof the
+    # tree is still clean a week later.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  cargo_deny:
+    name: Cargo Deny
+    # `inputs` is empty on a schedule trigger, so the cron would
+    # otherwise skip every job.
+    if: inputs.rust || github.event_name == 'schedule'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      # Covers advisories, licences, banned crates and untrusted sources in
+      # one pass; configuration lives in `deny.toml`.
+      - name: Cargo Deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check all

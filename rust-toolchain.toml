@@ -1,0 +1,4 @@
+[toolchain]
+channel = "1.96.0"
+# llvm-tools-preview backs cargo-llvm-cov, so coverage runs on pinned stable.
+components = ["rustfmt", "clippy", "llvm-tools-preview"]

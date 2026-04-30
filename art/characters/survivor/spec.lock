@@ -1,0 +1,53 @@
+Lock(
+    stages: {
+        Concept: StageRecord(
+            fingerprint: "57766a7c49b5516c",
+            note: Some("4 views, 1 newly generated"),
+        ),
+        Model: StageRecord(
+            fingerprint: "473fbc1cdad77dc2",
+            tasks: [
+                Model(
+                    id: "01a0118b-4fcb-7930-a83c-a75da8e34036",
+                ),
+            ],
+            credits: Some(30),
+        ),
+        Rig: StageRecord(
+            fingerprint: "b44e4037801e7e35",
+            tasks: [
+                Rig(
+                    id: "01a0118e-289c-7277-ba3f-95658c5da954",
+                    height_meters: 1.7,
+                ),
+                Animation(
+                    id: "01a0118e-bc3f-79e0-9352-1c797575f74e",
+                    name: "idle",
+                    action_id: 251,
+                ),
+                Animation(
+                    id: "01a0118e-e77a-710d-b4fd-1cca40b3c411",
+                    name: "run",
+                    action_id: 15,
+                ),
+                Animation(
+                    id: "01a0118f-2765-78ca-a5a4-8437ec1333aa",
+                    name: "walk_back",
+                    action_id: 544,
+                ),
+            ],
+        ),
+        Download: StageRecord(
+            fingerprint: "b44e4037801e7e35",
+            note: Some("4 GLB(s)"),
+        ),
+        Bake: StageRecord(
+            fingerprint: "30dce4059f14f6d3",
+            note: Some("352 frames"),
+        ),
+        Pack: StageRecord(
+            fingerprint: "d7d365f9136e4b7d",
+            note: Some("3 atlases → project/assets/characters/survivor/character.ron"),
+        ),
+    },
+)

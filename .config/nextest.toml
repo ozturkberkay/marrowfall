@@ -1,0 +1,11 @@
+# A hung test must fail, not stall the run. The whole suite finishes in a
+# couple of seconds, so anything still going after 30s is stuck — a deadlock,
+# or a poll loop waiting on a real clock. Two periods, then it is killed.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+# CI has no terminal to interrupt, so report failures rather than stopping at
+# the first one.
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }
+fail-fast = false
