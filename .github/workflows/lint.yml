@@ -1,0 +1,158 @@
+name: Lint
+
+on:
+  workflow_call:
+    inputs:
+      shell:
+        description: Lint shell scripts
+        type: boolean
+        default: false
+      markdown:
+        description: Lint markdown files
+        type: boolean
+        default: false
+      python:
+        description: Lint Python (Blender) scripts
+        type: boolean
+        default: false
+      actions:
+        description: Lint and audit GitHub Actions workflows
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      shell:
+        type: boolean
+        default: true
+      markdown:
+        type: boolean
+        default: true
+      python:
+        type: boolean
+        default: true
+      actions:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  shell_lint:
+    name: Shell Lint
+    if: inputs.shell
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Shellcheck
+        shell: bash
+        run: |
+          shopt -s globstar
+          shellcheck -x -- **/scripts/**/*.sh
+
+  markdown_lint:
+    name: Markdown Lint
+    if: inputs.markdown
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      # Globs and ignores come from `.markdownlint-cli2.jsonc` (auto-discovered).
+      - name: Markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+
+  lychee:
+    name: Lychee
+    if: inputs.markdown
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Lychee
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2.9.0
+        with:
+          args: --config .lychee.toml --no-progress .
+
+  python_lint:
+    name: Python Lint
+    if: inputs.python
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Ruff format
+        run: uv run ruff format --check
+
+      - name: Ruff lint
+        run: uv run ruff check
+
+  actions_lint:
+    name: Actions Lint
+    if: inputs.actions
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      # Correctness: invalid keys, bad runner labels, broken expressions, and
+      # shellcheck over every `run:` block.
+      - name: Actionlint
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
+        with:
+          shellcheck: true
+
+  actions_audit:
+    name: Actions Audit
+    if: inputs.actions
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      # Security: unpinned actions, injection through untrusted inputs,
+      # over-broad permissions. Complements actionlint rather than repeating it.
+      - name: Zizmor
+        run: uvx zizmor --persona=regular --format=plain .

@@ -1,0 +1,18 @@
+// Single source of truth for markdownlint-cli2 globs/ignores; shared by
+// pre-commit and CI. Rules live in the sibling `.markdownlint.jsonc`,
+// auto-discovered by cli2.
+{
+  "globs": ["**/*.md"],
+  "ignores": [
+    ".github",
+    // Skill prose follows author/upstream conventions, not project lint rules.
+    ".agents/skills",
+    ".claude/skills",
+    // Canonical license text is byte-exact upstream; not subject to lint rules.
+    "LICENSE.md",
+    // Vendored third-party Godot addons keep their upstream README verbatim.
+    "project/addons",
+  ],
+  // Skip files matched by `.gitignore` (covers `node_modules/`, `target/`, etc.).
+  "gitignore": true,
+}

@@ -1,0 +1,7 @@
+# `cargo art …` runs the art pipeline (crates/xtask-art).
+#
+# This follows the convention used by rust-lang/cargo itself: automation lives
+# in an `xtask-*` workspace crate, reached through a semantically named alias
+# (cargo's own `xtask-build-man` crate is invoked as `cargo build-man`).
+[alias]
+art = "run --release --package xtask-art --"

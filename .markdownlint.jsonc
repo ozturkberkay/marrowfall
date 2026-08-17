@@ -1,0 +1,21 @@
+{
+  "MD007": {
+    "indent": 4
+  },
+  "MD013": {
+    "code_blocks": false,
+    "tables": false,
+    "headings": false
+  },
+  // "Philosophy" under Combat and under Death & Difficulty are different
+  // sections; only repeats under the *same* parent are a real problem.
+  "MD024": {
+    "siblings_only": true
+  },
+  "MD032": false,
+  "MD040": false,
+  "MD060": false,
+  "MD041": {
+    "front_matter_title": "^\\s*(title|name)\\s*[:=]"
+  }
+}

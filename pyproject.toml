@@ -1,0 +1,60 @@
+# Python exists in this repo for one reason: Blender is scripted in Python and
+# nothing else — every scripting flag its CLI offers is a Python one. So the
+# sprite bake runs inside Blender. Everything else is Rust. See tools/blender/.
+[project]
+name = "marrowfall-pipeline"
+version = "0.0.1"
+description = "Blender scripts for the Marrowfall art pipeline"
+# Blender 5.2 LTS bundles CPython 3.13. The bake runs inside that interpreter,
+# so this must match it: pydantic ships a compiled core, and a mismatched minor
+# version would not load.
+requires-python = ">=3.13,<3.14"
+dependencies = ["pydantic"]
+
+[dependency-groups]
+dev = [
+    # `bpy` only exists inside Blender, so type checking needs stubs.
+    "fake-bpy-module",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "ty",
+]
+
+[tool.uv]
+# Nothing is published, so no build backend is needed.
+package = false
+
+[tool.ruff]
+# Vendored Claude skills, not our code.
+extend-exclude = [".agents", ".claude"]
+
+[tool.pytest.ini_options]
+testpaths = ["tools/blender/tests"]
+# The bake is run by Blender as a loose script, not installed as a package, so
+# its directory goes on the path the same way Blender puts it there.
+pythonpath = ["tools/blender/src"]
+addopts = "--cov=framing --cov-report=term-missing --cov-fail-under=100"
+
+[tool.ty.src]
+include = ["tools/blender"]
+
+[tool.ty.environment]
+# The bake is a loose script, not an installed package, so `framing` resolves
+# from its own directory. Blender is given that path on PYTHONPATH, pytest via
+# its `pythonpath`, and ty here — three views of the same one path.
+extra-paths = ["tools/blender/src"]
+
+# `framing.py` and the tests are checked with every rule on. Only the modules
+# that touch Blender are relaxed, and only for the three rules the stubs get
+# wrong: they describe `bpy` as seen from *outside* Blender, where
+# `bpy.context.scene` and friends are unset and therefore typed `| None`.
+# Inside a running Blender they are always present.
+[[tool.ty.overrides]]
+include = ["tools/blender/src/bake_sprites.py", "tools/blender/src/strip_animation.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+invalid-assignment = "ignore"
+invalid-argument-type = "ignore"
+invalid-return-type = "ignore"
