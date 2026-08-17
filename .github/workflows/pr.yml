@@ -1,0 +1,127 @@
+name: PR
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      # Per-surface filter outputs, passed as `with:` inputs to reusables.
+      workflows_lint: ${{ steps.filter.outputs.workflows_lint }}
+      workflows_unit_test: ${{ steps.filter.outputs.workflows_unit_test }}
+      workflows_security_audit: ${{ steps.filter.outputs.workflows_security_audit }}
+      workflows_rust: ${{ steps.filter.outputs.workflows_rust }}
+      workflows_any: ${{ steps.filter.outputs.workflows_any }}
+      shell: ${{ steps.filter.outputs.shell }}
+      markdown: ${{ steps.filter.outputs.markdown }}
+      python: ${{ steps.filter.outputs.python }}
+      rust: ${{ steps.filter.outputs.rust }}
+      lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_any == 'true' }}
+      unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
+      security_audit_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_security_audit == 'true' }}
+      rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Per-surface inclusions
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # dorny/paths-filter evaluates each list entry as an independent
+          # picomatch pattern and OR's the results, so a standalone negation
+          # like '!**/*.md' fires as a positive match on every non-`.md` file.
+          # Embed the negation as an extglob suffix on the parent path instead
+          # so it constrains that one pattern's filename match.
+          filters: |
+            workflows_lint:
+              - '.github/workflows/lint.yml'
+            workflows_unit_test:
+              - '.github/workflows/unit_test.yml'
+            workflows_security_audit:
+              - '.github/workflows/security_audit.yml'
+            workflows_rust:
+              - '.github/workflows/rust.yml'
+            workflows_any:
+              - '.github/workflows/**'
+              - '.github/dependabot.yaml'
+            shell:
+              - '**/*.sh'
+              - 'scripts/**'
+            markdown:
+              - '**/*.md'
+            python:
+              - '**/*.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'clippy.toml'
+              - 'deny.toml'
+              - '.cargo/**'
+
+  lint:
+    needs: prepare
+    if: needs.prepare.outputs.lint_needed == 'true'
+    uses: ./.github/workflows/lint.yml
+    with:
+      shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
+      markdown: ${{ needs.prepare.outputs.markdown == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
+      python: ${{ needs.prepare.outputs.python == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
+      actions: ${{ needs.prepare.outputs.workflows_any == 'true' }}
+
+  unit_test:
+    needs: prepare
+    if: needs.prepare.outputs.unit_test_needed == 'true'
+    uses: ./.github/workflows/unit_test.yml
+    with:
+      shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
+
+  security_audit:
+    needs: prepare
+    if: needs.prepare.outputs.security_audit_needed == 'true'
+    uses: ./.github/workflows/security_audit.yml
+    with:
+      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_security_audit == 'true' }}
+
+  rust:
+    needs: prepare
+    if: needs.prepare.outputs.rust_needed == 'true'
+    uses: ./.github/workflows/rust.yml
+    with:
+      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
+
+  required:
+    name: Required
+    needs: [prepare, lint, unit_test, security_audit, rust]
+    if: always()
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - name: Fail if conditional jobs failed
+        if: |
+          needs.prepare.result != 'success' ||
+          (needs.prepare.outputs.lint_needed == 'true' && needs.lint.result != 'success') ||
+          (needs.prepare.outputs.unit_test_needed == 'true' && needs.unit_test.result != 'success') ||
+          (needs.prepare.outputs.security_audit_needed == 'true' && needs.security_audit.result != 'success') ||
+          (needs.prepare.outputs.rust_needed == 'true' && needs.rust.result != 'success')
+        run: exit 1

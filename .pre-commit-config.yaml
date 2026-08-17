@@ -1,0 +1,134 @@
+exclude: ^\.idea/
+default_language_version:
+  python: python3.14
+
+# Third-party code committed verbatim: the Godot addons and the Claude skills
+# (reached through both their real path and the `.agents` symlink). Style hooks
+# skip it so upstream stays byte-exact; the safety hooks still cover it.
+x-vendored: &vendored ^(project/addons/|\.claude/skills/|\.agents/skills/)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: check-added-large-files
+        # LFS-tracked art is exempt; this is here to catch a large file that
+        # slipped past .gitattributes.
+        args: ["--maxkb=1024"]
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-shebang-scripts-are-executable
+        exclude: *vendored
+      - id: pretty-format-json
+        args:
+          - --autofix
+          - --no-sort-keys
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-xml
+      - id: check-yaml
+      - id: destroyed-symlinks
+      - id: detect-private-key
+      - id: end-of-file-fixer
+        exclude: *vendored
+      - id: fix-byte-order-marker
+      - id: forbid-submodules
+      - id: mixed-line-ending
+      - id: no-commit-to-branch
+      - id: trailing-whitespace
+        exclude: *vendored
+        exclude_types: [markdown]
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: 996abf60411a8d954288ac9856aae7602b80cbda # v0.22.1
+    hooks:
+      - id: markdownlint-cli2
+        args: [--no-globs]
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 38980559e3a605691d6579f96222c30778e5a69e # 3.0.0
+    hooks:
+      - id: forbid-binary
+        # Art is committed on purpose and tracked by Git LFS, and the vendored
+        # addons ship their own icons; everywhere else a binary is an accident.
+        exclude: ^(art/animations/|art/brand/|art/characters/|project/assets/|project/addons/)
+      - id: script-must-have-extension
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: ad1b27d73581aa16cca06fc4a0761fc563ffe8e8 # v1.5.6
+    hooks:
+      - id: chmod
+        args: ["755"]
+        files: \.sh$
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95 # v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: ["-x"]
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+    hooks:
+      - id: actionlint-system
+  - repo: local
+    hooks:
+      # RUST
+      - id: cargo-fmt
+        name: Cargo Format
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: Cargo Clippy
+        entry: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-test
+        name: Cargo Test
+        entry: cargo nextest run --workspace
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-coverage
+        name: Cargo Coverage
+        entry: scripts/src/git_hooks/cargo_coverage.sh
+        language: script
+        types: [rust]
+        pass_filenames: false
+
+      # PYTHON
+      - id: ruff-format
+        name: Ruff Format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types: [python]
+      - id: ruff-check
+        name: Ruff Check
+        entry: uv run ruff check --force-exclude --fix
+        language: system
+        types: [python]
+
+      # BASH
+      - id: bashunit
+        name: Bash Unit Tests
+        entry: find scripts/tests -type f -name test_*.sh -exec bashunit {} +
+        language: system
+        files: \.sh$
+        pass_filenames: false
+
+      # GITHUB ACTIONS
+      - id: zizmor
+        name: Zizmor
+        entry: uvx zizmor --persona=regular --format=plain
+        language: system
+        files: ^\.github/(workflows|actions)/.*\.ya?ml$
+        pass_filenames: false
+        args: ["."]
+
+      # LINKS
+      - id: lychee
+        name: Lychee
+        entry: lychee --config .lychee.toml --no-progress
+        language: system
+        files: \.md$

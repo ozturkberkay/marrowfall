@@ -1,0 +1,123 @@
+name: Rust
+
+on:
+  workflow_call:
+    inputs:
+      rust:
+        description: Build, lint and test the Rust workspace
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      rust:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A failed CI build should not be a silent warning in a log nobody reads.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: Format and Lint
+    if: inputs.rust
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      # The toolchain version comes from `rust-toolchain.toml`, so CI and local
+      # builds cannot drift.
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+  test:
+    name: Test
+    if: inputs.rust
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+        with:
+          tool: cargo-nextest
+
+      # `crates/game` is the whole simulation and depends on nothing external,
+      # so this is the fast signal that matters most.
+      - name: Test simulation
+        run: cargo nextest run --package game
+
+      - name: Test workspace
+        run: cargo nextest run --workspace
+
+  coverage:
+    name: Coverage
+    if: inputs.rust
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Cache
+        uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
+
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      # Same threshold as the pre-commit hook, so CI cannot disagree with local.
+      - name: Coverage
+        run: ./scripts/src/git_hooks/cargo_coverage.sh
+
+  build:
+    name: Build
+    if: inputs.rust
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Proves the GDExtension library links. `crates/render` is the only crate
+      # that touches Godot, and gdext is pre-1.0, so a breaking change there
+      # shows up here rather than at runtime.
+      - name: Build
+        run: cargo build --workspace --locked

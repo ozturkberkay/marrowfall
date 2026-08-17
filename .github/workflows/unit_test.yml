@@ -1,0 +1,37 @@
+name: Unit Test
+
+on:
+  workflow_call:
+    inputs:
+      shell:
+        description: Run shell unit tests
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      shell:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  bashunit:
+    name: Bash Unit
+    if: inputs.shell
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Install bashunit
+        run: curl -s https://bashunit.typeddevs.com/install.sh | bash
+
+      - name: Run bashunit tests
+        run: find scripts/tests -type f -name 'test_*.sh' -exec ./lib/bashunit {} +

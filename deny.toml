@@ -1,0 +1,58 @@
+# cargo-deny: dependency policy for the workspace.
+#
+# The point of running this is gdext: it is pre-1.0, pulls a wide tree, and the
+# art pipeline adds an HTTP and image stack on top. A licence or advisory
+# problem should surface in CI, not at release.
+
+[graph]
+# Apple Silicon is the development machine and the first target. The rest are
+# here so a platform-gated advisory or licence is caught before that platform
+# ships; `aarch64-unknown-linux-gnu` is also what CI runs on.
+targets = [
+    { triple = "aarch64-apple-darwin" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "aarch64-pc-windows-msvc" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Our own crates carry no `license` field because they are never published.
+private = { ignore = true }
+# Permissive licences only. MPL-2.0 is included for gdext, which is
+# file-level copyleft and does not reach our own sources. CDLA-Permissive-2.0
+# covers webpki-roots, which is Mozilla's CA root list — data, not code.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# `crates/render` depends on `crates/game` by path, which has no version to
+# match on. Path deps between our own crates are not the supply-chain risk this
+# check is for.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

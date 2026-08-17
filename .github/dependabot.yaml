@@ -1,0 +1,35 @@
+version: 2
+
+updates:
+  # Pinned action SHAs go stale silently; nothing else in the repo bumps them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    # A release is at its most dangerous the day it lands. Waiting a week means
+    # a compromised or yanked version is usually withdrawn before a PR opens.
+    cooldown: { default-days: 7 }
+    groups:
+      workflow-actions:
+        patterns: ["*"]
+
+  # The Rust workspace: gdext is pre-1.0 and moves fast, so these want reviewing
+  # rather than merging blind — grouped separately from everything else.
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      godot:
+        patterns: ["godot*", "gdextension*"]
+      rust-dependencies:
+        patterns: ["*"]
+        exclude-patterns: ["godot*", "gdextension*"]
+
+  # The Blender scripts' dev tooling (ruff, ty, bpy stubs).
+  - package-ecosystem: uv
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    groups:
+      python-tooling:
+        patterns: ["*"]
