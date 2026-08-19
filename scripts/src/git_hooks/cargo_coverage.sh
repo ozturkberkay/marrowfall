@@ -5,17 +5,16 @@
 set -euo pipefail
 
 # `cargo install` puts binaries in ~/.cargo/bin. The rustup.rs installer adds
-# that to PATH via ~/.cargo/env, but Homebrew's rustup writes no such file — and
+# that to PATH via ~/.cargo/env, but Homebrew's rustup writes no such file, and
 # git hooks run with a trimmed environment either way, so add it directly.
 export PATH="${CARGO_HOME:-${HOME}/.cargo}/bin:${PATH}"
 
 REQUIRED_COVERAGE=96
 
-# What is left uncovered is 16 statements across the workspace, and each is
-# either an OS call failing (a write returning Err) or a feature that does not
-# exist yet (`Sim::snapshot` mapping entities, when nothing can spawn one).
-# Reaching them needs a fake filesystem, or production API added purely to be
-# tested. Raise this number when the game grows, not by faking either.
+# What is left uncovered is almost all OS calls failing (a write returning
+# Err). Reaching those needs a fake filesystem, or production API added purely
+# to be tested. `crates/game` is at 100% and should stay there. Raise this
+# number when the game grows, not by faking either.
 #
 # Two files cannot be reached from a plain test binary:
 #
@@ -43,8 +42,12 @@ done
 # Instrumented artifacts live in their own target directory anyway, so there is
 # nothing to mix them up with.
 #
+# The catch: moving or deleting a source file leaves its stale object behind,
+# and it reappears in the report at 0%, dragging the total under the gate. When
+# that happens, `cargo llvm-cov clean --workspace` once. It costs seconds.
+#
 # `llvm-tools-preview` comes from rust-toolchain.toml, so the pinned stable
-# toolchain is enough — no nightly needed.
+# toolchain is enough, no nightly needed.
 cargo llvm-cov --no-clean nextest \
   --workspace \
   --lib --test unit \

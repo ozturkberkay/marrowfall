@@ -127,6 +127,7 @@ fn an_animation_describes_the_motion_and_nothing_about_a_character() {
     let animation = Animation {
         skeleton: HUMANOID.to_owned(),
         loops: true,
+        fps: 12,
         source: MotionSource::Meshy { action_id: 251 },
     };
     assert_eq!(animation.source, MotionSource::Meshy { action_id: 251 });
@@ -158,6 +159,7 @@ fn an_animation_for_another_skeleton_is_refused() {
         Animation {
             skeleton: "insectoid".to_owned(),
             loops: true,
+            fps: 12,
             source: MotionSource::Authored,
         },
     );
@@ -179,6 +181,7 @@ fn animations_can_be_listed_per_skeleton() {
         Animation {
             skeleton: "insectoid".to_owned(),
             loops: true,
+            fps: 12,
             source: MotionSource::Authored,
         },
     );

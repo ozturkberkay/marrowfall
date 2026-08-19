@@ -1,7 +1,7 @@
 """Pure geometry and scheduling for the sprite bake.
 
 Everything here is deliberately free of `bpy`. Blender's API only exists inside
-Blender, so anything importing it cannot be unit tested — keeping the maths in
+Blender, so anything importing it cannot be unit tested, keeping the maths in
 its own module is what makes the parts that have historically broken (camera
 framing, frame sampling, the forearm roll's mirror) testable at all.
 
@@ -45,10 +45,19 @@ class BakeSettings(Frozen):
     """Validated bake parameters, straight off the command line."""
 
     directions: int = 8
-    fps: int = Field(default=12, ge=1, le=60)
+    # Sprite rate per animation name. Rates live in the animation library
+    # because an idle and a run need very different ones.
+    fps: dict[str, int] = Field(default_factory=dict)
     size: int = Field(default=256, ge=16)
     trim_start: float = Field(default=0.0, ge=0.0, lt=1.0)
     forearm_roll: float = 0.0
+
+    @model_validator(mode="after")
+    def every_rate_must_be_sane(self) -> "BakeSettings":
+        for name, rate in self.fps.items():
+            if not 1 <= rate <= 60:
+                raise ValueError(f"{name} fps must be in 1..=60, got {rate}")
+        return self
 
     @model_validator(mode="after")
     def directions_must_be_a_known_ring(self) -> "BakeSettings":
@@ -96,7 +105,7 @@ class Framing(Frozen):
     lo_z: float
     hi_z: float
     radius: float = Field(ge=0.0)
-    """Radius swept about `axis` — what must fit in every facing."""
+    """Radius swept about `axis`, what must fit in every facing."""
 
     @model_validator(mode="after")
     def span_must_be_positive(self) -> "Framing":
@@ -122,7 +131,7 @@ class Framing(Frozen):
 
         A camera tilted by `elevation` projects both the subject's height and
         its depth onto the vertical axis of the image, so the vertical span
-        needed is `height*cos(e) + depth*sin(e)` — not the height alone. Sizing
+        needed is `height*cos(e) + depth*sin(e)`, not the height alone. Sizing
         from height alone is what let extended poses clip against the top and
         bottom edges.
         """
@@ -181,7 +190,7 @@ def direction_rotation(index: int, count: int) -> float:
 
     Index 0 is unrotated, which is the character facing the camera: Meshy
     exports him facing -Y and the camera sits there. Verified by rendering the
-    ring, not derived — the geometry is too close to call either way.
+    ring, not derived, the geometry is too close to call either way.
     """
     return -(2.0 * math.pi / count) * index
 

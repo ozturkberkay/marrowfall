@@ -93,7 +93,6 @@ pub fn a_spec(name: &str) -> CharacterSpec {
             directions: 8,
             render_size: 256,
             sprite_height: 160,
-            fps: 12,
             forearm_roll: 0.0,
             trim_start: 0.0,
         },

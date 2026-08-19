@@ -1,9 +1,9 @@
 //! The character spec: the hand-authored source of truth for one character.
 //! Everything the pipeline does derives from it.
 //!
-//! - **creative** — [`Subject::description`]
-//! - **structural** — [`Subject::kind`], the skeleton, the animation list
-//! - **locked defaults** — remesh, texture and bake settings
+//! - **creative**, [`Subject::description`]
+//! - **structural**, [`Subject::kind`], the skeleton, the animation list
+//! - **locked defaults**, remesh, texture and bake settings
 //!
 //! Machine state lives in a separate lock file, so this stays diffable.
 
@@ -65,7 +65,7 @@ pub enum CharacterType {
     /// Four legs. Generated and textured normally, but Meshy's rigger targets
     /// bipeds, so these ship as static sprites until hand-rigged.
     Quadruped,
-    /// Anything else — floating, amorphous, many-limbed.
+    /// Anything else, floating, amorphous, many-limbed.
     Other,
 }
 
@@ -81,7 +81,7 @@ impl CharacterType {
                 "A-pose: arms straight, angled 40 degrees DOWN and OUT from the torso, \
                  fully separated from the body with a clear gap of empty background \
                  between each arm and the ribcage. Forearms in NEUTRAL rotation: palms \
-                 face INWARD toward the thighs, thumbs pointing FORWARD — not \
+                 face INWARD toward the thighs, thumbs pointing FORWARD, not \
                  palms-forward and not palms-down. Fingers straight, slightly apart, not \
                  touching the legs. Legs straight, feet shoulder-width apart with a clear \
                  gap between them. Head level, facing dead front. Perfectly symmetrical."
@@ -151,8 +151,6 @@ pub struct Bake {
     pub sprite_height: u32,
     /// Sprite frames sampled per second. Counts follow from this and each
     /// animation's duration, so every one plays at its authored speed from a
-    /// single rate.
-    pub fps: u32,
     /// Degrees of forearm roll correction, for models whose bind pose has
     /// supinated (palms-forward) arms.
     pub forearm_roll: f32,
@@ -204,7 +202,6 @@ impl CharacterSpec {
                 directions: 8,
                 render_size: 256,
                 sprite_height: 160,
-                fps: 12,
                 forearm_roll: 0.0,
                 trim_start: 0.0,
             },
@@ -241,7 +238,7 @@ impl CharacterSpec {
         );
         anyhow::ensure!(
             !self.subject.description.starts_with("TODO"),
-            "spec still has the placeholder description — describe the character first"
+            "spec still has the placeholder description, describe the character first"
         );
         anyhow::ensure!(
             self.subject.height_meters > 0.0,
@@ -282,17 +279,11 @@ impl CharacterSpec {
             anyhow::ensure!(
                 self.animations.is_empty(),
                 "Meshy's auto-rigger only supports bipedal humanoids, so a {:?} \
-                 character cannot have animations — remove them and it will ship \
+                 character cannot have animations, remove them and it will ship \
                  as a static sprite",
                 self.subject.kind
             );
         }
-
-        anyhow::ensure!(
-            (1..=60).contains(&self.bake.fps),
-            "fps must be in 1..=60, got {}",
-            self.bake.fps
-        );
 
         // Names are checked here; that they exist is checked against the
         // library, which is where the useful error can name the alternatives.

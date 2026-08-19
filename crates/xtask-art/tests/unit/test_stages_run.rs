@@ -636,6 +636,6 @@ async fn a_downloaded_animation_is_stripped_but_the_character_is_not() {
     );
     assert!(
         !stripped.contains("model.glb"),
-        "the character keeps its mesh — it is what gets rendered: {stripped:?}"
+        "the character keeps its mesh, it is what gets rendered: {stripped:?}"
     );
 }

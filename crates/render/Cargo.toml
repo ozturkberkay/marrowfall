@@ -10,13 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 game.workspace = true
+host.workspace = true
 godot.workspace = true
-crossbeam-channel.workspace = true
-triple_buffer.workspace = true
 
 [lints]
 workspace = true
-
-[[test]]
-name = "unit"
-path = "tests/unit/mod.rs"

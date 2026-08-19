@@ -107,7 +107,7 @@ fn all_clips_of_a_character_share_one_scale() {
     let (_, run_layout) = pack_animation(&run, &["s"], "run.png".into(), 12, true, &scale).unwrap();
 
     // The idle is 30px of content and the run 50px, so at one shared
-    // scale the run's cell must be proportionally taller — never equal,
+    // scale the run's cell must be proportionally taller, never equal,
     // which would mean one of them was squashed to fit.
     let ratio = f64::from(run_layout.cell_height) / f64::from(idle_layout.cell_height);
     assert!(
@@ -170,6 +170,8 @@ fn scale_is_keyed_to_the_first_clip_not_the_union() {
 /// The other alignment bug: per-frame cropping makes the sprite jitter.
 #[test]
 fn every_frame_shares_one_crop_so_the_sprite_cannot_jitter() {
+    // Two frames whose content ends on the same baseline but starts at
+    // different heights, which is what a swinging limb looks like.
     let frames = vec![
         frame(
             "s",
@@ -193,18 +195,26 @@ fn every_frame_shares_one_crop_so_the_sprite_cannot_jitter() {
         ),
     ];
     let scale_spec = character_scale([frames.as_slice()], 50).unwrap();
-    let (atlas, layout) =
+    let (_, layout) =
         pack_animation(&frames, &["s"], "c.png".into(), 12, true, &scale_spec).unwrap();
 
     assert_eq!(layout.frames, 2);
-    let bottom = layout.cell_height - 1;
-    let opaque_in = |cell: u32| {
-        (0..layout.cell_width)
-            .any(|x| atlas.get_pixel(cell * layout.cell_width + x, bottom).0[3] > 0)
-    };
+    // Trimming moves pixels in the atlas but never in the cell: both frames
+    // still reach the same baseline, so the sprite cannot bob between frames.
+    let baseline: Vec<u32> = layout.rects.iter().map(|r| r.off_y + r.h).collect();
+    assert_eq!(
+        baseline[0], baseline[1],
+        "frames disagree about where the ground is: {baseline:?}"
+    );
+    assert_eq!(
+        baseline[0], layout.cell_height,
+        "the shared cell should end at the baseline"
+    );
+    // The taller frame is trimmed less than the shorter one.
     assert!(
-        opaque_in(0) && opaque_in(1),
-        "both frames touch the baseline"
+        layout.rects[0].h > layout.rects[1].h,
+        "trimming should track content, got {:?}",
+        layout.rects
     );
 }
 
@@ -262,8 +272,22 @@ fn atlas_has_one_row_per_direction() {
     let (atlas, layout) =
         pack_animation(&frames, directions, "c.png".into(), 12, true, &scale_spec).unwrap();
     assert_eq!(layout.frames, 3);
-    assert_eq!(atlas.width(), layout.cell_width * 3);
-    assert_eq!(atlas.height(), layout.cell_height * 2);
+    assert_eq!(layout.rects.len(), 6, "one rect per direction per frame");
+    for rect in &layout.rects {
+        assert!(
+            rect.x + rect.w <= atlas.width() && rect.y + rect.h <= atlas.height(),
+            "rect {rect:?} escapes the atlas"
+        );
+        assert!(
+            rect.off_x + rect.w <= layout.cell_width && rect.off_y + rect.h <= layout.cell_height,
+            "rect {rect:?} escapes its cell, so the anchor would not line up"
+        );
+    }
+    // Block compressed textures are stored in 4x4 blocks. Godot pads to that
+    // grid but keeps computing UVs from the unpadded size, so a misaligned
+    // atlas samples progressively sideways.
+    assert_eq!(atlas.width() % 4, 0, "atlas width must be block aligned");
+    assert_eq!(atlas.height() % 4, 0, "atlas height must be block aligned");
 }
 
 #[test]
@@ -396,7 +420,7 @@ fn empty_clip_is_rejected() {
 }
 
 /// A full direction ring of frames whose content sits at an exact position on
-/// the canvas — not re-centred, so alignment failures can be provoked.
+/// the canvas, not re-centred, so alignment failures can be provoked.
 fn frames_at(x: u32, y: u32, width: u32, height: u32) -> Vec<Frame> {
     direction_names(8)
         .unwrap()

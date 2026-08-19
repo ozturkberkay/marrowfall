@@ -1,0 +1,5 @@
+# Determinism is this crate's headline invariant, and its dependency list
+# already makes OS randomness and I/O impossible. Reading a clock is the one
+# way left to break replays, so name it. `host` legitimately needs `Instant`
+# and has no such file.
+disallowed-types = ["std::time::Instant", "std::time::SystemTime"]
