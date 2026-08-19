@@ -36,9 +36,16 @@ jobs:
           # where a later step or a compromised action could read it.
           persist-credentials: false
 
+      # EmbarkStudios/cargo-deny-action is a Docker action whose image hardcodes
+      # the x86_64 binary, so it cannot execute on an arm runner. Installing the
+      # tool picks the right architecture, and matches how the Rust workflow
+      # installs nextest and llvm-cov.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+        with:
+          tool: cargo-deny
+
       # Covers advisories, licences, banned crates and untrusted sources in
       # one pass; configuration lives in `deny.toml`.
       - name: Cargo Deny
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-        with:
-          command: check all
+        run: cargo deny --all-features check all

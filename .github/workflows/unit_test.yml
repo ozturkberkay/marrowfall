@@ -30,8 +30,11 @@ jobs:
           # where a later step or a compromised action could read it.
           persist-credentials: false
 
+      # The old bashunit.typeddevs.com host now redirects here, so `-L` to
+      # follow it and `-f` so an HTTP error page can never reach bash as a
+      # script. The installer checks the download against the release checksum.
       - name: Install bashunit
-        run: curl -s https://bashunit.typeddevs.com/install.sh | bash
+        run: curl -fsSL https://bashunit.com/install.sh | bash
 
       - name: Run bashunit tests
         run: find scripts/tests -type f -name 'test_*.sh' -exec ./lib/bashunit {} +
