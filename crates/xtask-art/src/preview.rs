@@ -127,14 +127,24 @@ pub fn sprites(assets: &CharacterAssets, paths: &Paths) -> Result<()> {
             BACKDROP,
         );
         for direction in 0..directions {
-            let cell = imageops::crop_imm(
-                &atlas,
-                column * animation.cell_width,
-                direction * animation.cell_height,
-                animation.cell_width,
-                animation.cell_height,
-            )
-            .to_image();
+            // The atlas is shelf-packed and every frame trimmed to its own
+            // content, so a row-and-column guess lands on whatever happens to
+            // sit there. The recorded rect is where the frame actually is, and
+            // `off_x`/`off_y` put those pixels back where the cell wants them.
+            let Some(rect) = animation
+                .rects
+                .get((direction * animation.frames + column) as usize)
+            else {
+                continue;
+            };
+            let trimmed = imageops::crop_imm(&atlas, rect.x, rect.y, rect.w, rect.h).to_image();
+            let mut cell = RgbaImage::new(animation.cell_width, animation.cell_height);
+            imageops::replace(
+                &mut cell,
+                &trimmed,
+                i64::from(rect.off_x),
+                i64::from(rect.off_y),
+            );
             imageops::overlay(
                 &mut row,
                 &cell,
