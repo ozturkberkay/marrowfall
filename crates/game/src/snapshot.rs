@@ -28,13 +28,12 @@ use glam::Vec2;
 
 use crate::components::Facing;
 
-/// What a character is doing, which is simulation state rather than a clip
-/// filename: it is correct at a wall, where a held key produces no motion at
-/// all, and a frontend reading displacement instead would show idle.
+/// What a character does. Simulation state, not a clip filename, so it is still
+/// correct at a wall: a held key there produces no motion, and a frontend that
+/// reads displacement shows idle.
 ///
-/// Two variants because two exist. Dodge, stagger and airborne extend this,
-/// and the first state not derivable from a velocity turns it into a
-/// component.
+/// Two variants, because two exist. Dodge, stagger and airborne extend this.
+/// The first state that a velocity cannot answer turns this into a component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Locomotion {
     Idle,
@@ -54,7 +53,7 @@ pub struct EntityView {
     /// Which way it looks. Kept across a stop, so it never snaps back to a
     /// default when an entity stands still.
     pub facing: Facing,
-    /// What it is doing. Which clip that picks is the frontend's decision.
+    /// What it does. Which clip that picks is the frontend's decision.
     pub locomotion: Locomotion,
 }
 
@@ -80,8 +79,8 @@ pub struct RenderSnapshot {
     /// Simulation time in seconds at that tick.
     pub time: f64,
     pub entities: Vec<EntityView>,
-    /// [`EntityView::id`] of the entity held input drives, so a frontend can
-    /// aim a camera without guessing which one that is. Only the simulation
-    /// knows.
+    /// [`EntityView::id`] of the entity that held input drives. Only the
+    /// simulation knows which one that is, and a frontend needs it to aim a
+    /// camera.
     pub player: Option<u64>,
 }

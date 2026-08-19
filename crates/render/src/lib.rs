@@ -7,8 +7,8 @@
 
 mod bridge;
 
-// Public so the separate unit-test crate can reach them; both are engine-free
-// pure logic, which is what keeps `bridge.rs` the only unmeasured file.
+// Public so the separate unit-test crate can reach them. Both hold pure logic
+// with no engine in it, which leaves `bridge.rs` the only unmeasured file.
 pub mod draw;
 pub mod iso;
 

@@ -78,7 +78,7 @@ fn a_frame_draws_where_its_pixels_sat_inside_the_cell() {
         Rect2::new(Vector2::new(40.0, 12.0), Vector2::new(4.0, 8.0))
     );
     // The cell's top left sits at minus the anchor, and the frame sits at its
-    // own offset inside that cell, so the anchor lands on the node origin.
+    // own offset inside that cell. So the anchor lands on the node origin.
     assert_eq!(placed.offset, Vector2::new(3.0 - 5.0, 7.0 - 19.0));
 }
 
@@ -109,8 +109,8 @@ fn a_snapshot_that_changed_nothing_asks_for_nothing() {
 }
 
 /// hecs packs a generation into the id, so a recycled entity slot comes back as
-/// a different `u64`. It must free the old node and make a new one rather than
-/// quietly inherit one.
+/// a different `u64`. The frontend must free the old node and make a new one,
+/// not inherit the old one.
 #[test]
 fn a_recycled_slot_frees_the_old_node_and_makes_a_new_one() {
     let second_generation = (1 << 32) | 7;

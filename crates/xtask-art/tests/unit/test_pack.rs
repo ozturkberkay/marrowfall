@@ -399,8 +399,8 @@ fn mismatched_frame_counts_between_directions_are_rejected() {
 fn direction_names_match_the_bake_order() {
     // Clockwise from south, because `direction_rotation` in
     // tools/blender/src/framing.py turns the model by a negative Z angle per
-    // index. Pin every entry: mirroring this ring swaps east with west while
-    // leaving south and north correct, so half the rows look fine.
+    // index. Every entry is pinned: a mirrored ring swaps east with west and
+    // leaves south and north correct, so half the rows still look right.
     assert_eq!(
         direction_names(8).unwrap(),
         ["s", "sw", "w", "nw", "n", "ne", "e", "se"].as_slice()

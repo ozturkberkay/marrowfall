@@ -1,14 +1,14 @@
 use sprites::{AnimationAtlas, Error, FrameRect};
 
-/// The committed manifest the game loads. Embedded rather than read, so the
-/// contract between the pipeline and the game is checked at build time.
+/// The committed manifest the game loads. Embedded and not read, so the build
+/// checks the contract between the pipeline and the game.
 const SURVIVOR: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../project/assets/characters/survivor/character.ron"
 ));
 
 /// A two-direction, two-frame manifest. Small enough to break one field at a
-/// time, which is how each invariant is pinned separately.
+/// time, which is how each invariant gets its own case.
 const VALID: &str = r#"CharacterAssets(
     name: "dummy",
     animations: {
@@ -69,7 +69,7 @@ fn text_that_is_not_a_manifest_is_a_syntax_error() {
 }
 
 /// Each invariant on its own, because [`sprites::frame_at`] and friends are
-/// only total once every one of them holds.
+/// total only when every one of them holds.
 #[test]
 fn each_invariant_is_rejected_on_its_own() {
     let cases = [
@@ -107,8 +107,8 @@ fn an_invalid_manifest_says_which_animation_is_wrong() {
     assert!(error.to_string().contains("idle"), "{error}");
 }
 
-/// The contract test between the art pipeline and the game: these numbers come
-/// out of `cargo art` and the frontend cannot ask for a clip that is not here.
+/// The contract test between the art pipeline and the game. These numbers come
+/// out of `cargo art`, and the frontend cannot ask for a clip that is not here.
 #[test]
 fn the_committed_survivor_manifest_is_valid() {
     let assets = sprites::parse(SURVIVOR).unwrap();
@@ -132,10 +132,10 @@ fn the_committed_survivor_manifest_is_valid() {
     }
 }
 
-/// Rows follow the bake's clockwise ring, so `Facing`'s variant order no longer
-/// matches row position and the lookup must go through the name. Pinned against
-/// the shipped manifest, because a mirrored ring leaves south and north correct
-/// and only shows up when a character walks sideways.
+/// Rows follow the bake's clockwise ring. `Facing`'s variant order no longer
+/// matches row position, so the lookup goes through the name. Pinned against
+/// the shipped manifest: a mirrored ring leaves south and north correct, and
+/// only shows up when a character walks sideways.
 #[test]
 fn the_survivors_atlas_rows_run_clockwise_from_south() {
     let atlas = atlas_of(SURVIVOR, "run");
@@ -147,8 +147,8 @@ fn the_survivors_atlas_rows_run_clockwise_from_south() {
     }
 }
 
-/// How a four-direction atlas answers "se": the caller leaves the sprite on
-/// the frame it had rather than guessing a row.
+/// How a four-direction atlas answers "se". The caller then leaves the sprite
+/// on the frame it had, instead of guessing a row.
 #[test]
 fn a_direction_the_atlas_lacks_has_no_row() {
     let atlas = only_atlas(VALID);
@@ -160,8 +160,8 @@ fn a_direction_the_atlas_lacks_has_no_row() {
 fn a_clip_starts_on_its_first_frame() {
     let atlas = only_atlas(VALID);
     assert_eq!(sprites::frame_at(&atlas, 0.0), 0);
-    // The seed snapshot published before any tick has run stamps time 0, and
-    // the frontend walks back one tick from whatever it is given.
+    // The seed snapshot from before the first tick stamps time 0, and the
+    // frontend walks back one tick from whatever it gets.
     assert_eq!(sprites::frame_at(&atlas, -1.0), 0);
 }
 
@@ -182,7 +182,7 @@ fn a_clip_that_does_not_loop_holds_its_last_frame() {
 }
 
 /// `frames: 0` cannot reach here through [`sprites::parse`], but the fields are
-/// public, so the guard is what keeps the modulo and the subtraction safe.
+/// public. The guard is what keeps the modulo and the subtraction safe.
 #[test]
 fn a_frameless_atlas_answers_zero_instead_of_panicking() {
     let mut atlas = only_atlas(VALID);

@@ -3,31 +3,30 @@
 //! consumes one snapshot per rendered frame. All Godot access stays on the
 //! main thread.
 //!
-//! The tile-to-screen mapping lives in [`crate::iso`], and what to draw per
-//! frame in [`crate::draw`]; both are pure, so this file is left with property
-//! writes and node lifecycle, which is also why it is the one file no test
-//! reaches.
+//! [`crate::iso`] holds the tile-to-screen mapping, and [`crate::draw`] picks
+//! what to draw each frame. Both are pure, so this file keeps only property
+//! writes and node lifecycle. That is also why no test reaches it.
 //!
-//! One `Sprite2D` per entity, with `centered = false` and `offset` carrying the
-//! frame's own offset minus the animation's anchor, so the node origin is the
-//! feet: the transform point and the y-sort key then coincide. The default
-//! `centered = true` would sort by the sprite centre, which is head height and
-//! differs per animation.
+//! Each entity gets one `Sprite2D` with `centered = false`. Its `offset` is the
+//! frame's own offset minus the animation's anchor, which puts the node origin
+//! on the feet. The transform point and the y-sort key are then the same point.
+//! With the default `centered = true` the sort key is the sprite centre, which
+//! is head height and differs per animation.
 //!
-//! `z_index` stays 0 everywhere, and the reason is the opposite of "Godot
-//! ignores it inside a y-sorted parent": it *overrides* the sort. Items are
-//! y-sorted and then bucketed by `z_index`, and the buckets draw in z order, so
-//! a stray `z_index` silently defeats sorting.
+//! `z_index` stays 0 everywhere. Inside a y-sorted parent Godot does not ignore
+//! `z_index`, it *overrides* the sort: items sort by y, then split into
+//! `z_index` buckets, and the buckets draw in z order. One stray `z_index`
+//! therefore defeats the sort.
 //!
-//! Sorting is settled for now: `Ground` is unsorted and `Entities` is a
-//! y-sorted sibling listed after it, so entities land on top of flat ground,
-//! which occludes nothing. Interleaving a character with terrain needs a
-//! `y_sort_origin` per tile in the tileset, and waits for the first wall.
+//! `Ground` is unsorted, and `Entities` is a y-sorted sibling listed after it.
+//! So entities draw on top of flat ground, which occludes nothing. To
+//! interleave a character with terrain, the tileset needs a `y_sort_origin` per
+//! tile. That waits for the first wall.
 //!
-//! Atlas bleeding is settled too, three times over: the pack stage writes a
-//! two-pixel gutter between frames with mipmaps off,
-//! `TileSetAtlasSource.use_texture_padding` covers the ground layer, and
-//! `region_filter_clip_enabled` clips sampling to the region.
+//! Three things stop atlas bleeding. The pack stage writes a two-pixel gutter
+//! between frames, with mipmaps off. `TileSetAtlasSource.use_texture_padding`
+//! covers the ground layer. `region_filter_clip_enabled` clips sampling to the
+//! region.
 //!
 //! A `host::Frame` borrows the handle for as long as it lives, so no method on
 //! `GameBridge` can be called while one is alive. Copy out what is needed
@@ -49,7 +48,7 @@ use crate::iso;
 /// Fixed development seed; replaced by the new-game/save flow later.
 const DEV_SEED: u64 = 0x4D61_7272_6F77; // "Marrow"
 
-/// Every entity draws the survivor, because he is the only character there is.
+/// The only character there is, so every entity draws him.
 const CHARACTER_DIR: &str = "res://assets/characters/survivor";
 
 #[derive(GodotClass)]
@@ -59,21 +58,21 @@ pub struct GameBridge {
     /// TileMapLayer the sim's ground terrain is painted into.
     #[init(node = "../Ground")]
     ground: OnReady<Gd<TileMapLayer>>,
-    /// Y-sorted parent every entity's sprite hangs off. A field rather than a
-    /// `base()` lookup, because `base_mut()` borrows all of `self`.
+    /// Y-sorted parent of every entity sprite. A field and not a `base()`
+    /// lookup, because `base_mut()` borrows all of `self`.
     #[init(node = "../Entities")]
     entities: OnReady<Gd<Node2D>>,
-    /// Camera pinned to the controlled entity's drawn position.
+    /// Camera pinned to the player's drawn position.
     #[init(node = "../Camera2D")]
     camera: OnReady<Gd<Camera2D>>,
-    /// Whether the window has keyboard focus. Starts `true` because it
-    /// already does when this node enters the tree, and waiting for a focus
-    /// notification that may never come would leave WASD dead.
+    /// Whether the window has keyboard focus. It starts `true` because the
+    /// window already has focus when this node enters the tree. No focus
+    /// notification arrives in that case, and waiting for one leaves WASD dead.
     #[init(val = true)]
     focused: bool,
     sim: Option<SimHandle>,
-    /// Atlas layout for every clip, or `None` when it could not be loaded, in
-    /// which case nothing is drawn and the simulation still runs.
+    /// Atlas layout for every clip, or `None` when the load failed. A failed
+    /// load draws nothing and leaves the simulation running.
     assets: Option<CharacterAssets>,
     textures: HashMap<Clip, Gd<Texture2D>>,
     sprites: HashMap<u64, Gd<Sprite2D>>,
@@ -112,8 +111,8 @@ impl INode for GameBridge {
         let held = iso::screen_dir_to_tile(held_direction(self.focused));
         sim.set_input(Input::new(held));
 
-        // Copy the tick out before touching anything else on `self`: the
-        // methods below need all of it, and a `Frame` keeps the handle borrowed.
+        // Copy the snapshot out first: the methods below need all of `self`,
+        // and a `Frame` keeps the handle borrowed.
         let (snapshot, alpha) = {
             let frame = sim.read();
             (frame.snapshot.clone(), frame.alpha)
@@ -128,10 +127,10 @@ impl INode for GameBridge {
         self.follow_player(&snapshot, alpha);
     }
 
-    /// The OS does not always deliver a key release when the window loses
-    /// focus, so a held key would stay held forever. Gating the sample is the
-    /// fix; writing a still input from the handler alone would be overwritten
-    /// by the same frame's sampling.
+    /// The OS does not always send a key release when the window loses focus,
+    /// so a held key stays held forever. The fix is to gate the sample on
+    /// `focused`. A still input written from here alone loses to the sample
+    /// taken in the same frame.
     fn on_notification(&mut self, what: NodeNotification) {
         match what {
             NodeNotification::WM_WINDOW_FOCUS_IN => self.focused = true,
@@ -161,8 +160,8 @@ impl GameBridge {
 
     /// Loads the manifest and one atlas texture per clip, all or nothing.
     ///
-    /// A missing or invalid file is reported once and then draws nothing; the
-    /// simulation is unaffected, the same way a dead sim thread is reported.
+    /// A missing or invalid file is reported once and then draws nothing. The
+    /// simulation runs on, the same way it does when the sim thread dies.
     fn load_survivor(&mut self) {
         let manifest = format!("{CHARACTER_DIR}/character.ron");
         let assets = match sprites::parse(&FileAccess::get_file_as_string(&manifest).to_string()) {
@@ -211,9 +210,9 @@ impl GameBridge {
             self.sprites.insert(id, sprite);
         }
 
-        // `snapshot.time` stamps `pos`, while `lerp(0)` draws `prev_pos`, one
-        // tick earlier. Without walking back to the instant actually drawn the
-        // clip runs 16.7 ms ahead of the sprite for good.
+        // `snapshot.time` stamps `pos`, but `lerp(0)` draws `prev_pos`, one
+        // tick earlier. This walks back to the instant really drawn. Without it
+        // the clip stays 16.7 ms ahead of the sprite for good.
         let seconds = snapshot.time - (1.0 - f64::from(alpha)) * TICK_DT;
 
         for view in &snapshot.entities {
@@ -222,8 +221,8 @@ impl GameBridge {
             };
             sprite.set_position(iso::tile_to_screen(view.lerp(alpha)));
 
-            // Anything this atlas lacks leaves the sprite on the frame it had,
-            // which is the only sane answer mid-clip.
+            // A missing clip, row or frame leaves the sprite as it is, which is
+            // the only sane answer mid-clip.
             let clip = Clip::for_locomotion(view.locomotion);
             let Some(atlas) = assets.animations.get(clip.name()) else {
                 continue;
@@ -245,15 +244,15 @@ impl GameBridge {
         }
     }
 
-    /// Pins the camera to the controlled entity's drawn position, so he is
-    /// rock steady and every residual error lands on the terrain instead, the
-    /// cheapest place to put it.
+    /// Pins the camera to the player's drawn position, so he is rock steady and
+    /// every residual error lands on the terrain instead. That is the cheapest
+    /// place to put it.
     ///
-    /// Written in `_process` on purpose: `SceneTree::process` flushes transform
-    /// notifications straight after it, and `Camera2D` updates its scroll from
-    /// that notification while position smoothing and physics interpolation are
-    /// both off. Turning either on reintroduces a frame of lag, and would also
-    /// be a second interpolator arguing with `host`'s `alpha`.
+    /// This runs in `_process` on purpose. `SceneTree::process` flushes
+    /// transform notifications straight after it, and `Camera2D` updates its
+    /// scroll from that notification. Position smoothing and physics
+    /// interpolation both stay off. Either one adds a frame of lag, and is a
+    /// second interpolator that argues with `host`'s `alpha`.
     fn follow_player(&mut self, snapshot: &RenderSnapshot, alpha: f32) {
         let Some(view) = snapshot
             .player
@@ -272,20 +271,18 @@ fn held_direction(focused: bool) -> Vector2 {
     if !focused {
         return Vector2::ZERO;
     }
-    // `get_vector` applies the deadzone and clamps to length 1, which a gamepad
-    // will need and a keyboard does not mind.
+    // `get_vector` applies the deadzone and clamps to length 1. A gamepad will
+    // need that, and a keyboard does not mind it.
     godot::classes::Input::singleton().get_vector("move_left", "move_right", "move_up", "move_down")
 }
 
-/// A sprite whose origin is the entity's tile, reading one frame out of an
-/// atlas.
+/// A sprite that draws one frame out of an atlas, with its origin on the
+/// entity's tile.
 fn new_sprite() -> Gd<Sprite2D> {
     let mut sprite = Sprite2D::new_alloc();
-    // With `centered` off, `offset` is the top left, which is what lets the
-    // frame's own offset and the animation's anchor put the origin on the feet.
     sprite.set_centered(false);
     sprite.set_region_enabled(true);
-    // Godot's own answer to atlas bleeding, over the pack stage's gutter.
+    // Godot's own guard against atlas bleeding, on top of the pack gutter.
     sprite.set_region_filter_clip_enabled(true);
     sprite
 }

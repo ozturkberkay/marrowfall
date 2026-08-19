@@ -14,9 +14,9 @@ use glam::Vec2;
 /// collision snap-out) must assign `previous` to match, or the entity
 /// interpolates across the whole jump for one tick.
 ///
-/// Shortening a move is the opposite case and must leave `previous` alone: the
-/// field clamp writes a nearer `current` on the same journey, and carrying
-/// `previous` with it would erase the motion that facing reads.
+/// A shortened move is the opposite case, and it must leave `previous` alone.
+/// The field clamp writes a nearer `current` on the same move. If `previous`
+/// moved with it, the motion that facing reads is gone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Position {
     pub current: Vec2,
@@ -41,11 +41,11 @@ impl Position {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Velocity(pub Vec2);
 
-/// Marks the entity held input drives.
+/// Marks the entity that held input drives.
 ///
-/// A marker rather than an id on [`crate::Sim`], so the world stays the single
-/// source of truth and nothing has to be cleared on despawn. Extends to a
-/// possessed entity or a second local player unchanged.
+/// A marker and not an id on [`crate::Sim`], so the world stays the one source
+/// of truth and nothing needs clearing on despawn. A possessed entity or a
+/// second local player needs no change here.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Player;
 
@@ -113,8 +113,8 @@ impl Facing {
 
     /// The compass name the art pipeline gives this direction's atlas row.
     ///
-    /// Here rather than in a frontend so the vocabulary is not copied a third
-    /// time: the pipeline's packer and its Blender bake already spell it out.
+    /// Here and not in a frontend, so these names are not spelled out a third
+    /// time. The pipeline's packer and its Blender bake already hold a copy.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {

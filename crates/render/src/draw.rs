@@ -1,7 +1,7 @@
-//! What the frontend chooses per frame, and which nodes should exist.
+//! What the frontend draws each frame, and which nodes must exist.
 //!
-//! Pure functions over plain data: no `Gd<T>`, so every decision here is unit
-//! testable without an engine. `bridge.rs` is left with the property writes.
+//! Pure functions over plain data, with no `Gd<T>`, so every decision here is
+//! unit testable without an engine. `bridge.rs` keeps the property writes.
 
 use std::collections::HashSet;
 
@@ -20,8 +20,8 @@ impl Clip {
     /// Every clip the frontend can show, which is what startup preloads.
     pub const ALL: [Clip; 2] = [Self::Idle, Self::Run];
 
-    /// Which clip a simulation state draws as. The mapping is render policy:
-    /// the simulation publishes what he is doing, never which PNG says so.
+    /// Which clip a simulation state draws as. This mapping is render policy.
+    /// The simulation publishes what he does, never which PNG shows it.
     #[must_use]
     pub fn for_locomotion(locomotion: Locomotion) -> Self {
         match locomotion {
@@ -51,8 +51,8 @@ pub struct Placement {
 /// Puts a trimmed frame's anchor on the entity's tile.
 ///
 /// The cell's top left goes at minus the anchor, and the frame sits at its own
-/// offset inside that cell. `centered = false` is what makes `offset` mean the
-/// top left, which is why the node origin ends up on the feet.
+/// offset inside that cell. `offset` means the top left only with
+/// `centered = false`, which is what puts the node origin on the feet.
 #[must_use]
 pub fn placement(atlas: &AnimationAtlas, rect: &FrameRect) -> Placement {
     Placement {
@@ -67,10 +67,10 @@ pub fn placement(atlas: &AnimationAtlas, rect: &FrameRect) -> Placement {
     }
 }
 
-/// Ids needing a node, and nodes to free.
+/// Ids that need a node, and nodes to free.
 ///
 /// Both vectors stay unallocated on a frame where nothing changed, which is
-/// every frame once the cast has settled.
+/// every frame once the cast settles.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Changes {
     pub added: Vec<u64>,
@@ -81,9 +81,9 @@ pub struct Changes {
 /// drawn.
 ///
 /// Absent from the snapshot means despawned, because every live entity is in
-/// every snapshot. Safe against a recycled entity slot: hecs packs a generation
-/// into the id, so the slot comes back as a different `u64`, which is one
-/// removal and one addition rather than a node quietly inherited.
+/// every snapshot. A recycled entity slot is safe: hecs packs a generation into
+/// the id, so the slot comes back as a different `u64`. That is one removal and
+/// one addition, not a node quietly inherited.
 #[must_use]
 pub fn reconcile(views: &[EntityView], drawn: impl IntoIterator<Item = u64>) -> Changes {
     let drawn: HashSet<u64> = drawn.into_iter().collect();

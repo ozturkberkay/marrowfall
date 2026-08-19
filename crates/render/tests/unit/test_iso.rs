@@ -9,8 +9,8 @@ fn the_origin_tile_draws_at_its_own_centre() {
     assert_eq!(iso::tile_to_screen(Vec2::ZERO), Vector2::new(96.0, 48.0));
 }
 
-/// Both tile axes run down the screen, `+x` to the right and `+y` to the left,
-/// which is the fact every row and sort decision downstream rests on.
+/// Both tile axes run down the screen, `+x` to the right and `+y` to the left.
+/// Every row and sort decision downstream rests on this fact.
 #[test]
 fn one_step_along_each_tile_axis_runs_down_the_screen() {
     assert_eq!(
@@ -24,9 +24,9 @@ fn one_step_along_each_tile_axis_runs_down_the_screen() {
 }
 
 /// Every key combination: the screen direction `Input.get_vector` reports, and
-/// the tile direction it has to become. The tile column is written as the
-/// integer ratio the projection produces and normalised here, so no rounded
-/// literal can hide a wrong answer.
+/// the tile direction it has to become. The tile column holds the integer ratio
+/// the projection produces, normalised here, so no rounded literal hides a
+/// wrong answer.
 fn key_combinations() -> [(&'static str, Vector2, Vec2); 8] {
     let d = FRAC_1_SQRT_2;
     [
@@ -54,7 +54,7 @@ fn every_key_combination_points_the_way_it_looks_on_screen() {
 }
 
 /// A unit direction in, a unit direction out. Without the normalise the inverse
-/// is anisotropic by exactly 2x, so `W` would walk twice as fast as `D`.
+/// is anisotropic by exactly 2x, and `W` walks twice as fast as `D`.
 #[test]
 fn every_key_combination_is_the_same_speed() {
     for (keys, screen, _) in key_combinations() {

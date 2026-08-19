@@ -8,7 +8,7 @@ on:
         type: boolean
         default: false
       python:
-        description: Run Python (Blender) unit tests
+        description: Run Python unit tests
         type: boolean
         default: false
   workflow_dispatch:
@@ -55,8 +55,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Nothing here pushes, so the token must not be left in .git/config
-          # where a later step or a compromised action could read it.
+          # Nothing here pushes, so the token must not be left in .git/config.
           persist-credentials: false
 
       - name: Install uv
@@ -64,7 +63,5 @@ jobs:
         with:
           enable-cache: true
 
-      # Test paths and the 100 percent coverage gate both come from
-      # `[tool.pytest.ini_options]`, so CI and a local run cannot drift.
       - name: Run pytest
         run: uv run pytest

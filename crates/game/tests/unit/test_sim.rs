@@ -13,8 +13,8 @@ const DRIFT: Vec2 = Vec2::new(3.0, -7.0);
 const ALONG_X: Vec2 = Vec2::new(3.0, 0.0);
 const ALONG_Y: Vec2 = Vec2::new(0.0, -7.0);
 
-/// Far enough inside the field that a second of walking cannot reach an edge,
-/// so a test about speed is not also a test about the clamp.
+/// Far enough inside the field that a second of walking cannot reach an edge.
+/// So a test about speed is not also a test about the clamp.
 const MIDFIELD: Vec2 = Vec2::new(8.0, 8.0);
 
 /// A world holding exactly these entities, with their ids positionally, so a
@@ -32,8 +32,8 @@ fn moving(at: Vec2, velocity: Vec2) -> Spawn {
     }
 }
 
-/// The one entity held input drives. It starts still, because input is the
-/// only thing that ever gives it a velocity.
+/// The one entity that held input drives. It starts still, because input is the
+/// only thing that gives it a velocity.
 fn player(at: Vec2) -> Spawn {
     Spawn {
         at,
@@ -320,10 +320,12 @@ fn each_facing_names_its_manifest_direction() {
 }
 
 /// Every key combination, and the tile direction the frontend's inverse
-/// projection turns it into, as the exact integer ratio that projection
-/// produces. Magnitude is irrelevant twice over: `Input::new` scales it to unit
-/// length, and facing quantises on the ratio. The two-key rows are the near
-/// boundary cases at exactly 1/3 against a sector edge of 0.414.
+/// projection turns it into. Written as the exact integer ratio that projection
+/// produces.
+///
+/// Magnitude does not matter twice over: `Input::new` scales it to unit length,
+/// and facing quantises on the ratio. The two-key rows are the near boundary
+/// cases, at exactly 1/3 against a sector edge of 0.414.
 const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
     ("W", Vec2::new(-1.0, -1.0), Facing::North),
     ("W+D", Vec2::new(-1.0, -3.0), Facing::NorthEast),
@@ -335,7 +337,7 @@ const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
     ("W+A", Vec2::new(-3.0, -1.0), Facing::NorthWest),
 ];
 
-/// The two combinations the clamp tests hold, named rather than indexed.
+/// The two combinations the clamp tests hold, named and not indexed.
 const HOLDING_W: Vec2 = KEY_COMBINATIONS[0].1;
 const HOLDING_A: Vec2 = KEY_COMBINATIONS[6].1;
 
@@ -369,7 +371,7 @@ fn a_second_of_held_input_moves_the_player_by_the_player_speed() {
 }
 
 /// The frontend hands over a unit direction, so a diagonal covers the same
-/// ground as a cardinal rather than 1.41 times as much.
+/// ground as a cardinal, not 1.41 times as much.
 #[test]
 fn a_diagonal_is_no_faster_than_a_cardinal() {
     let (mut sim, _) = world_of([player(MIDFIELD)]);
@@ -468,9 +470,9 @@ fn the_player_stops_at_every_field_edge() {
     }
 }
 
-/// Only the blocked axis stops, so an edge is something to slide along rather
-/// than stick to. The residual direction is the honest one: holding A at
-/// `x = 0` really is travelling south-west.
+/// Only the blocked axis stops, so he slides along an edge instead of sticking
+/// to it. The direction that is left is the honest one: holding A at `x = 0`
+/// really does move him south-west.
 #[test]
 fn holding_into_an_edge_diagonally_slides_the_player_along_it() {
     let (mut sim, _) = world_of([player(Vec2::new(0.0, 8.0))]);
@@ -489,10 +491,10 @@ fn holding_into_an_edge_diagonally_slides_the_player_along_it() {
     assert_eq!(view.facing, Facing::SouthWest);
 }
 
-/// Each screen cardinal drives straight at a field corner, where both tile
-/// axes clamp at once and a held key produces exactly zero motion. Facing has
-/// nothing to read, so it holds; locomotion still reports the intent, which is
-/// the whole reason the snapshot publishes it.
+/// Each screen cardinal drives straight at a field corner. Both tile axes
+/// clamp at once there, so a held key produces exactly zero motion. Facing has
+/// nothing to read and holds. Locomotion still reports the intent, which is
+/// the whole reason the snapshot carries it.
 #[test]
 fn holding_into_a_corner_still_looks_like_running() {
     let (mut sim, _) = world_of([player(Vec2::ZERO)]);

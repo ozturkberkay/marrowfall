@@ -1,8 +1,8 @@
-//! The four movement actions live in `project.godot`, which no Rust test can
-//! ask the engine about. Pinning the names here is what turns a lost binding
-//! into a failing test rather than a game that ignores the keyboard.
+//! The four movement actions live in `project.godot`, and no Rust test can ask
+//! the engine about them. The names are pinned here, so a lost binding fails a
+//! test instead of shipping a game that ignores the keyboard.
 
-/// Embedded rather than read, so a moved file fails the build.
+/// Embedded and not read, so a moved file fails the build.
 const PROJECT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../project/project.godot"
@@ -29,7 +29,7 @@ fn every_movement_action_is_bound_to_its_physical_key() {
             binding.contains(&format!("\"physical_keycode\":{keycode}")),
             "{action} is not bound to physical keycode {keycode}"
         );
-        // Any real device id would only ever match itself.
+        // A real device id only ever matches itself.
         assert!(
             binding.contains("\"device\":-1"),
             "{action} is bound to one device instead of all of them"

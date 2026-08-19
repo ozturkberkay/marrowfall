@@ -22,10 +22,10 @@ const WORLD_SIZE: u32 = 24;
 
 /// How fast held input walks the player, in tile units per second.
 ///
-/// A playtest starting point, not a derived figure: the bake's camera
-/// elevation does not match the tile projection, so sprite height is
-/// foreshortened while ground travel is not, and no arithmetic turns one into
-/// the other. Tune it by eye against the run cycle's foot slide.
+/// A playtest starting point, not a derived figure. The bake's camera elevation
+/// does not match the tile projection, so sprite height is foreshortened and
+/// ground travel is not. No arithmetic turns one into the other, so tune this
+/// by eye against the run cycle's foot slide.
 pub const PLAYER_SPEED: f32 = 4.0;
 
 /// What to create an entity with. Named fields, so `at` and `velocity` cannot
@@ -36,8 +36,8 @@ pub struct Spawn {
     /// Tile units per second, or `None` for something that never moves, which
     /// integration then skips entirely.
     pub velocity: Option<Vec2>,
-    /// Whether held input drives this entity. At most one should be `true`
-    /// today; a second would simply be driven by the same input.
+    /// Whether held input drives this entity. Only one is `true` today. A
+    /// second one takes the same input as the first.
     pub player: bool,
 }
 
@@ -49,9 +49,9 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// Terrain plus the survivor, standing at the middle of the field.
+    /// Terrain plus the survivor, at the middle of the field.
     ///
-    /// Stands in for worldgen and a new-game flow until those land.
+    /// A placeholder for worldgen and a new-game flow, until those land.
     #[must_use]
     pub fn new(seed: u64) -> Self {
         let middle = Vec2::new((WORLD_SIZE / 2) as f32, (WORLD_SIZE / 2) as f32);
@@ -77,7 +77,7 @@ impl Sim {
     /// If any position or velocity is not finite. A non-finite position
     /// spreads through every later tick and makes a snapshot unequal to
     /// itself, which would break any replay comparison. Also if a player spawn
-    /// carries no velocity, since nothing could then move it.
+    /// carries no velocity, because nothing can then move it.
     #[must_use]
     pub fn with_entities(seed: u64, entities: &[Spawn]) -> (Self, Vec<u64>) {
         let mut sim = Self {
@@ -151,7 +151,7 @@ impl Sim {
         // Before integration, so a key pressed this tick lands this tick.
         self.apply_input(input);
         self.apply_velocity();
-        // Shortens a move rather than jumping, so it has to precede facing.
+        // Shortens a move instead of jumping, so it must come before facing.
         self.keep_player_on_the_field();
         // Reads the motion actually applied, so it has to follow everything
         // that can move an entity this tick, collision included.
@@ -212,8 +212,8 @@ impl Sim {
         }
     }
 
-    /// Held input is the player's velocity outright, not a force: this is a
-    /// game of exact positioning, so a key press has to move him this tick.
+    /// Held input sets the player's velocity outright, not a force. This is a
+    /// game of exact positioning, so a key press must move him this tick.
     fn apply_input(&mut self, input: Input) {
         let velocity = input.move_dir() * PLAYER_SPEED;
         for player in self.world.query_mut::<hecs::With<&mut Velocity, &Player>>() {
@@ -222,11 +222,13 @@ impl Sim {
     }
 
     /// Stops the player at the edge of the painted field, which the camera
-    /// follows him to. A placeholder for collision: it shortens a move instead
-    /// of blocking it, so only the blocked axis stops and he slides along an
-    /// edge. `previous` is deliberately untouched, see [`Position`].
+    /// follows him to.
     ///
-    /// Player only. Everything else may leave, and the integration tests rely
+    /// A placeholder for collision. It shortens a move instead of blocking it,
+    /// so only the blocked axis stops and he slides along an edge. It leaves
+    /// `previous` alone on purpose, see [`Position`].
+    ///
+    /// The player only. Everything else can leave the field, and the tests rely
     /// on that.
     fn keep_player_on_the_field(&mut self) {
         let far = Vec2::new(
@@ -245,8 +247,8 @@ impl Sim {
     }
 }
 
-/// Running whenever a velocity is asking for motion, even where a wall means
-/// none happens. Derived here so nothing holds a second copy of it.
+/// Running whenever a velocity asks for motion, even at a wall where nothing
+/// moves. Derived here, so nothing holds a second copy of it.
 fn locomotion_of(velocity: Option<&Velocity>) -> Locomotion {
     match velocity {
         Some(Velocity(asked)) if *asked != Vec2::ZERO => Locomotion::Running,
