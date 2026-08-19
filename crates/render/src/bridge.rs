@@ -35,10 +35,11 @@
 
 use std::collections::HashMap;
 
+use godot::classes::notify::NodeNotification;
 use godot::classes::{Camera2D, FileAccess, Sprite2D, Texture2D, TileMapLayer};
 use godot::prelude::*;
 
-use game::{RenderSnapshot, Sim, TICK_DT, TerrainGrid};
+use game::{Input, RenderSnapshot, Sim, TICK_DT, TerrainGrid};
 use host::SimHandle;
 use sprites::CharacterAssets;
 
@@ -65,6 +66,11 @@ pub struct GameBridge {
     /// Camera pinned to the controlled entity's drawn position.
     #[init(node = "../Camera2D")]
     camera: OnReady<Gd<Camera2D>>,
+    /// Whether the window has keyboard focus. Starts `true` because it
+    /// already does when this node enters the tree, and waiting for a focus
+    /// notification that may never come would leave WASD dead.
+    #[init(val = true)]
+    focused: bool,
     sim: Option<SimHandle>,
     /// Atlas layout for every clip, or `None` when it could not be loaded, in
     /// which case nothing is drawn and the simulation still runs.
@@ -80,7 +86,6 @@ impl INode for GameBridge {
     fn ready(&mut self) {
         let sim = Sim::new(DEV_SEED);
         self.paint_ground(sim.terrain());
-        self.frame_camera(sim.terrain());
         self.load_survivor();
         // Teardown is `SimHandle`'s own `Drop`, so the sim lives as long as
         // this node rather than as long as its membership of the tree.
@@ -102,6 +107,12 @@ impl INode for GameBridge {
             return;
         }
 
+        // Once per frame, before `read` borrows the handle. The simulation
+        // reads it once per tick, so speed never tracks frame rate.
+        sim.set_input(Input::new(iso::screen_dir_to_tile(held_direction(
+            self.focused,
+        ))));
+
         // Copy the tick out before touching anything else on `self`: the
         // methods below need all of it, and a `Frame` keeps the handle borrowed.
         let (snapshot, alpha) = {
@@ -115,6 +126,19 @@ impl INode for GameBridge {
         }
 
         self.draw_entities(&snapshot, alpha);
+        self.follow_player(&snapshot, alpha);
+    }
+
+    /// The OS does not always deliver a key release when the window loses
+    /// focus, so a held key would stay held forever. Gating the sample is the
+    /// fix; writing a still input from the handler alone would be overwritten
+    /// by the same frame's sampling.
+    fn on_notification(&mut self, what: NodeNotification) {
+        match what {
+            NodeNotification::WM_WINDOW_FOCUS_IN => self.focused = true,
+            NodeNotification::WM_WINDOW_FOCUS_OUT => self.focused = false,
+            _ => {}
+        }
     }
 }
 
@@ -134,15 +158,6 @@ impl GameBridge {
             terrain.width(),
             terrain.height()
         );
-    }
-
-    /// Centers the camera on the middle of the generated world.
-    fn frame_camera(&mut self, terrain: &TerrainGrid) {
-        let middle = Vector2i::new((terrain.width() / 2) as i32, (terrain.height() / 2) as i32);
-        // `map_to_local` answers in the layer's own space, so go through global
-        // space rather than assuming the two nodes share an origin.
-        let center = self.ground.to_global(self.ground.map_to_local(middle));
-        self.camera.set_global_position(center);
     }
 
     /// Loads the manifest and one atlas texture per clip, all or nothing.
@@ -229,6 +244,37 @@ impl GameBridge {
             sprite.set_offset(placement.offset);
         }
     }
+
+    /// Pins the camera to the controlled entity's drawn position, so he is
+    /// rock steady and every residual error lands on the terrain instead, the
+    /// cheapest place to put it.
+    ///
+    /// Written in `_process` on purpose: `SceneTree::process` flushes transform
+    /// notifications straight after it, and `Camera2D` updates its scroll from
+    /// that notification while position smoothing and physics interpolation are
+    /// both off. Turning either on reintroduces a frame of lag, and would also
+    /// be a second interpolator arguing with `host`'s `alpha`.
+    fn follow_player(&mut self, snapshot: &RenderSnapshot, alpha: f32) {
+        let Some(view) = snapshot
+            .player
+            .and_then(|id| snapshot.entities.iter().find(|view| view.id == id))
+        else {
+            return;
+        };
+        self.camera
+            .set_global_position(iso::tile_to_screen(view.lerp(alpha)));
+    }
+}
+
+/// Which way the movement keys point on screen, or nowhere when the window is
+/// not focused.
+fn held_direction(focused: bool) -> Vector2 {
+    if !focused {
+        return Vector2::ZERO;
+    }
+    // `get_vector` applies the deadzone and clamps to length 1, which a gamepad
+    // will need and a keyboard does not mind.
+    godot::classes::Input::singleton().get_vector("move_left", "move_right", "move_up", "move_down")
 }
 
 /// A sprite whose origin is the entity's tile, reading one frame out of an
