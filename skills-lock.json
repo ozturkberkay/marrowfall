@@ -18,6 +18,12 @@
       "sourceType": "github",
       "skillPath": "skills/meshy-openclaw/SKILL.md",
       "computedHash": "1ec15662776483717de58569ec5b4dd4c4c2cdb8465bff313887159110d83ebd"
+    },
+    "simple-english": {
+      "source": "AminBlg/SimpleEnglish",
+      "sourceType": "github",
+      "skillPath": "skills/simple-english/SKILL.md",
+      "computedHash": "03e4c8b0b52247fd63abe50cb0b9d12b746a2521bdd74a075614dfd19cdc37c5"
     }
   }
 }
