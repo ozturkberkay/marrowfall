@@ -1,8 +1,8 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use game::{Sim, TICK_DT};
-use host::{alpha_for, spawn};
+use game::{EntityView, Input, RenderSnapshot, Sim, TICK_DT, Vec2};
+use host::{SimHandle, alpha_for, spawn};
 
 fn tick() -> Duration {
     Duration::from_secs_f64(TICK_DT)
@@ -75,4 +75,51 @@ fn dropping_the_handle_does_not_hang() {
         "shutdown took {:?}",
         start.elapsed()
     );
+}
+
+/// The player of the world `Sim::new` builds, which is the only entity in it.
+fn player_of(snapshot: &RenderSnapshot) -> EntityView {
+    let id = snapshot.player.expect("Sim::new spawns a player");
+    *snapshot
+        .entities
+        .iter()
+        .find(|entity| entity.id == id)
+        .expect("the player is missing from the snapshot")
+}
+
+/// Polls to a deadline rather than sleeping a fixed time: the simulation paces
+/// itself off the wall clock, so any fixed sleep is either flaky or slow.
+fn poll_until(handle: &mut SimHandle, ready: impl Fn(&RenderSnapshot) -> bool, complaint: &str) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ready(handle.read().snapshot) {
+        assert!(Instant::now() < deadline, "{complaint}");
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Latest-wins is only right for held state if one write outlives the tick that
+/// read it. Half a tile is eight ticks at `PLAYER_SPEED`, so passing it proves
+/// the buffer is not consumed on read.
+#[test]
+fn one_input_written_once_keeps_the_player_walking() {
+    let mut handle = spawn(Sim::new(1));
+    let start = player_of(handle.read().snapshot).pos;
+
+    handle.set_input(Input::new(Vec2::new(1.0, 0.0)));
+
+    poll_until(
+        &mut handle,
+        |snapshot| player_of(snapshot).pos.x > start.x + 0.5,
+        "one input moved him less than eight ticks' worth",
+    );
+}
+
+#[test]
+fn a_player_nobody_is_driving_stands_still() {
+    let mut handle = spawn(Sim::new(1));
+    let start = player_of(handle.read().snapshot).pos;
+
+    poll_until(&mut handle, |snapshot| snapshot.tick >= 30, "no ticks ran");
+
+    assert_eq!(player_of(handle.read().snapshot).pos, start);
 }
