@@ -1,7 +1,8 @@
 //! The pipeline stages themselves.
 //!
 //! Each stage is a function taking the spec and paths, producing files on disk
-//! and a [`StageRecord`] for the lock. Stages never decide *whether* to run, //! that is the driver's job in `main.rs`, so they stay easy to reason about
+//! and a [`StageRecord`] for the lock. Stages never decide *whether* to run,
+//! that is the driver's job in `main.rs`, so they stay easy to reason about
 //! and to invoke individually.
 
 use std::collections::BTreeMap;

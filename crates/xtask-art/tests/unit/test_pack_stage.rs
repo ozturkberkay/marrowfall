@@ -73,6 +73,58 @@ fn the_manifest_ends_with_a_newline() {
     );
 }
 
+/// Godot regenerates everything else in a `.import` file from the atlas and
+/// these params, but a `uid` it cannot see it mints anew, and a resource id that
+/// changes on every re-pack is a diff nobody asked for.
+#[test]
+fn re_packing_keeps_the_resource_id_godot_already_assigned() {
+    let library = a_library();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    // Stand in for the editor, which fills the file in on the next import.
+    let settings = paths.assets().join("idle.png.import");
+    let imported = std::fs::read_to_string(&settings).unwrap().replace(
+        "type=\"CompressedTexture2D\"",
+        "type=\"CompressedTexture2D\"\nuid=\"uid://abc123\"",
+    );
+    std::fs::write(&settings, &imported).unwrap();
+
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    let after = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        after.contains("uid=\"uid://abc123\""),
+        "the re-pack dropped the resource id Godot assigned:\n{after}"
+    );
+    assert_eq!(
+        after, imported,
+        "a re-pack of an unchanged atlas must leave the file alone"
+    );
+}
+
+/// The first pack has no file to read a `uid` from, so it must not leave a hole
+/// where one would go.
+#[test]
+fn a_first_pack_writes_settings_godot_can_import() {
+    let library = a_library();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    let text = std::fs::read_to_string(paths.assets().join("idle.png.import")).unwrap();
+    assert!(!text.contains("uid="), "nothing had assigned one yet");
+    // BC7, the whole reason these settings are written at all.
+    assert!(text.contains("compress/mode=2"));
+    assert!(
+        !text.contains("\n\n\n"),
+        "a blank run where the uid would go:\n{text}"
+    );
+}
+
 #[test]
 fn every_animation_of_a_character_is_packed_at_one_scale() {
     let library = a_library();

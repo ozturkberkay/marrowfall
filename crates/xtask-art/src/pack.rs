@@ -327,22 +327,41 @@ fn shelf_pack(sizes: &[(u32, u32)]) -> (Vec<(u32, u32)>, u32, u32) {
 ///
 /// `detect_3d/compress_to=0` stops Godot quietly rewriting these if an atlas is
 /// ever seen in a 3D context.
-pub fn write_import_settings(atlas: &std::path::Path) -> Result<()> {
+///
+/// Only the settings above are written. Godot restores the content hash,
+/// `[deps]` and every remaining default byte for byte on the next import, so
+/// omitting them loses nothing. `uid` is the exception: it is minted fresh
+/// whenever it is absent, so an existing one is carried across and re-packing an
+/// unchanged atlas leaves the file exactly as it was.
+pub fn write_import_settings(atlas: &Path) -> Result<()> {
     let path = atlas.with_extension("png.import");
+    let uid = existing_uid(&path).map_or_else(String::new, |line| format!("{line}\n"));
     std::fs::write(
         &path,
-        "[remap]\n\n\
-         importer=\"texture\"\n\
-         type=\"CompressedTexture2D\"\n\n\
-         [params]\n\n\
-         compress/mode=2\n\
-         compress/high_quality=true\n\
-         mipmaps/generate=false\n\
-         process/fix_alpha_border=true\n\
-         detect_3d/compress_to=0\n",
+        format!(
+            "[remap]\n\n\
+             importer=\"texture\"\n\
+             type=\"CompressedTexture2D\"\n\
+             {uid}\n\
+             [params]\n\n\
+             compress/mode=2\n\
+             compress/high_quality=true\n\
+             mipmaps/generate=false\n\
+             process/fix_alpha_border=true\n\
+             detect_3d/compress_to=0\n"
+        ),
     )
     .with_context(|| format!("writing {}", path.display()))?;
     Ok(())
+}
+
+/// The `uid` line of an import file already on disk, if it has one. Absent file,
+/// unreadable file and no `uid` line are all the same answer: nothing to keep.
+fn existing_uid(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .find(|line| line.starts_with("uid=\"uid://"))
+        .map(str::to_owned)
 }
 
 pub fn pack_animation(
