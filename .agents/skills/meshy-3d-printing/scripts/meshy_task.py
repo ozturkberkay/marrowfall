@@ -76,11 +76,11 @@ def load_api_key():
 
 
 def _require_key():
-    """Load API key, print first-8-char confirmation, exit if missing."""
+    """Load API key, confirm it was found, exit if missing."""
     key = load_api_key()
     if not key:
         sys.exit("ERROR: MESHY_API_KEY not set. Run your skill's API key setup step.")
-    print(f"API key loaded: {key[:8]}...", file=sys.stderr)
+    print("API key loaded.", file=sys.stderr)
     return key
 
 
@@ -252,7 +252,7 @@ def _cmd_check_env(args):
     # ENV_VAR check
     env_val = os.environ.get("MESHY_API_KEY", "")
     if env_val:
-        print(f"ENV_VAR: FOUND ({env_val[:8]}...)")
+        print("ENV_VAR: FOUND")
     else:
         print("ENV_VAR: NOT_FOUND")
 
@@ -273,7 +273,7 @@ def _cmd_check_env(args):
     # Final verdict
     key = load_api_key()
     if key:
-        print(f"READY: key={key[:8]}...")
+        print("READY: KEY_FOUND")
         sys.exit(0)
     else:
         print("READY: NO_KEY_FOUND")

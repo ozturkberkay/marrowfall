@@ -110,7 +110,7 @@ It reports `ENV_VAR` (current environment), `DOTENV` (`.env` / `.env.local` in t
 
 ### Decision After Detection
 
-- **`READY: key=...`** → Proceed to Step 1.
+- **`READY: KEY_FOUND`** → Proceed to Step 1.
 - **`READY: NO_KEY_FOUND`** → Go to Step 0a.
 - **`PYTHON_REQUESTS: MISSING`** → Run `pip install requests`.
 

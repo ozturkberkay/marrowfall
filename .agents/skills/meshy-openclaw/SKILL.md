@@ -113,7 +113,7 @@ python3 scripts/meshy_task.py check-env
 
 ### Decision After Detection
 
-- **`READY: key=...`** → Proceed to Step 1.
+- **`READY: KEY_FOUND`** → Proceed to Step 1.
 - **`READY: NO_KEY_FOUND`** → Go to Step 0a.
 - **`PYTHON_REQUESTS: MISSING`** → Run `pip install requests`.
 
