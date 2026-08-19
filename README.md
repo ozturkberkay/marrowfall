@@ -6,16 +6,16 @@
 
 A single-player isometric action-RPG sandbox set in a dying medieval world.
 
-# Architecture
+## Architecture
 
-## Summary
+### Summary
 
 - Built as a headless, engine-agnostic, deterministic Rust simulation with
   Godot as a thin rendering/input frontend.
 - The sim runs on a **dedicated thread** owned by `crates/host`.
 - Crossbeam channel carries commands from the frontend into the sim.
 
-## Monorepo Layout
+### Monorepo Layout
 
 ```text
 .
