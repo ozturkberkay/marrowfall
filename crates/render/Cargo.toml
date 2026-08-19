@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 game.workspace = true
 host.workspace = true
 godot.workspace = true
+sprites.workspace = true
 
 [lints]
 workspace = true

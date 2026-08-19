@@ -1353,6 +1353,7 @@ dependencies = [
  "game",
  "godot",
  "host",
+ "sprites",
 ]
 
 [[package]]
