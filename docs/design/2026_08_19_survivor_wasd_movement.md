@@ -538,7 +538,8 @@ render/src/draw.rs   NEW Clip, Placement, placement, Changes, reconcile;
 render/src/bridge.rs     + entities: OnReady<Gd<Node2D>>, focused: bool,
                            sprites: HashMap<u64, Gd<Sprite2D>>, textures:
                            HashMap<Clip, Gd<Texture2D>>, assets: Option<..>
-render/tests/unit/       mod.rs, test_iso.rs, test_draw.rs NEW
+render/tests/unit/       mod.rs, test_iso.rs, test_draw.rs,
+                         test_input_map.rs NEW
 project/project.godot    + [input] with four actions
 project/scenes/main.tscn + Entities (Node2D, y_sort_enabled); zoom 1.0
 ```
