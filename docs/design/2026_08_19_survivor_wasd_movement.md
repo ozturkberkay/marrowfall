@@ -428,10 +428,11 @@ smoothing on later silently reintroduces a frame of lag.
   `NOTIFICATION_TRANSFORM_CHANGED` by updating scroll when smoothing and
   physics interpolation are both off. `_process` is also the documented slot
   for this work: "prior to rendering, and after physics ticks".
-- Without that path the lag is real: `Camera2D` is index 1 in `main.tscn` and
-  `Bridge` index 2, and order inside a process group is `process_priority`
-  then tree order (`Node::ComparatorWithPriority`), so the camera would update
-  before the Bridge wrote the target. Fixed in 4.3, cherry picked to 4.2.2, by
+- Without that path the lag is real: `Camera2D` precedes `Bridge` in
+  `main.tscn`'s tree order, and order inside a process group is
+  `process_priority` then tree order (`Node::ComparatorWithPriority`), so the
+  camera would update before the Bridge had written its position that frame.
+  Fixed in 4.3, cherry picked to 4.2.2, by
   godotengine/godot#84465, closing #74203 and #77813, the latter being exactly
   this shape: a camera trailing its siblings when a lerp moves the target.
 - `process_callback` stays `CAMERA2D_PROCESS_IDLE`, the default. The rule from
@@ -488,8 +489,8 @@ camera motion.
                                apply_velocity, keep_player_on_the_field,
                                apply_facing
    Frame { snapshot, alpha } <=== Published { snapshot, due_at }   (out)
-   -> sprite::reconcile creates and frees Sprite2D nodes; sprites::row_for
-      and frame_at, sprite::placement and iso::tile_to_screen drive each
+   -> draw::reconcile creates and frees Sprite2D nodes; sprites::row_for
+      and frame_at, draw::placement and iso::tile_to_screen drive each
    -> one Sprite2D per entity under the y sorted Entities node, plus a
       sibling Camera2D pinned to the controlled entity's drawn position
 ```
@@ -528,15 +529,16 @@ sprites/            NEW  serde, ron. src/lib.rs: Anchor, FrameRect,
                          test_sprites.rs, plus [[test]] name = "unit"
 xtask-art/src/pack.rs    re-exports the four types from `sprites`
 render/Cargo.toml        + sprites; [[test]] name = "unit", same path
-render/src/lib.rs        + pub mod iso; pub mod sprite; (pub, or the separate
+render/src/lib.rs        + pub mod draw; pub mod iso; (pub, or the separate
                            test crate cannot see them)
 render/src/iso.rs   NEW  TILE_WIDTH, TILE_HEIGHT, tile_to_screen,
                          screen_dir_to_tile
-render/src/sprite.rs NEW Clip, Placement, placement, Changes, reconcile
+render/src/draw.rs   NEW Clip, Placement, placement, Changes, reconcile;
+                         `draw`, not `sprite`, beside a crate named `sprites`
 render/src/bridge.rs     + entities: OnReady<Gd<Node2D>>, focused: bool,
                            sprites: HashMap<u64, Gd<Sprite2D>>, textures:
                            HashMap<Clip, Gd<Texture2D>>, assets: Option<..>
-render/tests/unit/       mod.rs, test_iso.rs, test_sprite.rs NEW
+render/tests/unit/       mod.rs, test_iso.rs, test_draw.rs NEW
 project/project.godot    + [input] with four actions
 project/scenes/main.tscn + Entities (Node2D, y_sort_enabled); zoom 1.0
 ```
@@ -631,7 +633,8 @@ pub enum Error {
 }
 /// Parses and validates: `frames > 0`, `fps > 0`, `directions` non empty,
 /// `rects.len() == directions.len() * frames`, anchor inside the cell.
-/// Everything below is then total, with no panic path.
+/// Nothing below can then panic; `frame` still answers `Option`, because a
+/// cell index is a caller's value rather than this atlas's.
 pub fn parse(text: &str) -> Result<CharacterAssets, Error>;
 /// `None` if this atlas has no such row, which is how a four direction atlas
 /// answers "se"; the caller then leaves the sprite on the frame it had.
@@ -639,7 +642,10 @@ pub fn row_for(atlas: &AnimationAtlas, direction: &str) -> Option<usize>;
 /// Negative seconds clamp to zero. Wraps when the clip loops, holds the last
 /// frame when it does not.
 pub fn frame_at(atlas: &AnimationAtlas, seconds: f64) -> usize;
-pub fn frame(atlas: &AnimationAtlas, row: usize, frame: usize) -> &FrameRect;
+/// `None` when this atlas has no such cell. Not total even after `parse`: a
+/// row and frame taken from one atlas can outrun another, which is what a
+/// clip change does when the two differ in direction count or length.
+pub fn frame(atlas: &AnimationAtlas, row: usize, frame: usize) -> Option<&FrameRect>;
 ```
 
 ### `crates/render`
@@ -652,7 +658,7 @@ pub const TILE_HEIGHT: f32 = 96.0;
 pub fn tile_to_screen(tile: Vec2) -> Vector2;       // to that tile's centre
 pub fn screen_dir_to_tile(screen: Vector2) -> Vec2; // a direction, or zero
 
-// sprite.rs: what the frontend chooses, and which nodes exist.
+// draw.rs: what the frontend chooses, and which nodes exist.
 pub enum Clip { Idle, Run }
 impl Clip {
     pub const ALL: [Clip; 2];
@@ -765,7 +771,10 @@ Per frame in `bridge.rs`. `Entities` is an `OnReady<Gd<Node2D>>` field beside
 snapshot borrow is alive, whereas `sim.read()` borrows only `self.sim`.
 `focused` is a field flipped by `WM_WINDOW_FOCUS_IN` and `_OUT`; gating the
 sample is the fix, since writing a default in the handler alone is overwritten
-by the same frame's unconditional sampling.
+by the same frame's unconditional sampling. It must start `true`
+(`#[init(val = true)]`): `#[class(init)]` would otherwise default it `false`
+and leave WASD dead until a focus notification that may never arrive, because
+the window already had focus when the node entered the tree.
 
 ```rust
 let held = if self.focused { sample() } else { Vector2::ZERO };
@@ -792,13 +801,19 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   `xtask-art/src/main.rs`, so `iso.rs`, `sprite.rs` and all of
   `crates/sprites` must be testable with no engine. They touch no `Gd<T>`, and
   gdext's `Vector2` and `Rect2` are plain `#[repr(C)]` Rust structs.
+- **Derives the interfaces above leave implicit:** `Locomotion` needs
+  `Debug, Clone, Copy, PartialEq` to sit inside `EntityView`, `Clip` needs
+  `Hash, Eq, PartialEq` to key a `HashMap`, and `Input` needs `Clone, Copy`
+  for `triple_buffer`.
 - **A `crates/render` test target is unproven.** CI runs `cargo nextest run`
   over the workspace on `ubuntu-24.04-arm` (`.github/workflows/rust.yml:76`)
   with no Godot installed, so a gdext linked test binary there is exactly the
   risk. T1 proves it before anything depends on it. If it fails, the pure
   functions move into a new engine free crate that may depend on `game`, which
-  `xtask-art` does not depend on, so nothing leaks into the pipeline. They
-  cannot move into `crates/sprites`, because `reconcile` needs `EntityView`.
+  `xtask-art` does not depend on, so nothing leaks into the pipeline. That
+  move also has to drop `Vector2` and `Rect2` from every signature, or it
+  reproduces the link failure it is escaping. They cannot move into
+  `crates/sprites`, because `reconcile` needs `EntityView`.
 - **Screen speed is direction dependent,** correctly, for a world space
   simulation: at 4.0 tiles per second East and West travel 543 px/s, the
   screen diagonals 343, North and South 271.5, a 2:1 spread.
@@ -811,8 +826,10 @@ self.camera.set_global_position(iso::tile_to_screen(target));
 - **`zoom` becomes `Vector2(1.0, 1.0)`:** one atlas texel per base viewport
   pixel, so neither minification aliasing nor magnification blur. The survivor
   goes from 6.7 to 16.7 percent of screen height and the camera gains 2048 by
-  864 px of travel. Under `canvas_items` stretch the visible size is always
-  the 2560 by 1440 base whatever the window size, so this is stable. Do not
+  864 px of travel. Under `canvas_items` stretch with
+  `aspect="expand"` (`project/project.godot:21`) the visible size is the 2560
+  by 1440 base at 16:9 and only grows on a wider or taller window, never
+  shrinks, so this is stable. Do not
   chase integer zoom: the effective texel to device scale is
   `zoom * (window_width / 2560)`, so integer zoom is an integer scale only at
   exactly 1440p, and this project already opted out of pixel perfect
@@ -829,7 +846,7 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   player 48 px from the top edge at tile (0, 0), and void free framing needs
   zoom of at least 1.181. Treat it as a background and vignette problem. A
   later clamp belongs in Rust in tile space, against `0 <= x + y <= 46` and
-  `0 <= x - y <= 46`, which reuses `x + y`, already the depth sort key.
+  `-23 <= x - y <= 23`, which reuses `x + y`, already the depth sort key.
 - **Leave physics interpolation and `physics_interpolation_mode` alone.** Both
   are off by default. Setting the mode explicitly on a `Camera2D` spams
   `Parameter "data.tree" is null` (godotengine/godot#97957), enabling
@@ -873,11 +890,13 @@ All headless, through the existing nextest and coverage commands.
   unchanged because no motion happened, while `locomotion` stays `Running`,
   which is the whole reason the snapshot publishes it. Holding into an edge
   diagonally still slides him along it.
-- `Facing::from_direction` returns the expected variant for the eight screen
-  diagonals in the Logic table, not just the sector centres in `FACINGS`
-  (`test_sim.rs:217-226`). Those four are the near boundary cases: short to
-  long ratio exactly 1/3 against `SECTOR_EDGE` 0.414214, a 4.07 degree margin,
-  and that margin is the fact being pinned. `Facing::name()` returns the eight
+- `Facing::from_direction` returns the expected variant for all eight key
+  combinations in the Logic table, not just the sector centres in `FACINGS`
+  (`test_sim.rs:217-226`). It stays `pub(crate)`, so the assertion goes
+  through `Sim` the way the existing facing tests do. The four screen
+  diagonals are the near boundary cases: short to long ratio exactly 1/3
+  against `SECTOR_EDGE` 0.414214, a 4.07 degree margin, and that margin is
+  the fact being pinned. `Facing::name()` returns the eight
   manifest direction names.
 - The same seed and input sequence produce an identical snapshot twice, and
   `Sim::new` yields exactly one entity at the middle of the field, which
@@ -918,8 +937,10 @@ All headless, through the existing nextest and coverage commands.
   `placement` returns the manifest's rect as the region and the frame offset
   minus the anchor as the offset.
 - `reconcile` reports a new id as added, a vanished id as removed, an
-  unchanged set as neither, and a reused id as both, the id reuse case
-  `snapshot.rs` relies on hecs generations for. And `project.godot` contains
+  unchanged set as neither. A recycled entity slot is the fourth case: hecs
+  packs a generation into the id, so it comes back as a different `u64`, and
+  the test pins that the old id is a removal and the new one an addition
+  rather than a silent reuse of the node. And `project.godot` contains
   all four action names, so a lost binding fails a test, not the game.
 
 **By playing the game,** the only way to reach `bridge.rs`: the survivor
@@ -941,9 +962,9 @@ character.
 Each change ships in the task that makes it true, so there is no documentation
 only pull request.
 
-- **`README.md`:** add `crates/sprites` to the layout table; change the
-  architecture bullet describing two boundary transports to three, naming the
-  input buffer; add a line under "Build & run" saying WASD moves the survivor.
+- **`README.md`:** add `crates/sprites` to the monorepo layout and to the unit
+  tier's wired-in crates beside `render`; name the third boundary transport in
+  the architecture summary; say WASD moves the survivor beside the run command.
 - **`crates/render/src/bridge.rs` module doc:** three corrections. Atlas bleed
   is settled (the pack gutter, `use_texture_padding` on the tileset, and
   `region_filter_clip_enabled`). Terrain sorting is settled (Ground unsorted,
@@ -954,6 +975,9 @@ only pull request.
   anything assigning `current` outside integration must assign `previous` to
   match. Note the distinction the clamp relies on: a shortened move leaves
   `previous` alone, while a jump must carry it.
+- **`Cargo.toml`:** the `# Art pipeline (xtask-art) only.` comment sits above
+  `ron` and `serde`, which now ship inside the GDExtension library through
+  `crates/sprites`. Move them above it.
 - **`crates/game/src/lib.rs`:** the `Intent` doc comment describes a split
   that has now landed. Point at `Input` for held state and keep `Intent`
   reserved for discrete actions. **`crates/host/src/lib.rs`** says "the two
