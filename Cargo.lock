@@ -700,6 +700,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "host"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "game",
+ "triple_buffer",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1341,10 +1350,9 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "render"
 version = "0.1.0"
 dependencies = [
- "crossbeam-channel",
  "game",
  "godot",
- "triple_buffer",
+ "host",
 ]
 
 [[package]]

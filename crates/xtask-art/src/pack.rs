@@ -104,6 +104,22 @@ pub struct CharacterScale {
     ground_y: u32,
 }
 
+/// Where one frame lives in the atlas, and where those pixels sit inside the
+/// untrimmed cell.
+///
+/// Trimming each frame to its own content is what keeps the atlas small, and
+/// `off_x`/`off_y` are what make it safe: the anchor still means what it meant,
+/// because a frame draws back at the position it would have occupied.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct FrameRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub off_x: u32,
+    pub off_y: u32,
+}
+
 /// Layout of one packed animation atlas.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnimationAtlas {
@@ -111,15 +127,19 @@ pub struct AnimationAtlas {
     pub file: String,
     /// Direction names in row order.
     pub directions: Vec<String>,
-    /// Frames per direction — the column count.
+    /// Frames per direction, the column count.
     pub frames: u32,
     /// Playback rate the animation was sampled at.
     pub fps: u32,
     /// Whether playback repeats.
     pub loops: bool,
+    /// The untrimmed cell every frame is positioned within. The anchor is
+    /// relative to this, not to any trimmed rect.
     pub cell_width: u32,
     pub cell_height: u32,
     pub anchor: Anchor,
+    /// One entry per frame, indexed `direction * frames + frame`.
+    pub rects: Vec<FrameRect>,
 }
 
 /// Everything the game needs to draw one character.
@@ -154,7 +174,7 @@ pub fn load_animation_frames(
                 anyhow::ensure!(
                     !next.exists(),
                     "frame {index:02} of animation {animation:?} direction {direction:?} is \
-                     missing but later frames exist — the bake did not finish. \
+                     missing but later frames exist, the bake did not finish. \
                      Re-run with --from bake."
                 );
                 break;
@@ -171,8 +191,7 @@ pub fn load_animation_frames(
         }
         if index == 0 {
             bail!(
-                "no frames for animation {animation:?} direction {direction:?} in {} \
-                 — did the bake stage run?",
+                "no frames for animation {animation:?} direction {direction:?} in {}, did the bake stage run?",
                 dir.display()
             );
         }
@@ -225,7 +244,7 @@ pub fn character_scale<'a>(
     anyhow::ensure!(
         clipped.is_empty(),
         "{} frame(s) are clipped by the render canvas (e.g. {}). \
-         The bake camera is framed too tightly — widen it and re-bake.",
+         The bake camera is framed too tightly, widen it and re-bake.",
         clipped.len(),
         clipped
             .iter()
@@ -249,6 +268,83 @@ pub fn character_scale<'a>(
 
 /// Packs one animation into an atlas: a row per direction, a column per
 /// frame. Frames share one crop, so the character cannot jitter.
+/// Gutter between packed frames. Without it bilinear filtering samples a
+/// neighbouring frame at the seam. Two pixels is enough with mipmaps off.
+const GUTTER: u32 = 2;
+
+/// Block-compressed textures are stored in 4x4 blocks, so Godot pads the atlas
+/// out to that grid but keeps computing UVs from the unpadded size. Sizing to
+/// the grid ourselves means padded and real are the same thing.
+const fn align_to_block(value: u32) -> u32 {
+    value.div_ceil(4) * 4
+}
+
+/// Shelf-packs `sizes`, returning a position for each and the atlas size.
+///
+/// Deterministic: tallest first, ties broken on the original index, so the same
+/// frames always pack the same way.
+fn shelf_pack(sizes: &[(u32, u32)]) -> (Vec<(u32, u32)>, u32, u32) {
+    let area: u64 = sizes
+        .iter()
+        .map(|(w, h)| u64::from(w + GUTTER) * u64::from(h + GUTTER))
+        .sum();
+    let widest = sizes.iter().map(|(w, _)| w + GUTTER).max().unwrap_or(1);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let square = ((area as f64).sqrt() * 1.05).ceil() as u32;
+    let target = square.max(widest);
+
+    let mut order: Vec<usize> = (0..sizes.len()).collect();
+    order.sort_by_key(|&i| (std::cmp::Reverse(sizes[i].1), i));
+
+    let mut placed = vec![(0, 0); sizes.len()];
+    let (mut x, mut y, mut shelf_height, mut used_width) = (0, 0, 0, 0);
+    for &i in &order {
+        let (w, h) = sizes[i];
+        if x > 0 && x + w + GUTTER > target {
+            y += shelf_height;
+            x = 0;
+            shelf_height = 0;
+        }
+        placed[i] = (x, y);
+        x += w + GUTTER;
+        shelf_height = shelf_height.max(h + GUTTER);
+        used_width = used_width.max(x);
+    }
+    (
+        placed,
+        align_to_block(used_width),
+        align_to_block(y + shelf_height),
+    )
+}
+
+/// Writes Godot's import settings beside an atlas.
+///
+/// BC7 rather than the default S3TC, which is the same 8 bits per pixel at half
+/// the error. This is scoped to character atlases deliberately: Godot's own
+/// advice is to leave 2D lossless, and that advice is right for tiles and UI,
+/// which are small and full of hard edges. These are megapixel continuous-tone
+/// renders, the case block compression was built for.
+///
+/// `detect_3d/compress_to=0` stops Godot quietly rewriting these if an atlas is
+/// ever seen in a 3D context.
+pub fn write_import_settings(atlas: &std::path::Path) -> Result<()> {
+    let path = atlas.with_extension("png.import");
+    std::fs::write(
+        &path,
+        "[remap]\n\n\
+         importer=\"texture\"\n\
+         type=\"CompressedTexture2D\"\n\n\
+         [params]\n\n\
+         compress/mode=2\n\
+         compress/high_quality=true\n\
+         mipmaps/generate=false\n\
+         process/fix_alpha_border=true\n\
+         detect_3d/compress_to=0\n",
+    )
+    .with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
 pub fn pack_animation(
     frames: &[Frame],
     directions: &'static [&'static str],
@@ -281,7 +377,7 @@ pub fn pack_animation(
     anyhow::ensure!(
         character.axis_x >= crop.x && character.axis_x < crop.x + crop.width,
         "the character's rotation axis (x={}) falls outside this animation's content \
-         crop ({}..{}) — the bake camera is not centred on him, so the sprite \
+         crop ({}..{}), the bake camera is not centred on him, so the sprite \
          would not line up with its tile",
         character.axis_x,
         crop.x,
@@ -290,7 +386,7 @@ pub fn pack_animation(
 
     let ground_offset = character.ground_y.checked_sub(crop.y).with_context(|| {
         format!(
-            "this animation's content starts at y={} — below the character's ground line \
+            "this animation's content starts at y={}, below the character's ground line \
              (y={}) taken from the reference animation. The reference animation is not standing \
              on the ground, so nothing can be aligned to it.",
             crop.y, character.ground_y
@@ -299,11 +395,11 @@ pub fn pack_animation(
     let cell_width = ((f64::from(crop.width) * character.scale).round() as u32).max(1);
     let cell_height = ((f64::from(crop.height) * character.scale).round() as u32).max(1);
 
-    let mut atlas = RgbaImage::new(
-        cell_width * frames_per_direction,
-        cell_height * directions.len() as u32,
-    );
-
+    // Scale each frame into the shared cell, then trim it to its own content.
+    // The cell stays the coordinate system the anchor is expressed in; trimming
+    // only decides which pixels are worth storing.
+    let slots = frames_per_direction as usize * directions.len();
+    let mut cells: Vec<Option<(RgbaImage, u32, u32)>> = vec![None; slots];
     for frame in frames {
         let row = directions
             .iter()
@@ -319,12 +415,48 @@ pub fn pack_animation(
             cell_height,
             imageops::FilterType::Lanczos3,
         );
-        imageops::replace(
-            &mut atlas,
-            &scaled,
-            i64::from(frame.index * cell_width),
-            i64::from(row * cell_height),
+        // A fully transparent frame still needs a slot, so give it one pixel.
+        let bounds = content_bounds(&scaled, 1).unwrap_or(Rect {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        });
+        let trimmed =
+            imageops::crop_imm(&scaled, bounds.x, bounds.y, bounds.width, bounds.height).to_image();
+        let slot = (row * frames_per_direction + frame.index) as usize;
+        anyhow::ensure!(
+            slot < slots,
+            "frame {} of {:?} is outside this animation's {slots} slots",
+            frame.index,
+            frame.direction
         );
+        cells[slot] = Some((trimmed, bounds.x, bounds.y));
+    }
+    let cells = cells
+        .into_iter()
+        .enumerate()
+        .map(|(slot, cell)| cell.with_context(|| format!("no frame packed into slot {slot}")))
+        .collect::<Result<Vec<_>>>()?;
+
+    let sizes: Vec<(u32, u32)> = cells
+        .iter()
+        .map(|(image, _, _)| (image.width(), image.height()))
+        .collect();
+    let (positions, atlas_width, atlas_height) = shelf_pack(&sizes);
+
+    let mut atlas = RgbaImage::new(atlas_width, atlas_height);
+    let mut rects = Vec::with_capacity(cells.len());
+    for ((image, off_x, off_y), (x, y)) in cells.iter().zip(&positions) {
+        imageops::replace(&mut atlas, image, i64::from(*x), i64::from(*y));
+        rects.push(FrameRect {
+            x: *x,
+            y: *y,
+            w: image.width(),
+            h: image.height(),
+            off_x: *off_x,
+            off_y: *off_y,
+        });
     }
 
     let layout = AnimationAtlas {
@@ -342,6 +474,7 @@ pub fn pack_animation(
             // sits below the feet, which is where the tile actually is.
             y: ((f64::from(ground_offset)) * character.scale).round() as u32,
         },
+        rects,
     };
     Ok((atlas, layout))
 }

@@ -1,5 +1,5 @@
 //! Thin entry point. Everything lives in the library, so the tests under
-//! `tests/` can reach it — an integration test cannot import a binary.
+//! `tests/` can reach it, an integration test cannot import a binary.
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

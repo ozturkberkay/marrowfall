@@ -1,7 +1,7 @@
 //! The pack stage and the previews, over synthetic baked frames.
 //!
 //! The bake itself needs Blender, but everything downstream of it reads loose
-//! PNGs off disk — so writing those directly exercises the whole tail of the
+//! PNGs off disk, so writing those directly exercises the whole tail of the
 //! pipeline, including the manifest the game loads.
 
 use image::{Rgba, RgbaImage};

@@ -117,7 +117,10 @@ fn bake_passes_the_character_once_and_every_animation_by_name() {
     );
     assert!(seen.contains("--python-use-system-env"), "got: {seen}");
     assert!(seen.contains("--directions\n8"), "got: {seen}");
-    assert!(seen.contains("--fps\n12"), "got: {seen}");
+    assert!(
+        seen.contains("--fps\nrun=24"),
+        "a rate per animation: {seen}"
+    );
 }
 
 #[test]

@@ -3,7 +3,7 @@
 //! Two calls are involved per character: one text-to-image for the front view,
 //! then image edits for every other view with the front attached as reference.
 //! Deriving the other views from the front is what keeps them the *same*
-//! character — a fresh prompt would produce a different one each time.
+//! character, a fresh prompt would produce a different one each time.
 
 use anyhow::{Context as _, Result, bail};
 use base64::Engine as _;
@@ -145,11 +145,11 @@ fn shared_rules(pose: &str) -> String {
          dark-fantasy game: HD painterly realism, muted and desaturated colours. \
          Strictly orthographic with zero perspective or lens distortion. \
          POSE: {pose} \
-         LIGHTING: even, flat, neutral light with minimal soft shadows — this is a \
+         LIGHTING: even, flat, neutral light with minimal soft shadows, this is a \
          reconstruction reference, so no dramatic or coloured lighting. \
          FRAMING: the whole body inside the frame, centred, nothing cropped; head near \
          the top edge and feet near the bottom. \
-         BACKGROUND: a completely flat, uniform, neutral grey (#8A8A8A) fill — no \
+         BACKGROUND: a completely flat, uniform, neutral grey (#8A8A8A) fill, no \
          ground, no cast shadow, no gradient, no props. The reconstructor segments \
          the subject from this backdrop, so it must stay perfectly even. \
          EXCLUDE: text, watermark, logo, UI, border, pedestal, scenery, second character, \

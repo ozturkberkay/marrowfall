@@ -1,0 +1,177 @@
+//! Runs the Marrowfall simulation on its own thread, and owns the two
+//! transports crossing that boundary: a command channel in (every message must
+//! arrive) and a latest-wins triple buffer out (a frontend only ever wants the
+//! newest snapshot, so superseded ones are dropped instead of queueing).
+//!
+//! This is a crate rather than a module of the frontend because the frontend
+//! cannot be tested: instantiating a Godot node needs a running engine, so
+//! anything living there is unreachable from the test harness. Keeping the
+//! pacing loop out here is what lets the catch-up cap and the shutdown path be
+//! exercised headlessly. It also has no engine dependency, though that part is
+//! nearly free: `Gd<T>` is not `Send`, so the compiler would have stopped a
+//! Godot handle crossing onto this thread wherever the code lived.
+
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use game::{RenderSnapshot, Sim, TICK_DT};
+use triple_buffer::{Input, Output, TripleBuffer};
+
+/// Control messages into the simulation thread.
+enum SimCommand {
+    /// Stop ticking and exit the thread.
+    Shutdown,
+}
+
+/// A snapshot and the deadline of the tick it describes.
+///
+/// The deadline travels inside the buffer rather than beside it so one atomic
+/// swap moves both: read separately, a publish landing between the two reads
+/// would pair a snapshot with another tick's deadline.
+///
+/// It cannot be derived as `epoch + tick * TICK_DT`, which is the obvious
+/// simplification. The catch-up cap in [`run`] resets the schedule against the
+/// wall clock, so a derived deadline drifts away from real pacing for good.
+#[derive(Clone)]
+struct Published {
+    snapshot: RenderSnapshot,
+    due_at: Instant,
+}
+
+/// The snapshot to draw, and how far into its tick this frame lands.
+#[derive(Debug)]
+pub struct Frame<'a> {
+    pub snapshot: &'a RenderSnapshot,
+    pub alpha: f32,
+}
+
+/// How far through a tick a frame lands: `0` at the tick's own deadline, `1` at
+/// the next one.
+///
+/// [`SimHandle::read`] applies this. It is public so the mapping is pinned by a
+/// test rather than by inspection.
+#[must_use]
+pub fn alpha_for(since_due: Duration) -> f32 {
+    (since_due.as_secs_f64() / TICK_DT).clamp(0.0, 1.0) as f32
+}
+
+/// Main-thread handle to the running simulation. Dropping it stops the thread
+/// and waits for it, so the simulation's lifetime tracks this value and
+/// nothing else.
+pub struct SimHandle {
+    commands: Sender<SimCommand>,
+    snapshots: Output<Published>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl SimHandle {
+    /// The newest tick, with the interpolation `alpha` for that same tick.
+    ///
+    /// The returned [`Frame`] keeps this handle borrowed, so nothing else on
+    /// the owner can be touched while it lives. Copy out what you need.
+    pub fn read(&mut self) -> Frame<'_> {
+        let published = self.snapshots.read();
+        let since_due = Instant::now().saturating_duration_since(published.due_at);
+        Frame {
+            snapshot: &published.snapshot,
+            alpha: alpha_for(since_due),
+        }
+    }
+
+    /// Whether the simulation thread is still running.
+    ///
+    /// A panicked thread stops publishing, and the triple buffer keeps handing
+    /// back the last snapshot with no error, so the world silently freezes.
+    /// Poll this to notice, and report it somewhere a person will see.
+    #[must_use]
+    pub fn is_alive(&self) -> bool {
+        self.thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+    }
+}
+
+impl Drop for SimHandle {
+    fn drop(&mut self) {
+        let _ = self.commands.send(SimCommand::Shutdown);
+        if let Some(thread) = self.thread.take() {
+            // A panic is reported through `is_alive`, not re-raised: unwinding
+            // out of a drop while already unwinding would abort the process.
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Spawns the simulation thread, moving `sim` onto it.
+///
+/// The returned handle is the only route to the simulation. Terrain and
+/// anything else read off `Sim` directly has to be taken before this call.
+pub fn spawn(sim: Sim) -> SimHandle {
+    let (commands, command_rx) = crossbeam_channel::unbounded();
+
+    // One clock read for the seed and the loop both, so alpha stays continuous
+    // across the seed-to-first-tick handover. Two would differ by however long
+    // spawning the thread took.
+    let epoch = Instant::now();
+    let seed = Published {
+        snapshot: sim.snapshot(),
+        due_at: epoch,
+    };
+    let (snapshot_tx, snapshots) = TripleBuffer::new(&seed).split();
+
+    let thread = thread::Builder::new()
+        .name("marrowfall-sim".into())
+        .spawn(move || run(sim, &command_rx, snapshot_tx, epoch))
+        .expect("failed to spawn simulation thread");
+
+    SimHandle {
+        commands,
+        snapshots,
+        thread: Some(thread),
+    }
+}
+
+/// Self-paced fixed-timestep loop: wait until the next deadline, run every due
+/// tick, publish a snapshot each. Catch-up is capped so a stall slows the sim
+/// rather than bursting.
+fn run(
+    mut sim: Sim,
+    commands: &Receiver<SimCommand>,
+    mut snapshots: Input<Published>,
+    epoch: Instant,
+) {
+    const MAX_CATCH_UP_TICKS: u32 = 5;
+    let tick_duration = Duration::from_secs_f64(TICK_DT);
+    let mut next_tick = epoch + tick_duration;
+
+    loop {
+        // Waiting for the deadline and listening for commands are the same
+        // operation. Sleeping first would leave a command sitting unread for
+        // most of a tick, which is a whole tick of input latency once intents
+        // travel this channel.
+        match commands.recv_deadline(next_tick) {
+            Ok(SimCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+
+        let mut ran = 0;
+        while Instant::now() >= next_tick {
+            sim.tick(&[]);
+            // The deadline this tick was due at, captured before it advances.
+            // Stamping `now` instead would fold this tick's compute time into
+            // alpha as jitter, which is what interpolation exists to remove.
+            snapshots.write(Published {
+                snapshot: sim.snapshot(),
+                due_at: next_tick,
+            });
+            next_tick += tick_duration;
+            ran += 1;
+            if ran >= MAX_CATCH_UP_TICKS {
+                // Too far behind: drop the lost time rather than burst-tick.
+                next_tick = Instant::now() + tick_duration;
+                break;
+            }
+        }
+    }
+}

@@ -42,11 +42,11 @@ Lock(
             note: Some("4 GLB(s)"),
         ),
         Bake: StageRecord(
-            fingerprint: "30dce4059f14f6d3",
-            note: Some("352 frames"),
+            fingerprint: "1c48f018e6c7eb2a",
+            note: Some("424 frames"),
         ),
         Pack: StageRecord(
-            fingerprint: "d7d365f9136e4b7d",
+            fingerprint: "75006f24f42e0a7e",
             note: Some("3 atlases → project/assets/characters/survivor/character.ron"),
         ),
     },

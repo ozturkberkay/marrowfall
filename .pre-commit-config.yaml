@@ -84,12 +84,6 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
-      - id: cargo-test
-        name: Cargo Test
-        entry: cargo nextest run --workspace
-        language: system
-        types: [rust]
-        pass_filenames: false
       - id: cargo-coverage
         name: Cargo Coverage
         entry: scripts/src/git_hooks/cargo_coverage.sh

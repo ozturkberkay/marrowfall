@@ -3,4 +3,4 @@
 // crash.
 #![allow(clippy::unwrap_used)]
 
-mod test_sim_thread;
+mod test_host;

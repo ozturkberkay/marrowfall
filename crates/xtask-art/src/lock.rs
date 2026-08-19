@@ -261,7 +261,7 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
             parts.push(format!("{}", spec.subject.height_meters));
             // The action ids, not the names: renaming an animation in the
             // library must not trigger a re-rig, which is several charges.
-            // A name that no longer resolves contributes nothing here — the
+            // A name that no longer resolves contributes nothing here, the
             // stage itself reports that far more clearly.
             let mut ids: Vec<u32> = spec
                 .animations
@@ -278,20 +278,24 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
             parts.push(format!("{ids:?}"));
         }
         Stage::Bake => {
-            // `sprite_height` is deliberately excluded — it is Pack's input,
+            // `sprite_height` is deliberately excluded, it is Pack's input,
             // and re-rendering hundreds of frames to change a downscale
             // target would be pure waste.
             parts.push(format!(
-                "{}/{}/{}/{}/{}",
+                "{}/{}/{}/{}",
                 spec.bake.directions,
                 spec.bake.render_size,
-                spec.bake.fps,
                 spec.bake.forearm_roll,
                 spec.bake.trim_start
             ));
             // The bake reads one file per animation, keyed on the library's
-            // name — not the action id, which only the paid stages use.
-            parts.extend(spec.animations.iter().cloned());
+            // name, not the action id, which only the paid stages use. The
+            // rate rides along because it decides the frame count.
+            parts.extend(spec.animations.iter().map(|name| {
+                library
+                    .get(name)
+                    .map_or_else(|_| name.clone(), |a| format!("{name}@{}", a.fps))
+            }));
         }
         Stage::Pack => {
             parts.push(spec.name.clone());
@@ -316,7 +320,7 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
 /// 2: shared camera framing and ground line, root-motion travel stripped.
 pub const LOCAL_PIPELINE_VERSION: u32 = 2;
 
-/// FNV-1a. Not cryptographic — this only needs to detect edits, and avoiding a
+/// FNV-1a. Not cryptographic, this only needs to detect edits, and avoiding a
 /// hashing dependency keeps the tool's dependency surface small.
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;

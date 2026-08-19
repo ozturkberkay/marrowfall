@@ -2,7 +2,7 @@
 
 This is the Diablo-II method: render a 3D character from a fixed isometric
 camera through N compass directions x every animation, and ship the resulting
-2D frames. The mesh never reaches the game — only the pixels do.
+2D frames. The mesh never reaches the game, only the pixels do.
 
 Blender is scripted in Python because that is the only way it can be scripted:
 its CLI can render a `.blend` someone already authored, but importing a GLB,
@@ -33,7 +33,7 @@ Output: <out>/<animation>_<direction>_<frame>.png. Packing them into atlases is
 `cargo art`'s job.
 
 Conventions:
-  - Camera is ORTHOGRAPHIC at 35 degrees elevation — the tile grid is 2:1
+  - Camera is ORTHOGRAPHIC at 35 degrees elevation, the tile grid is 2:1
     dimetric, and the character must be drawn to the same projection.
   - The CHARACTER rotates and the camera/lights stay fixed, so the key light
     always falls from screen upper-left regardless of facing.
@@ -114,11 +114,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--directions", type=int, default=8)
     parser.add_argument(
         "--fps",
-        type=int,
-        default=12,
-        help="Sprite frames sampled per second of animation. Each animation's "
-        "frame count follows from its own duration, so every one plays at its "
-        "authored speed from a single playback rate.",
+        action="append",
+        default=[],
+        metavar="NAME=RATE",
+        help="Sprite frames sampled per second, once per animation. Frame count "
+        "follows from each animation's own duration, so a clip keeps its "
+        "authored speed whatever rate it is sampled at.",
     )
     parser.add_argument("--size", type=int, default=256)
     parser.add_argument(
@@ -149,7 +150,7 @@ def settings_from(args: argparse.Namespace) -> BakeSettings:
     """Validates the raw command line into the checked settings object."""
     return BakeSettings(
         directions=args.directions,
-        fps=args.fps,
+        fps=parse_rates(args.fps),
         size=args.size,
         trim_start=args.trim_start,
         forearm_roll=args.forearm_roll,
@@ -165,7 +166,7 @@ def import_glb(path: Path) -> Character:
 
     Generated exports can carry helper geometry alongside the character (an
     Icosphere, for instance). Only skinned meshes are part of the character, so
-    anything without an armature modifier is deleted — otherwise it both renders
+    anything without an armature modifier is deleted, otherwise it both renders
     into the sprite and corrupts the camera framing.
     """
     if not path.exists():
@@ -174,7 +175,7 @@ def import_glb(path: Path) -> Character:
 
     armature = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
     if armature is None:
-        sys.exit("error: no armature in GLB — re-export with rigging enabled")
+        sys.exit("error: no armature in GLB, re-export with rigging enabled")
     all_meshes = [o for o in bpy.data.objects if o.type == "MESH"]
     if not all_meshes:
         sys.exit("error: GLB contains no mesh")
@@ -194,7 +195,7 @@ def evaluated_bounds(meshes: list[bpy.types.Object]) -> Bounds:
     """World-space min/max of the meshes as currently posed.
 
     Reads the evaluated (post-modifier) mesh so the armature deformation is
-    included — object bound_box reflects the rest pose only.
+    included, object bound_box reflects the rest pose only.
     """
     depsgraph = bpy.context.evaluated_depsgraph_get()
     lo = [math.inf] * 3
@@ -218,7 +219,7 @@ def measure_framing(
 
     Two things make rest-pose framing wrong. A running character reaches
     further than a standing one, and the character *spins* about the axis for
-    the direction ring — so what must fit is the radius swept about that axis,
+    the direction ring, so what must fit is the radius swept about that axis,
     not the extent in any single facing.
     """
     lo_z, hi_z = math.inf, -math.inf
@@ -231,7 +232,7 @@ def measure_framing(
             start,
             end,
             bpy.context.scene.render.fps,
-            settings.fps,
+            settings.fps[animation.name],
             settings.trim_start,
         ):
             bpy.context.scene.frame_set(frame)
@@ -267,7 +268,7 @@ def inspect(character: Character) -> None:
         start, end = (int(v) for v in action.frame_range)
         print(f'  "{action.name}"  frames {start}-{end}')
     if not bpy.data.actions:
-        print("  NONE — was the animation exported?")
+        print("  NONE, was the animation exported?")
 
     bounds = evaluated_bounds(character.meshes)
     print("\nrest-pose bounds (Blender axes, Z up):")
@@ -302,7 +303,7 @@ def setup_lighting() -> None:
     key.rotation_euler = key_light_rotation()
     bpy.context.collection.objects.link(key)
 
-    # Ambient fill via world colour — lifts shadows so detail stays legible
+    # Ambient fill via world colour, lifts shadows so detail stays legible
     # once the sprite is downscaled and composited over a dark tile.
     world = bpy.data.worlds.new("world")
     world.use_nodes = True
@@ -419,12 +420,12 @@ def strip_root_motion(armature: bpy.types.Object) -> None:
 
     Library animations usually travel: a walk-backward moves along -Y. The game
     moves the character itself, so a travelling animation would slide out of
-    frame — and because the camera is tilted, horizontal travel projects onto
+    frame, and because the camera is tilted, horizontal travel projects onto
     the *vertical* screen axis too, inflating the crop for every frame.
 
     Only the horizontal channels are pinned. Flattening the vertical one too
     would delete the run cycle's bob and leave a jump permanently on the
-    ground — that is animation, not travel.
+    ground, that is animation, not travel.
 
     Translation is flattened to its first-frame value rather than zeroed, so the
     character keeps whatever offset the rig was authored with.
@@ -437,8 +438,11 @@ def strip_root_motion(armature: bpy.types.Object) -> None:
         for name in roots:
             path = f'pose.bones["{name}"].location'
             for curve in (fc for fc in action_fcurves(action) if fc.data_path == path):
-                # glTF bone space is Y-up, so index 1 is the vertical channel.
-                if curve.array_index == 1:
+                # Index 2 is the vertical channel. Measured, not assumed: the
+                # Hips rest matrix maps local Z to world Z on this rig, and a
+                # run's bob shows up there (0.095 units) while its horizontal
+                # travel does not (0.029 and 0.011).
+                if curve.array_index == 2:
                     continue
                 points = curve.keyframe_points
                 if not points:
@@ -469,7 +473,7 @@ def take_action(path: Path, target: bpy.types.Object, name: str) -> bpy.types.Ac
     """Loads one action out of `path` and hands it to `target`'s armature.
 
     Animation-only files still carry an armature, because glTF animations target
-    nodes inside their own file — the format has no cross-file reference. The
+    nodes inside their own file, the format has no cross-file reference. The
     imported armature is therefore thrown away after its action has been taken;
     bone names match, so the action drives the character's own skeleton.
     """
@@ -510,7 +514,7 @@ def take_action(path: Path, target: bpy.types.Object, name: str) -> bpy.types.Ac
     if missing:
         sys.exit(
             f"error: {path} animates bones absent from the character: "
-            f"{missing[:5]} — the animation and the character come from "
+            f"{missing[:5]}, the animation and the character come from "
             "different rigs"
         )
     if off := bind_pose_mismatch(bone_directions(target), source_bind):
@@ -565,7 +569,11 @@ def bake(
         assign_action(character.armature, animation.action)
         start, end = animation.action.frame_range
         frames = sampled_frames(
-            start, end, scene.render.fps, settings.fps, settings.trim_start
+            start,
+            end,
+            scene.render.fps,
+            settings.fps[animation.name],
+            settings.trim_start,
         )
         total += len(frames) * len(directions)
 
@@ -583,6 +591,17 @@ def bake(
         )
 
     print(f"\ndone: {total} frames -> {out}")
+
+
+def parse_rates(entries: list[str]) -> dict[str, int]:
+    """`NAME=RATE` pairs into a mapping, one per animation."""
+    rates = {}
+    for entry in entries:
+        name, _, rate = entry.partition("=")
+        if not rate.isdigit():
+            sys.exit(f"error: --fps needs NAME=RATE, got {entry!r}")
+        rates[name] = int(rate)
+    return rates
 
 
 def load_animations(entries: list[str], character: Character) -> list[Animation]:
@@ -616,6 +635,9 @@ def main() -> None:
     clear_scene()
     character = import_glb(args.character)
     animations = load_animations(args.animation, character)
+    missing = [a.name for a in animations if a.name not in settings.fps]
+    if missing:
+        sys.exit(f"error: no --fps given for {', '.join(missing)}")
 
     # Fix-ups must run after the actions are in, since both edit F-curves.
     apply_forearm_roll(character.armature, settings.forearm_roll)

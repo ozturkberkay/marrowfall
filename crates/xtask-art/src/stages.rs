@@ -1,8 +1,7 @@
 //! The pipeline stages themselves.
 //!
 //! Each stage is a function taking the spec and paths, producing files on disk
-//! and a [`StageRecord`] for the lock. Stages never decide *whether* to run —
-//! that is the driver's job in `main.rs` — so they stay easy to reason about
+//! and a [`StageRecord`] for the lock. Stages never decide *whether* to run, //! that is the driver's job in `main.rs`, so they stay easy to reason about
 //! and to invoke individually.
 
 use std::collections::BTreeMap;
@@ -82,7 +81,7 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
         let path = paths.concept(view);
         let bytes = std::fs::read(&path).with_context(|| {
             format!(
-                "missing concept {} — run the concept stage first",
+                "missing concept {}, run the concept stage first",
                 path.display()
             )
         })?;
@@ -149,7 +148,7 @@ pub async fn rig(
             let model = already_done
                 .iter()
                 .find(|task| matches!(task, TaskRef::Model { .. }))
-                .context("no model task recorded — run the model stage first")?;
+                .context("no model task recorded, run the model stage first")?;
             let task = client
                 .run(
                     Endpoint::Rigging,
@@ -218,7 +217,7 @@ pub async fn rig(
     })
 }
 
-/// Fetches the finished GLBs — the checkpoint everything downstream rebuilds
+/// Fetches the finished GLBs, the checkpoint everything downstream rebuilds
 /// from: the rigged character, plus one file per animation.
 pub async fn download(paths: &Paths, root: &Path, tasks: &[TaskRef]) -> Result<StageRecord> {
     let client = meshy::Client::from_env()?;
@@ -252,7 +251,7 @@ pub async fn download(paths: &Paths, root: &Path, tasks: &[TaskRef]) -> Result<S
 
     anyhow::ensure!(
         downloaded > 0,
-        "nothing to download — run the model and rig stages first"
+        "nothing to download, run the model and rig stages first"
     );
     Ok(StageRecord {
         note: Some(format!("{downloaded} GLB(s)")),
@@ -299,7 +298,7 @@ pub fn bake(
     let character = paths.character_glb();
     anyhow::ensure!(
         character.exists(),
-        "no character at {} — run the download stage first",
+        "no character at {}, run the download stage first",
         character.display()
     );
 
@@ -311,16 +310,18 @@ pub fn bake(
 
     let mut command = blender_command(&script, paths, spec, repo_root)?;
     command.arg("--character").arg(&character);
-    for (name, _) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
+    for (name, animation) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
         let glb = AnimationLibrary::glb(repo_root, name);
         anyhow::ensure!(
             glb.exists(),
-            "missing animation {} — run the download stage first",
+            "missing animation {}, run the download stage first",
             glb.display()
         );
         command
             .arg("--animation")
-            .arg(format!("{name}={}", glb.display()));
+            .arg(format!("{name}={}", glb.display()))
+            .arg("--fps")
+            .arg(format!("{name}={}", animation.fps));
     }
     run_blender(command)?;
 
@@ -350,13 +351,13 @@ const BLENDER_SRC: &str = "tools/blender/src";
 
 /// Site-packages of the project's virtualenv, handed to Blender's embedded
 /// interpreter. The Python minor version must match Blender's, because
-/// pydantic ships a compiled core — hence the glob.
+/// pydantic ships a compiled core, hence the glob.
 pub fn venv_site_packages(repo_root: &Path) -> Result<PathBuf> {
     let lib = repo_root.join(".venv/lib");
     let mut candidates: Vec<(u32, u32, PathBuf)> = std::fs::read_dir(&lib)
         .with_context(|| {
             format!(
-                "no virtualenv at {} — run `uv sync`",
+                "no virtualenv at {}, run `uv sync`",
                 repo_root.join(".venv").display()
             )
         })?
@@ -378,7 +379,7 @@ pub fn venv_site_packages(repo_root: &Path) -> Result<PathBuf> {
     candidates
         .pop()
         .map(|(_, _, site)| site)
-        .with_context(|| format!("no site-packages under {} — run `uv sync`", lib.display()))
+        .with_context(|| format!("no site-packages under {}, run `uv sync`", lib.display()))
 }
 
 /// Locates the Blender executable. Overridable for a test stub, or an
@@ -419,8 +420,6 @@ fn blender_command(
         .arg(paths.staging())
         .arg("--directions")
         .arg(spec.bake.directions.to_string())
-        .arg("--fps")
-        .arg(spec.bake.fps.to_string())
         .arg("--size")
         .arg(spec.bake.render_size.to_string())
         .arg("--trim-start")
@@ -433,7 +432,7 @@ fn blender_command(
 fn run_blender(mut command: Command) -> Result<()> {
     let output = command
         .output()
-        .context("running blender — is it on PATH?")?;
+        .context("running blender, is it on PATH?")?;
     if !output.status.success() {
         // Blender writes diagnostics to both streams; showing one of them
         // routinely hides the actual cause.
@@ -481,7 +480,7 @@ pub fn pack(
             frames,
             directions,
             file.clone(),
-            spec.bake.fps,
+            animation.fps,
             animation.loops,
             &character,
         )?;
@@ -489,6 +488,7 @@ pub fn pack(
         atlas
             .save(&dest)
             .with_context(|| format!("writing atlas {}", dest.display()))?;
+        pack::write_import_settings(&dest)?;
         animations.insert(name.clone(), layout);
     }
 
