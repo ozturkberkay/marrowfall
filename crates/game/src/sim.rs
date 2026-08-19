@@ -1,9 +1,9 @@
 use glam::Vec2;
 
-use crate::Intent;
-use crate::components::{Facing, Position, Velocity};
-use crate::snapshot::{EntityView, RenderSnapshot};
+use crate::components::{Facing, Player, Position, Velocity};
+use crate::snapshot::{EntityView, Locomotion, RenderSnapshot};
 use crate::terrain::TerrainGrid;
+use crate::{Input, Intent};
 
 /// Simulation ticks per second. Frontends must call [`Sim::tick`] at this
 /// rate (via a fixed-timestep accumulator) for real-time play.
@@ -20,6 +20,14 @@ const TICK_DT_F32: f32 = 1.0 / TICK_HZ as f32;
 /// zone-driven once real worldgen lands.
 const WORLD_SIZE: u32 = 24;
 
+/// How fast held input walks the player, in tile units per second.
+///
+/// A playtest starting point, not a derived figure: the bake's camera
+/// elevation does not match the tile projection, so sprite height is
+/// foreshortened while ground travel is not, and no arithmetic turns one into
+/// the other. Tune it by eye against the run cycle's foot slide.
+pub const PLAYER_SPEED: f32 = 4.0;
+
 /// What to create an entity with. Named fields, so `at` and `velocity` cannot
 /// be swapped at a call site, and later components are additive.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -28,6 +36,9 @@ pub struct Spawn {
     /// Tile units per second, or `None` for something that never moves, which
     /// integration then skips entirely.
     pub velocity: Option<Vec2>,
+    /// Whether held input drives this entity. At most one should be `true`
+    /// today; a second would simply be driven by the same input.
+    pub player: bool,
 }
 
 /// The authoritative game world.
@@ -38,10 +49,21 @@ pub struct Sim {
 }
 
 impl Sim {
-    /// A world holding nothing but terrain.
+    /// Terrain plus the survivor, standing at the middle of the field.
+    ///
+    /// Stands in for worldgen and a new-game flow until those land.
     #[must_use]
     pub fn new(seed: u64) -> Self {
-        Self::with_entities(seed, &[]).0
+        let middle = Vec2::new((WORLD_SIZE / 2) as f32, (WORLD_SIZE / 2) as f32);
+        Self::with_entities(
+            seed,
+            &[Spawn {
+                at: middle,
+                velocity: Some(Vec2::ZERO),
+                player: true,
+            }],
+        )
+        .0
     }
 
     /// A world with a starting cast, and their [`EntityView::id`]s in the
@@ -54,7 +76,8 @@ impl Sim {
     /// # Panics
     /// If any position or velocity is not finite. A non-finite position
     /// spreads through every later tick and makes a snapshot unequal to
-    /// itself, which would break any replay comparison.
+    /// itself, which would break any replay comparison. Also if a player spawn
+    /// carries no velocity, since nothing could then move it.
     #[must_use]
     pub fn with_entities(seed: u64, entities: &[Spawn]) -> (Self, Vec<u64>) {
         let mut sim = Self {
@@ -94,18 +117,26 @@ impl Sim {
             "spawn velocity must be finite"
         );
 
-        let position = Position::new(spawn.at);
-        let entity = match spawn.velocity {
-            Some(velocity) => self
-                .world
-                .spawn((position, Facing::South, Velocity(velocity))),
-            None => self.world.spawn((position, Facing::South)),
-        };
-        entity.to_bits().get()
+        assert!(
+            !spawn.player || spawn.velocity.is_some(),
+            "a player spawn must carry a velocity, or input could not move it"
+        );
+
+        let mut entity = hecs::EntityBuilder::new();
+        entity.add(Position::new(spawn.at)).add(Facing::South);
+        if let Some(velocity) = spawn.velocity {
+            entity.add(Velocity(velocity));
+        }
+        if spawn.player {
+            entity.add(Player);
+        }
+        self.world.spawn(entity.build()).to_bits().get()
     }
 
     /// Advances the world by exactly one [`TICK_DT`] step.
-    pub fn tick(&mut self, intents: &[Intent]) {
+    ///
+    /// `input` is read once, so skipping ticks loses no held state.
+    pub fn tick(&mut self, input: Input, intents: &[Intent]) {
         // `Intent` is uninhabited until the first gameplay milestone; there
         // is nothing to dispatch yet.
         let _ = intents;
@@ -117,7 +148,11 @@ impl Sim {
         // `current` yet, so no test catches that; the first teleport has to
         // arrive with one.
         self.carry_positions_forward();
+        // Before integration, so a key pressed this tick lands this tick.
+        self.apply_input(input);
         self.apply_velocity();
+        // Shortens a move rather than jumping, so it has to precede facing.
+        self.keep_player_on_the_field();
         // Reads the motion actually applied, so it has to follow everything
         // that can move an entity this tick, collision included.
         self.apply_facing();
@@ -133,13 +168,14 @@ impl Sim {
     pub fn snapshot(&self) -> RenderSnapshot {
         let entities = self
             .world
-            .query::<(hecs::Entity, &Position, &Facing)>()
+            .query::<(hecs::Entity, &Position, &Facing, Option<&Velocity>)>()
             .iter()
-            .map(|(entity, position, facing)| EntityView {
+            .map(|(entity, position, facing, velocity)| EntityView {
                 id: entity.to_bits().get(),
                 pos: position.current,
                 prev_pos: position.previous,
                 facing: *facing,
+                locomotion: locomotion_of(velocity),
             })
             .collect();
 
@@ -147,7 +183,16 @@ impl Sim {
             tick: self.ticks,
             time: self.time(),
             entities,
+            player: self.player_id(),
         }
+    }
+
+    fn player_id(&self) -> Option<u64> {
+        self.world
+            .query::<hecs::With<hecs::Entity, &Player>>()
+            .iter()
+            .next()
+            .map(|entity| entity.to_bits().get())
     }
 
     fn carry_positions_forward(&mut self) {
@@ -167,9 +212,44 @@ impl Sim {
         }
     }
 
+    /// Held input is the player's velocity outright, not a force: this is a
+    /// game of exact positioning, so a key press has to move him this tick.
+    fn apply_input(&mut self, input: Input) {
+        let velocity = input.move_dir() * PLAYER_SPEED;
+        for player in self.world.query_mut::<hecs::With<&mut Velocity, &Player>>() {
+            player.0 = velocity;
+        }
+    }
+
+    /// Stops the player at the edge of the painted field, which the camera
+    /// follows him to. A placeholder for collision: it shortens a move instead
+    /// of blocking it, so only the blocked axis stops and he slides along an
+    /// edge. `previous` is deliberately untouched, see [`Position`].
+    ///
+    /// Player only. Everything else may leave, and the integration tests rely
+    /// on that.
+    fn keep_player_on_the_field(&mut self) {
+        let far = Vec2::new(
+            (self.terrain.width() - 1) as f32,
+            (self.terrain.height() - 1) as f32,
+        );
+        for position in self.world.query_mut::<hecs::With<&mut Position, &Player>>() {
+            position.current = position.current.clamp(Vec2::ZERO, far);
+        }
+    }
+
     fn apply_velocity(&mut self) {
         for (position, velocity) in self.world.query_mut::<(&mut Position, &Velocity)>() {
             position.current += velocity.0 * TICK_DT_F32;
         }
+    }
+}
+
+/// Running whenever a velocity is asking for motion, even where a wall means
+/// none happens. Derived here so nothing holds a second copy of it.
+fn locomotion_of(velocity: Option<&Velocity>) -> Locomotion {
+    match velocity {
+        Some(Velocity(asked)) if *asked != Vec2::ZERO => Locomotion::Running,
+        _ => Locomotion::Idle,
     }
 }
