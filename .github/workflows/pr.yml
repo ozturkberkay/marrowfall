@@ -29,7 +29,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       rust: ${{ steps.filter.outputs.rust }}
       lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_any == 'true' }}
-      unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
+      unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
       security_audit_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_security_audit == 'true' }}
       rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
     steps:
@@ -95,6 +95,7 @@ jobs:
     uses: ./.github/workflows/unit_test.yml
     with:
       shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
+      python: ${{ needs.prepare.outputs.python == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
 
   security_audit:
     needs: prepare

@@ -7,9 +7,16 @@ on:
         description: Run shell unit tests
         type: boolean
         default: false
+      python:
+        description: Run Python (Blender) unit tests
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       shell:
+        type: boolean
+        default: true
+      python:
         type: boolean
         default: true
 
@@ -38,3 +45,26 @@ jobs:
 
       - name: Run bashunit tests
         run: find scripts/tests -type f -name 'test_*.sh' -exec ./lib/bashunit {} +
+
+  pytest:
+    name: Python Unit
+    if: inputs.python
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      # Test paths and the 100 percent coverage gate both come from
+      # `[tool.pytest.ini_options]`, so CI and a local run cannot drift.
+      - name: Run pytest
+        run: uv run pytest
