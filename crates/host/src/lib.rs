@@ -15,8 +15,10 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use game::{RenderSnapshot, Sim, TICK_DT};
-use triple_buffer::{Input, Output, TripleBuffer};
+use game::{Input, RenderSnapshot, Sim, TICK_DT};
+// `Input` is aliased: `game::Input` is the held player input this crate
+// carries, and the buffer's write end is not it.
+use triple_buffer::{Input as Writer, Output, TripleBuffer};
 
 /// Control messages into the simulation thread.
 enum SimCommand {
@@ -138,7 +140,7 @@ pub fn spawn(sim: Sim) -> SimHandle {
 fn run(
     mut sim: Sim,
     commands: &Receiver<SimCommand>,
-    mut snapshots: Input<Published>,
+    mut snapshots: Writer<Published>,
     epoch: Instant,
 ) {
     const MAX_CATCH_UP_TICKS: u32 = 5;
@@ -157,7 +159,7 @@ fn run(
 
         let mut ran = 0;
         while Instant::now() >= next_tick {
-            sim.tick(&[]);
+            sim.tick(Input::default(), &[]);
             // The deadline this tick was due at, captured before it advances.
             // Stamping `now` instead would fold this tick's compute time into
             // alpha as jitter, which is what interpolation exists to remove.

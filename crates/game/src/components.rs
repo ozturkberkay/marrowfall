@@ -10,9 +10,13 @@ use glam::Vec2;
 /// and threshold crossing read it too, and every reader must run after the
 /// tick has carried it forward.
 ///
-/// Anything that assigns `current` outside integration (teleport, knockback,
+/// Anything that *jumps* `current` outside integration (teleport, knockback,
 /// collision snap-out) must assign `previous` to match, or the entity
 /// interpolates across the whole jump for one tick.
+///
+/// Shortening a move is the opposite case and must leave `previous` alone: the
+/// field clamp writes a nearer `current` on the same journey, and carrying
+/// `previous` with it would erase the motion that facing reads.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Position {
     pub current: Vec2,
@@ -36,6 +40,13 @@ impl Position {
 /// skipped by integration and drawn where they stand.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Velocity(pub Vec2);
+
+/// Marks the entity held input drives.
+///
+/// A marker rather than an id on [`crate::Sim`], so the world stays the single
+/// source of truth and nothing has to be cleared on despawn. Extends to a
+/// possessed entity or a second local player unchanged.
+pub struct Player;
 
 /// Which way an entity looks, one of eight, named for the screen direction it
 /// points.
@@ -97,5 +108,23 @@ impl Facing {
         let x = quantised_sign(direction.x, direction.y);
         let y = quantised_sign(direction.y, direction.x);
         Some(BY_SIGN[((y + 1) * 3 + (x + 1)) as usize])
+    }
+
+    /// The compass name the art pipeline gives this direction's atlas row.
+    ///
+    /// Here rather than in a frontend so the vocabulary is not copied a third
+    /// time: the pipeline's packer and its Blender bake already spell it out.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::South => "s",
+            Self::SouthEast => "se",
+            Self::East => "e",
+            Self::NorthEast => "ne",
+            Self::North => "n",
+            Self::NorthWest => "nw",
+            Self::West => "w",
+            Self::SouthWest => "sw",
+        }
     }
 }

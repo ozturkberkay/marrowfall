@@ -3,6 +3,7 @@
 // crash.
 #![allow(clippy::unwrap_used)]
 
+mod test_input;
 mod test_sim;
 mod test_snapshot;
 mod test_terrain;

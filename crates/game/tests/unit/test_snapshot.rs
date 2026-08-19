@@ -1,4 +1,4 @@
-use game::{EntityView, Facing, Vec2};
+use game::{EntityView, Facing, Locomotion, Vec2};
 
 #[test]
 fn lerp_blends_between_the_two_ends_of_a_tick() {
@@ -7,6 +7,7 @@ fn lerp_blends_between_the_two_ends_of_a_tick() {
         prev_pos: Vec2::ZERO,
         pos: Vec2::new(10.0, -4.0),
         facing: Facing::South,
+        locomotion: Locomotion::Running,
     };
 
     assert_eq!(view.lerp(0.25), Vec2::new(2.5, -1.0));
@@ -20,6 +21,7 @@ fn lerp_clamps_alpha_to_this_tick() {
         prev_pos: Vec2::new(1.0, 1.0),
         pos: Vec2::new(5.0, 1.0),
         facing: Facing::South,
+        locomotion: Locomotion::Running,
     };
 
     assert_eq!(view.lerp(2.0), view.pos);
