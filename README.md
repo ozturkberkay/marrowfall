@@ -6,165 +6,60 @@
 
 A single-player isometric action-RPG sandbox set in a dying medieval world.
 
-Built as a headless, engine-agnostic Rust simulation with Godot 4 as a thin
-rendering/input frontend.
+# Architecture
 
-## Layout
+## Summary
 
-| Path | Role |
-|---|---|
-| `crates/game` | **The entire game.** Pure Rust simulation: ECS world, fixed 60 Hz tick, deterministic worldgen. Never depends on Godot. |
-| `crates/host` | Runs the sim on its own thread at a fixed 60 Hz and owns the two boundary transports. Depends on no engine, which is why it is a crate and not a module of `render`. |
-| `crates/render` | Godot frontend (gdext). Translates input, draws snapshots. The only crate that touches Godot. |
-| `crates/xtask-art` | The character art pipeline, run as `cargo art`. Concept art to sprite atlases. |
-| `project/` | The Godot 4 project: scenes, assets, tilesets. Open this in the editor. |
-| `art/` | `characters/<name>/` holds one character's spec and its AI-generated checkpoints; `animations/` is the motion library every character shares; `brand/` is hand-authored artwork like the logo. |
-| `data/` | Authored game data (items, recipes, enemies), arrives with the first gameplay milestone. |
+- Built as a headless, engine-agnostic, deterministic Rust simulation with
+  Godot as a thin rendering/input frontend.
+- The sim runs on a **dedicated thread** owned by `crates/host`.
+- Crossbeam channel carries commands from the frontend into the sim.
 
-## Architecture
+## Monorepo Layout
 
-- The sim runs on a **dedicated thread** owned by `crates/host`, ticking at a
-  fixed 60 Hz ("Fix Your Timestep" accumulator). `host` has no engine
-  dependency, so it *cannot* touch Godot; and because most Godot classes are
-  not thread-safe, all `Gd<T>` access stays on `render`'s main thread.
-- **Boundary transports:** a crossbeam channel carries commands into the sim
-  (every message matters); a `triple_buffer` carries `RenderSnapshot`s out
-  (latest-wins, so superseded snapshots are dropped, never queued) along with
-  the deadline of the tick they describe, which is what the frontend
-  interpolates against. One-tick events (hits, deaths) will take their own
-  reliable channel rather than the latest-wins buffer. Input splits in two:
-  held state latest-wins, discrete actions reliable, which is what keeps
-  movement independent of frame rate.
-- **Boundary protocol:** plain-data types (`Intent`, `RenderSnapshot`) defined
-  in `crates/game`. No engine handles ever cross the boundary.
-- **Determinism:** no wall clock, no OS randomness inside the sim. Same seed +
-  same intent stream ⇒ same world. This is what makes saves, replays, and
-  headless testing cheap.
-
-## Prerequisites
-
-`brew bundle install --file=Brewfile` covers all of these, and
-`source scripts/src/includes.sh && setup` runs the whole first-time setup.
-(The scripts under `scripts/src/` define functions; `includes.sh` loads them all.)
-
-- Rust (exact version pinned in `rust-toolchain.toml`; rustup installs it
-  automatically)
-- Godot **4.7.x** (standard build, not .NET)
-- Blender **4.4+**, only for the art pipeline, which renders sprites from 3D
-- `uv`, only for the art pipeline's Blender scripts
-
-## Build & run
-
-```sh
-cargo build                                # builds the GDExtension library
-godot --headless --path project --import   # once per clone, see below
-godot --path project                       # run the game
+```text
+.
+├── crates/
+│   ├── game/                 # Pure Rust simulation
+│   ├── host/                 # Sim runner (thread + channels)
+│   ├── render/               # Godot frontend (gdext)
+│   └── xtask-art/            # The character art pipeline
+├── project/                  # Godot project
+├── art/                      # Concepts, sprites, animations, branding
+├── scripts/                  # Shell scripts and git hooks
+├── docs/                     # Design docs, blog posts etc.
+└── Cargo.toml                # Rust workspace root
 ```
 
-Godot's imported textures live in `project/.godot/`, which is not committed, so
-a fresh clone has to import once before the game can load any asset. Run it
-again after `cargo art` produces new atlases.
+## Local Development
 
-The Godot project loads the extension straight from `target/` (see
-`project/rust.gdextension`), no copy step.
+### Setup
 
-## Dev loop
+1. Install the pre-requisites and setup the game:
 
-```sh
-cargo nextest run -p game                 # headless sim tests (fast loop)
-cargo nextest run --workspace             # every crate
-./scripts/src/git_hooks/cargo_coverage.sh # coverage, must stay above 96%
-cargo clippy --workspace --all-targets    # lints
-cargo fmt                                 # formatting
-```
+    ```bash
+    source scripts/src/includes.sh
+    setup
+    ```
+
+2. Run the game:
+
+    ```bash
+    godot --path project
+    ```
+
+### Testing
+
+Three-tier test architecture. Every crate keeps its tests in a sibling
+`tests/` directory, never next to source files, which means a test only ever
+sees that crate's public API. Each tier is its own Cargo test target, and that
+is what lets one command run a whole tier across the workspace:
+
+| Tier | Dependencies | Command | Wired in |
+| ----------- | ------------------------------------- | -------------------------------------------------- | --------------------------- |
+| Unit | Mocks only, zero I/O | `cargo nextest run --workspace --test unit` | `game`, `host`, `xtask-art` |
+| Integration | Real threads and channels, no engine | `cargo nextest run --workspace --test integration` | nothing yet |
+| E2E | Black box, launches `godot --headless` | `cargo nextest run --workspace --test e2e` | nothing yet |
 
 > **gdext gotcha:** after recompiling Rust, restart the Godot editor, the
 > running editor does not reliably pick up a rebuilt library.
-
-## Art pipeline
-
-`cargo art` takes a character from a written description to sprite atlases the
-game can load.
-
-```sh
-cargo art new skeleton --kind humanoid    # scaffold art/characters/skeleton/spec.ron
-# describe the character in that file
-cargo art run skeleton                    # run the pipeline, pausing for review
-cargo art status skeleton                 # what is done, stale or pending
-cargo art check                           # validate every character spec
-```
-
-The pipeline splits at the GLB. Concept art and the 3D model are generated by
-paid APIs and cannot be reproduced, so they are committed alongside the spec in
-`art/characters/<name>/` as
-checkpoints. Everything after, the Blender bake and sprite packing, is
-deterministic and free to re-run, so changing a sprite setting never re-spends
-credits:
-
-```sh
-cargo art run skeleton --from bake        # re-render sprites only
-```
-
-Animations are stored the way engines store them, and **shared**. Meshy rigs
-every humanoid onto the same 24-bone skeleton, and almost all of a clip is bone
-*rotation*, which does not depend on a character's proportions, so a run cycle
-bought once drives every later character for free. `art/animations/library.ron`
-declares each motion once (its Meshy id, whether it loops); a character spec
-lists names:
-
-```ron
-animations: ["idle", "run", "run_back"],
-```
-
-Ten characters wanting the same five animations therefore cost five purchases,
-not fifty.
-
-### Stages
-
-Six stages, fixed in code (`Stage::all`), not declared per character. They are
-what `art/characters/<name>.lock` records:
-
-| Stage | Cost | Runs in | Does |
-|---|---|---|---|
-| `concept` | paid | Rust | Turns the written description into front/back concept art. |
-| `model` | paid | Rust | Concept art to a textured 3D mesh. |
-| `rig` | paid | Rust | Adds a skeleton, then one animation clip per entry in `animations`. |
-| `download` | free | Rust | Fetches the finished GLBs and splits them: mesh once, one file per clip. |
-| `bake` | free | **Blender** | Renders every clip through 8 compass directions into loose PNG frames. |
-| `pack` | free | Rust | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads. |
-
-The `.ron` spec describes the *character*; the `.lock` records *what has been
-built*. So `pack` appears in the lock without appearing in the spec, its
-settings live in the spec's `bake` block, which is one block of sprite settings
-shared by the last two stages rather than one block per stage.
-
-The pipeline is Rust. `art/pipeline/` holds the two Blender scripts, the only
-Python in the repo, because `bpy` is Python-only and Blender is the one tool
-that cannot be driven any other way. `cargo art` shells out to
-`blender --background --python …` for the bake and the split, and does
-everything else itself.
-
-## Version pins
-
-`godot` (gdext) is pre-1.0 and makes periodic breaking changes; it is pinned
-in the workspace `Cargo.toml` with the `api-4-7` feature, which must match
-both the installed engine minor version and `compatibility_minimum` in
-`project/rust.gdextension`. Upgrade all three together.
-
-## License
-
-The source code is **GPL-3.0-or-later** with an additional permission
-covering proprietary storefront SDKs, so a build may link the Steamworks SDK
-without that combination triggering copyleft over the SDK itself. Full text
-and the exact wording of the exception are in [LICENSE](LICENSE).
-
-`art/` is **not** covered by that license. It is proprietary, all rights
-reserved; see [art/LICENSE](art/LICENSE). Code without art does not make a
-playable game, which is the point: the source is open, the game is sold.
-
-"Marrowfall" and the Marrowfall logo are trademarks. The license grants no
-right to use them, so a redistributed build must rename and rebrand.
-
-Contributions must be signed off under the terms in
-[CONTRIBUTING.md](CONTRIBUTING.md); the storefront exception only holds if
-every source file linked into a build is covered by it.

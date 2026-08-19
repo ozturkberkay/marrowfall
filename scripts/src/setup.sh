@@ -40,6 +40,14 @@ function setup_python() {
   uv sync
 }
 
+# Game
+
+function setup_game() {
+  echo "🎮 Setting up the game."
+  cargo build
+  godot --headless --path project --import
+}
+
 # Complete
 
 function setup() {
@@ -48,4 +56,5 @@ function setup() {
   setup_git_lfs
   setup_rust
   setup_python
+  setup_game
 }
