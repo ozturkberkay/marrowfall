@@ -1,14 +1,16 @@
 //! Runs the Marrowfall simulation on its own thread, and owns the three
-//! transports crossing that boundary: a command channel in (every message must
-//! arrive), a latest-wins triple buffer of held [`game::Input`] in (only what
-//! is held right now matters, so superseded samples are dropped), and a
-//! latest-wins triple buffer of snapshots out (a frontend only ever wants the
-//! newest one).
+//! transports that cross that boundary:
 //!
-//! The two directions are latest-wins for the same reason and it is not
-//! symmetry: the clocks do not match. One reliable input message per frame
-//! would deliver 2.4 per tick at 144 fps and half of one at 30, making walking
-//! speed a function of the display.
+//! - A command channel in. Every message must arrive.
+//! - A latest-wins triple buffer of held [`game::Input`] in. Only what is held
+//!   right now matters, so superseded samples are dropped.
+//! - A latest-wins triple buffer of snapshots out. A frontend only ever wants
+//!   the newest one.
+//!
+//! Both directions are latest-wins because the clocks do not match, not for
+//! symmetry. One reliable input message per frame delivers 2.4 per tick at
+//! 144 fps and half of one at 30. That makes walking speed a function of the
+//! display.
 //!
 //! This is a crate rather than a module of the frontend because the frontend
 //! cannot be tested: instantiating a Godot node needs a running engine, so
@@ -23,8 +25,8 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use game::{Input, RenderSnapshot, Sim, TICK_DT};
-// `Input` is aliased: `game::Input` is the held player input this crate
-// carries, and the buffer's write end is not it.
+// `Input` is aliased, because `game::Input` is the held player input this crate
+// carries. The buffer's write end is a different thing.
 use triple_buffer::{Input as Writer, Output, TripleBuffer};
 
 /// Control messages into the simulation thread.
@@ -76,14 +78,15 @@ pub struct SimHandle {
 }
 
 impl SimHandle {
-    /// Replaces the held input the next tick will read.
+    /// Replaces the held input the next tick reads.
     ///
-    /// Safe to call any number of times per frame, including zero, in which
-    /// case the previous value stands and the player keeps walking. Call it
+    /// Safe to call any number of times per frame, including zero. With zero
+    /// calls the previous value stands and the player keeps walking. Call it
     /// before [`Self::read`], which borrows the whole handle.
     ///
-    /// A frontend must stop sampling its keyboard on focus loss and write a
-    /// still input instead: the OS does not always deliver the key release.
+    /// The OS does not always send the key release, so a frontend must stop
+    /// sampling its keyboard when the window loses focus. It writes a still
+    /// input instead.
     pub fn set_input(&mut self, input: Input) {
         self.inputs.write(input);
     }
@@ -182,8 +185,8 @@ fn run(
 
         let mut ran = 0;
         while Instant::now() >= next_tick {
-            // Once per tick, not once per catch-up burst: a tick is the
-            // unit held input is defined over.
+            // Once per tick, not once per catch-up burst. A tick is the unit
+            // held input is defined over.
             sim.tick(*inputs.read(), &[]);
             // The deadline this tick was due at, captured before it advances.
             // Stamping `now` instead would fold this tick's compute time into

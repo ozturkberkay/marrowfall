@@ -87,8 +87,8 @@ fn player_of(snapshot: &RenderSnapshot) -> EntityView {
         .expect("the player is missing from the snapshot")
 }
 
-/// Polls to a deadline rather than sleeping a fixed time: the simulation paces
-/// itself off the wall clock, so any fixed sleep is either flaky or slow.
+/// Polls to a deadline instead of sleeping a fixed time. The simulation paces
+/// itself off the wall clock, so a fixed sleep is either flaky or slow.
 fn poll_until(handle: &mut SimHandle, ready: impl Fn(&RenderSnapshot) -> bool, complaint: &str) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while !ready(handle.read().snapshot) {
@@ -97,9 +97,9 @@ fn poll_until(handle: &mut SimHandle, ready: impl Fn(&RenderSnapshot) -> bool, c
     }
 }
 
-/// Latest-wins is only right for held state if one write outlives the tick that
+/// Latest-wins is right for held state only if one write outlives the tick that
 /// read it. Half a tile is eight ticks at `PLAYER_SPEED`, so passing it proves
-/// the buffer is not consumed on read.
+/// that a read does not consume the buffer.
 #[test]
 fn one_input_written_once_keeps_the_player_walking() {
     let mut handle = spawn(Sim::new(1));

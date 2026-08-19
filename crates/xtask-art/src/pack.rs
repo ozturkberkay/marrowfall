@@ -17,9 +17,9 @@ use image::{RgbaImage, imageops};
 /// file. Re-exported so this module still reads as one pipeline stage.
 pub use sprites::{Anchor, AnimationAtlas, CharacterAssets, FrameRect};
 
-/// Compass directions in the order the Blender bake writes them: index 0 faces
-/// the camera and the model turns clockwise from there, so the ring runs south,
-/// south-west, west, and on round. Must match `DIRECTION_NAMES` in
+/// Compass directions in the order the Blender bake writes them. Index 0 faces
+/// the camera, and the model turns clockwise from there. So the ring runs
+/// south, south-west, west, and on round. Must match `DIRECTION_NAMES` in
 /// `tools/blender/src/framing.py`.
 const DIRECTIONS_8: [&str; 8] = ["s", "sw", "w", "nw", "n", "ne", "e", "se"];
 const DIRECTIONS_4: [&str; 4] = ["s", "w", "n", "e"];

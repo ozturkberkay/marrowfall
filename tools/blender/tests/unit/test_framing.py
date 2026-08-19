@@ -56,7 +56,7 @@ def test_rejects_unknown_direction_rings(directions: int) -> None:
 @pytest.mark.parametrize("rate", [0, 61])
 def test_rejects_a_sprite_rate_outside_the_sane_range(rate: int) -> None:
     """Rates arrive per animation, inside the `fps` dict, so no field level
-    constraint can reach them; the model validator is the only guard."""
+    constraint reaches them. The model validator is the only guard."""
     with pytest.raises(ValidationError, match=r"fps must be in 1\.\.=60"):
         BakeSettings(fps={"run": rate})
 
@@ -212,11 +212,11 @@ def test_direction_rotation_walks_a_full_turn_clockwise(count: int) -> None:
 def test_direction_names_follow_the_way_the_model_turns(count: int) -> None:
     """The ring's names must agree with `direction_rotation`'s sign.
 
-    Index 0 faces the camera, which reads as south on screen, and a negative Z
-    angle turns the model clockwise, which increases the compass bearing.
-    Naming the ring the other way leaves south and north looking correct while
-    mirroring every diagonal and swapping east with west, so nothing looks
-    wrong until a character walks sideways.
+    Index 0 faces the camera, which reads as south on screen. A negative Z angle
+    turns the model clockwise, which increases the compass bearing. The other
+    naming mirrors every diagonal and swaps east with west, and it leaves south
+    and north looking correct. So nothing looks wrong until a character walks
+    sideways.
     """
     bearings = {
         "n": 0.0,

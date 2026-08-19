@@ -28,8 +28,8 @@ glam = "0.33"
 crossbeam-channel = "0.5.15"
 triple_buffer = "9.0"
 
-# The sprite manifest format, written by the art pipeline and read by the game,
-# so these two ship inside the GDExtension library as well.
+# The sprite manifest format is written by the art pipeline and read by the
+# game, so these two also ship inside the GDExtension library.
 ron = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 

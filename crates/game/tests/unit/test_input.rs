@@ -11,8 +11,8 @@ fn no_input_is_the_default() {
     assert_eq!(Input::default().move_dir(), Vec2::ZERO);
 }
 
-/// The trust boundary against a malformed frontend: a longer vector would move
-/// the player faster than `PLAYER_SPEED`.
+/// The trust boundary against a malformed frontend. A longer vector moves the
+/// player faster than `PLAYER_SPEED`.
 #[test]
 fn a_longer_than_unit_direction_is_scaled_back() {
     let scaled = Input::new(Vec2::new(30.0, -40.0)).move_dir();
@@ -23,7 +23,7 @@ fn a_longer_than_unit_direction_is_scaled_back() {
 }
 
 /// A non-finite position spreads through every later tick and makes a snapshot
-/// unequal to itself, which would break any replay comparison.
+/// unequal to itself, which breaks any replay comparison.
 #[test]
 fn a_non_finite_direction_becomes_still() {
     for broken in [

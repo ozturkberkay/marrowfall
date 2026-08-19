@@ -26,6 +26,7 @@ be used:
 - Do not use em-dash or double-dash.
 - Only add code comments when it's needed (when the "why" or "what" is not obvious).
 - Keep your comments tiny and easy to understand.
+- Use `/simple-english` for every step of the workflow.
 - **If pre-commit hooks fail, fix it even if it's unrelated to your changes!**
 
 @README.md
