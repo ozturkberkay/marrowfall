@@ -1,7 +1,14 @@
-//! Runs the Marrowfall simulation on its own thread, and owns the two
+//! Runs the Marrowfall simulation on its own thread, and owns the three
 //! transports crossing that boundary: a command channel in (every message must
-//! arrive) and a latest-wins triple buffer out (a frontend only ever wants the
-//! newest snapshot, so superseded ones are dropped instead of queueing).
+//! arrive), a latest-wins triple buffer of held [`game::Input`] in (only what
+//! is held right now matters, so superseded samples are dropped), and a
+//! latest-wins triple buffer of snapshots out (a frontend only ever wants the
+//! newest one).
+//!
+//! The two directions are latest-wins for the same reason and it is not
+//! symmetry: the clocks do not match. One reliable input message per frame
+//! would deliver 2.4 per tick at 144 fps and half of one at 30, making walking
+//! speed a function of the display.
 //!
 //! This is a crate rather than a module of the frontend because the frontend
 //! cannot be tested: instantiating a Godot node needs a running engine, so
@@ -63,11 +70,24 @@ pub fn alpha_for(since_due: Duration) -> f32 {
 /// nothing else.
 pub struct SimHandle {
     commands: Sender<SimCommand>,
+    inputs: Writer<Input>,
     snapshots: Output<Published>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl SimHandle {
+    /// Replaces the held input the next tick will read.
+    ///
+    /// Safe to call any number of times per frame, including zero, in which
+    /// case the previous value stands and the player keeps walking. Call it
+    /// before [`Self::read`], which borrows the whole handle.
+    ///
+    /// A frontend must stop sampling its keyboard on focus loss and write a
+    /// still input instead: the OS does not always deliver the key release.
+    pub fn set_input(&mut self, input: Input) {
+        self.inputs.write(input);
+    }
+
     /// The newest tick, with the interpolation `alpha` for that same tick.
     ///
     /// The returned [`Frame`] keeps this handle borrowed, so nothing else on
@@ -121,14 +141,16 @@ pub fn spawn(sim: Sim) -> SimHandle {
         due_at: epoch,
     };
     let (snapshot_tx, snapshots) = TripleBuffer::new(&seed).split();
+    let (inputs, input_rx) = TripleBuffer::new(&Input::default()).split();
 
     let thread = thread::Builder::new()
         .name("marrowfall-sim".into())
-        .spawn(move || run(sim, &command_rx, snapshot_tx, epoch))
+        .spawn(move || run(sim, &command_rx, input_rx, snapshot_tx, epoch))
         .expect("failed to spawn simulation thread");
 
     SimHandle {
         commands,
+        inputs,
         snapshots,
         thread: Some(thread),
     }
@@ -140,6 +162,7 @@ pub fn spawn(sim: Sim) -> SimHandle {
 fn run(
     mut sim: Sim,
     commands: &Receiver<SimCommand>,
+    mut inputs: Output<Input>,
     mut snapshots: Writer<Published>,
     epoch: Instant,
 ) {
@@ -159,7 +182,9 @@ fn run(
 
         let mut ran = 0;
         while Instant::now() >= next_tick {
-            sim.tick(Input::default(), &[]);
+            // Once per tick, not once per catch-up burst: a tick is the
+            // unit held input is defined over.
+            sim.tick(*inputs.read(), &[]);
             // The deadline this tick was due at, captured before it advances.
             // Stamping `now` instead would fold this tick's compute time into
             // alpha as jitter, which is what interpolation exists to remove.

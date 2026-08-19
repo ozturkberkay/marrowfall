@@ -13,7 +13,10 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 - Built as a headless, engine-agnostic, deterministic Rust simulation with
   Godot as a thin rendering/input frontend.
 - The sim runs on a **dedicated thread** owned by `crates/host`.
-- Crossbeam channel carries commands from the frontend into the sim.
+- Three transports cross that boundary: a crossbeam channel carries commands in
+  (every message must arrive), and two latest-wins triple buffers carry held
+  input in and snapshots out (only the newest of either is ever wanted). The
+  input buffer is what keeps walking speed independent of frame rate.
 
 ### Monorepo Layout
 
