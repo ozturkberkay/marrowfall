@@ -240,6 +240,45 @@ fn the_sprite_preview_is_written_from_the_packed_atlases() {
     assert!(sheet.width() > 0 && sheet.height() > 0);
 }
 
+/// The atlas is shelf-packed, not a grid, so the recorded rect is the only way
+/// to find a frame in it. Cropping by row and column instead lands on whatever
+/// happens to sit at those coordinates, which is usually nothing.
+#[test]
+fn the_sprite_preview_shows_a_character_in_every_direction() {
+    let library = a_library();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 4, 40);
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    let assets: CharacterAssets =
+        ron::from_str(&std::fs::read_to_string(paths.assets().join("character.ron")).unwrap())
+            .unwrap();
+    let idle = &assets.animations["idle"];
+    let sheet = image::open(paths.preview().join("sprites.png"))
+        .unwrap()
+        .to_rgba8();
+
+    for (index, name) in idle.directions.iter().enumerate() {
+        let panel = image::imageops::crop_imm(
+            &sheet,
+            index as u32 * idle.cell_width,
+            0,
+            idle.cell_width,
+            idle.cell_height,
+        )
+        .to_image();
+        let drawn = panel
+            .pixels()
+            .filter(|pixel| **pixel != preview::BACKDROP)
+            .count();
+        assert!(
+            drawn > 0,
+            "the {name} panel is bare backdrop, the crop missed the frame"
+        );
+    }
+}
+
 #[test]
 fn a_missing_atlas_is_skipped_rather_than_failing_the_preview() {
     let library = a_library();
