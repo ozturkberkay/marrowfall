@@ -320,20 +320,24 @@ fn each_facing_names_its_manifest_direction() {
 }
 
 /// Every key combination, and the tile direction the frontend's inverse
-/// projection turns it into. Rounded to two decimals from the design's table:
-/// facing quantises on the ratio of the two components, and the closest of
-/// these to a sector edge sits at 0.34 against the edge's 0.41, so rounding
-/// cannot move one across.
+/// projection turns it into, as the exact integer ratio that projection
+/// produces. Magnitude is irrelevant twice over: `Input::new` scales it to unit
+/// length, and facing quantises on the ratio. The two-key rows are the near
+/// boundary cases at exactly 1/3 against a sector edge of 0.414.
 const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
-    ("W", Vec2::new(-0.71, -0.71), Facing::North),
-    ("W+D", Vec2::new(-0.32, -0.95), Facing::NorthEast),
-    ("D", Vec2::new(0.71, -0.71), Facing::East),
-    ("S+D", Vec2::new(0.95, 0.32), Facing::SouthEast),
-    ("S", Vec2::new(0.71, 0.71), Facing::South),
-    ("S+A", Vec2::new(0.32, 0.95), Facing::SouthWest),
-    ("A", Vec2::new(-0.71, 0.71), Facing::West),
-    ("W+A", Vec2::new(-0.95, -0.32), Facing::NorthWest),
+    ("W", Vec2::new(-1.0, -1.0), Facing::North),
+    ("W+D", Vec2::new(-1.0, -3.0), Facing::NorthEast),
+    ("D", Vec2::new(1.0, -1.0), Facing::East),
+    ("S+D", Vec2::new(3.0, 1.0), Facing::SouthEast),
+    ("S", Vec2::new(1.0, 1.0), Facing::South),
+    ("S+A", Vec2::new(1.0, 3.0), Facing::SouthWest),
+    ("A", Vec2::new(-1.0, 1.0), Facing::West),
+    ("W+A", Vec2::new(-3.0, -1.0), Facing::NorthWest),
 ];
+
+/// The two combinations the clamp tests hold, named rather than indexed.
+const HOLDING_W: Vec2 = KEY_COMBINATIONS[0].1;
+const HOLDING_A: Vec2 = KEY_COMBINATIONS[6].1;
 
 #[test]
 fn every_key_combination_faces_the_way_it_points_on_screen() {
@@ -400,10 +404,9 @@ fn input_leaves_everything_without_the_player_marker_alone() {
 #[test]
 fn releasing_the_keys_stops_the_player_and_leaves_his_facing_alone() {
     let (mut sim, _) = world_of([player(MIDFIELD)]);
-    let north = Vec2::new(-0.71, -0.71);
 
     for _ in 0..TICK_HZ / 2 {
-        sim.tick(Input::new(north), &[]);
+        sim.tick(Input::new(HOLDING_W), &[]);
     }
     let walking = only_entity(&sim.snapshot());
     assert_eq!(walking.facing, Facing::North);
@@ -426,32 +429,26 @@ fn releasing_the_keys_stops_the_player_and_leaves_his_facing_alone() {
     assert_eq!(stopped.locomotion, Locomotion::Idle);
 }
 
-/// One tile short of each edge, so a second of walking overshoots it.
-fn field_edges(sim: &Sim) -> [(Vec2, Vec2, Vec2); 4] {
+/// Where to start, which way to push, and where the field must stop him. One
+/// tile short of each edge, so a second of walking overshoots it.
+fn field_edges() -> [(Vec2, Vec2, Vec2); 4] {
+    let (probe, _) = world_of([]);
     let far = Vec2::new(
-        (sim.terrain().width() - 1) as f32,
-        (sim.terrain().height() - 1) as f32,
+        (probe.terrain().width() - 1) as f32,
+        (probe.terrain().height() - 1) as f32,
     );
     let mid = far / 2.0;
     [
-        (
-            Vec2::new(1.0, mid.y),
-            Vec2::new(-1.0, 0.0),
-            Vec2::new(0.0, mid.y),
-        ),
+        (Vec2::new(1.0, mid.y), Vec2::NEG_X, Vec2::new(0.0, mid.y)),
         (
             Vec2::new(far.x - 1.0, mid.y),
-            Vec2::new(1.0, 0.0),
+            Vec2::X,
             Vec2::new(far.x, mid.y),
         ),
-        (
-            Vec2::new(mid.x, 1.0),
-            Vec2::new(0.0, -1.0),
-            Vec2::new(mid.x, 0.0),
-        ),
+        (Vec2::new(mid.x, 1.0), Vec2::NEG_Y, Vec2::new(mid.x, 0.0)),
         (
             Vec2::new(mid.x, far.y - 1.0),
-            Vec2::new(0.0, 1.0),
+            Vec2::Y,
             Vec2::new(mid.x, far.y),
         ),
     ]
@@ -459,7 +456,7 @@ fn field_edges(sim: &Sim) -> [(Vec2, Vec2, Vec2); 4] {
 
 #[test]
 fn the_player_stops_at_every_field_edge() {
-    for (start, held, want) in field_edges(&Sim::new(SEED)) {
+    for (start, held, want) in field_edges() {
         let (mut sim, _) = world_of([player(start)]);
 
         for _ in 0..TICK_HZ {
@@ -479,7 +476,7 @@ fn holding_into_an_edge_diagonally_slides_the_player_along_it() {
     let (mut sim, _) = world_of([player(Vec2::new(0.0, 8.0))]);
 
     for _ in 0..TICK_HZ {
-        sim.tick(Input::new(Vec2::new(-0.71, 0.71)), &[]);
+        sim.tick(Input::new(HOLDING_A), &[]);
     }
 
     let view = only_entity(&sim.snapshot());
@@ -501,7 +498,7 @@ fn holding_into_a_corner_still_looks_like_running() {
     let (mut sim, _) = world_of([player(Vec2::ZERO)]);
 
     for _ in 0..TICK_HZ {
-        sim.tick(Input::new(Vec2::new(-0.71, -0.71)), &[]);
+        sim.tick(Input::new(HOLDING_W), &[]);
     }
 
     let view = only_entity(&sim.snapshot());

@@ -109,9 +109,8 @@ impl INode for GameBridge {
 
         // Once per frame, before `read` borrows the handle. The simulation
         // reads it once per tick, so speed never tracks frame rate.
-        sim.set_input(Input::new(iso::screen_dir_to_tile(held_direction(
-            self.focused,
-        ))));
+        let held = iso::screen_dir_to_tile(held_direction(self.focused));
+        sim.set_input(Input::new(held));
 
         // Copy the tick out before touching anything else on `self`: the
         // methods below need all of it, and a `Frame` keeps the handle borrowed.
@@ -215,7 +214,7 @@ impl GameBridge {
         // `snapshot.time` stamps `pos`, while `lerp(0)` draws `prev_pos`, one
         // tick earlier. Without walking back to the instant actually drawn the
         // clip runs 16.7 ms ahead of the sprite for good.
-        let seconds = snapshot.time - f64::from(1.0 - alpha) * TICK_DT;
+        let seconds = snapshot.time - (1.0 - f64::from(alpha)) * TICK_DT;
 
         for view in &snapshot.entities {
             let Some(sprite) = self.sprites.get_mut(&view.id) else {
@@ -223,14 +222,15 @@ impl GameBridge {
             };
             sprite.set_position(iso::tile_to_screen(view.lerp(alpha)));
 
+            // Anything this atlas lacks leaves the sprite on the frame it had,
+            // which is the only sane answer mid-clip.
             let clip = Clip::for_locomotion(view.locomotion);
-            let (Some(atlas), Some(texture)) =
-                (assets.animations.get(clip.name()), self.textures.get(&clip))
-            else {
+            let Some(atlas) = assets.animations.get(clip.name()) else {
                 continue;
             };
-            // A row or cell this atlas lacks leaves the sprite on the frame it
-            // had, which is the only sane answer mid-clip.
+            let Some(texture) = self.textures.get(&clip) else {
+                continue;
+            };
             let Some(row) = sprites::row_for(atlas, view.facing.name()) else {
                 continue;
             };

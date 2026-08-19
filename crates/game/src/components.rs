@@ -46,6 +46,7 @@ pub struct Velocity(pub Vec2);
 /// A marker rather than an id on [`crate::Sim`], so the world stays the single
 /// source of truth and nothing has to be cleared on despawn. Extends to a
 /// possessed entity or a second local player unchanged.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Player;
 
 /// Which way an entity looks, one of eight, named for the screen direction it
