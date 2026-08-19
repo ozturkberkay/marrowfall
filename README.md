@@ -52,6 +52,9 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
     godot --path project
     ```
 
+    WASD moves the survivor. The keys are bound by physical location, so they
+    stay in the same place on a non-QWERTY layout.
+
 ### Testing
 
 Three-tier test architecture. Every crate keeps its tests in a sibling

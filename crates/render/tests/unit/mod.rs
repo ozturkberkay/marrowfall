@@ -4,4 +4,5 @@
 #![allow(clippy::unwrap_used)]
 
 mod test_draw;
+mod test_input_map;
 mod test_iso;
