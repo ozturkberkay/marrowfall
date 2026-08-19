@@ -209,7 +209,7 @@ fn stages_name_the_provider_they_bill() {
 
 /// A fingerprint over spec fields alone cannot express "the code that
 /// produced this has been fixed", so the local stages version their
-/// algorithm — otherwise a corrected packer reports `cached` forever.
+/// algorithm, otherwise a corrected packer reports `cached` forever.
 #[test]
 fn local_stages_are_versioned_so_algorithm_fixes_invalidate_output() {
     let library = a_library();
@@ -240,7 +240,7 @@ fn missing_lock_file_starts_empty() {
 }
 
 /// The pose is prompt text rather than a spec field, so editing it in code has
-/// to invalidate the concept — otherwise a T-pose character keeps A-pose art.
+/// to invalidate the concept, otherwise a T-pose character keeps A-pose art.
 #[test]
 fn changing_the_pose_invalidates_the_concept() {
     let library = a_library();

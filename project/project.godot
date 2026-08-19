@@ -12,9 +12,20 @@ config/features=PackedStringArray("4.7")
 
 [display]
 
-window/size/viewport_width=1280
-window/size/viewport_height=720
+; Base resolution is the one that renders pixel exact. 1440p is the target, so
+; 1080p becomes a clean downscale and 4K a mild upscale.
+window/size/viewport_width=2560
+window/size/viewport_height=1440
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/meshy-godot-plugin/plugin.cfg")
+
+[rendering]
+
+; Pin the desktop texture family. Without it an ARM CI host imports ETC2/ASTC
+; only, and a desktop export from that host ships textures the GPU has to
+; decompress on the CPU.
+textures/vram_compression/import_s3tc_bptc=true

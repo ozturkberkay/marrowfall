@@ -47,7 +47,7 @@ function test_upsert_preserves_content_outside_markers() {
   upsert_config_block "$file" "managed"
   echo "after" >>"$file"
 
-  # Re-upsert — "before" and "after" must survive
+  # Re-upsert, "before" and "after" must survive
   upsert_config_block "$file" "managed v2"
 
   assert_file_contains "$file" "before"

@@ -3,7 +3,7 @@
 Providers return the whole character with each animation: mesh, skeleton and a
 2048-square texture, ~5 MB, of which ~40 KB is the motion. Engines store
 animations without a mesh (Unity `.anim`, Unreal AnimSequence, Godot
-`Animation`), and so do we — these files are committed, so the difference is
+`Animation`), and so do we, these files are committed, so the difference is
 permanent in git history.
 
 The armature stays. It is what the action's F-curves address, and the bake

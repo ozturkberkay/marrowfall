@@ -1,7 +1,7 @@
 //! The `cargo art` command line: what to run, in what order, and when to stop
 //! and ask. Stages themselves live in [`crate::stages`].
 //!
-//! The pipeline splits at the GLB. Before it is AI generation — expensive and
+//! The pipeline splits at the GLB. Before it is AI generation, expensive and
 //! not reproducible, so it is committed. After it is deterministic local work,
 //! free to re-run. That boundary is why tweaking a sprite setting never
 //! re-spends credits.
@@ -116,7 +116,7 @@ pub fn plan(
             }
             let done = complete.contains(&stage);
             // `--from` and `--only` both mean "do this again", so they must
-            // not silently reuse the cache — but they must still confirm
+            // not silently reuse the cache, but they must still confirm
             // before spending.
             let explicitly_forced =
                 options.retry || options.only == Some(stage) || options.from.is_some();
@@ -184,7 +184,7 @@ pub async fn run(
     let mut lock = Lock::load(&paths.lock())?;
     // Note: the lock is deliberately NOT invalidated up front. `plan` already
     // forces every stage from `--from` onward, and `Lock::record` cascades once
-    // a stage actually succeeds — so declining a spend prompt leaves the
+    // a stage actually succeeds, so declining a spend prompt leaves the
     // recorded work, and its task ids, intact.
     let steps = plan(
         &lock,
@@ -292,7 +292,7 @@ pub fn pause_for_review(stage: Stage, paths: &Paths, input: &mut impl BufRead) -
         bail!("{stage} finished, but no terminal is attached to confirm. Pass --yes to continue.");
     }
     if matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no") {
-        bail!("stopped after {stage} — re-run when ready, completed stages are cached");
+        bail!("stopped after {stage}, re-run when ready, completed stages are cached");
     }
     Ok(())
 }

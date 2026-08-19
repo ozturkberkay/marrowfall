@@ -4,7 +4,7 @@
 //! Sharing works because almost all of a clip is bone *rotation*, which is
 //! independent of proportions. The exception is `location`, which varies on
 //! `Hips`, `LeftShoulder` and `neck` and is in the units of the rig it was
-//! bought against — so a run's vertical bob is sized for that character.
+//! bought against, so a run's vertical bob is sized for that character.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ pub enum MotionSource {
     /// Retargeted from Meshy's animation library, selected by numeric id.
     /// Bought once, then shared by every character on the same skeleton.
     Meshy { action_id: u32 },
-    /// Hand-authored — in Blender, or anywhere else — and committed with the
+    /// Hand-authored, in Blender, or anywhere else, and committed with the
     /// rest of the art. There is nothing to fetch and nothing to pay for.
     Authored,
 }
@@ -44,6 +44,11 @@ pub struct Animation {
     pub skeleton: String,
     /// Whether playback repeats. Locomotion loops; a death does not.
     pub loops: bool,
+    /// Sprite frames sampled per second. A property of the motion, not of any
+    /// character: an idle barely changes between frames while a run changes a
+    /// third of its silhouette, so one shared rate is simultaneously too fast
+    /// for one and too slow for the other.
+    pub fps: u32,
     pub source: MotionSource,
 }
 
@@ -116,7 +121,7 @@ impl AnimationLibrary {
                 anyhow::ensure!(
                     animation.skeleton == skeleton,
                     "animation {name:?} is for the {:?} skeleton, but this character \
-                     is rigged on {skeleton:?} — bone names would not match",
+                     is rigged on {skeleton:?}, bone names would not match",
                     animation.skeleton
                 );
                 Ok((name.as_str(), animation))
@@ -142,6 +147,7 @@ impl AnimationLibrary {
                     Animation {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
+                        fps: 8,
                         source: MotionSource::Meshy { action_id: 251 },
                     },
                 ),
@@ -150,6 +156,7 @@ impl AnimationLibrary {
                     Animation {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
+                        fps: 24,
                         source: MotionSource::Meshy { action_id: 15 },
                     },
                 ),
@@ -158,6 +165,7 @@ impl AnimationLibrary {
                     Animation {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
+                        fps: 20,
                         source: MotionSource::Meshy { action_id: 544 },
                     },
                 ),

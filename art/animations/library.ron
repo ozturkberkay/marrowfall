@@ -14,16 +14,22 @@ AnimationLibrary(
         "idle": Animation(
             skeleton: "humanoid",
             loops: true,
+            fps: 8,
             source: Meshy(action_id: 251),
         ),
         "run": Animation(
             skeleton: "humanoid",
             loops: true,
+            fps: 24,
             source: Meshy(action_id: 15),
         ),
         "walk_back": Animation(
             skeleton: "humanoid",
             loops: true,
+            fps: 20,
+            // Known bad: this clip does not return to its start pose, so it
+            // hitches once a loop. Mirroring cannot complete it either, its
+            // gait is not left/right symmetric. Needs replacing.
             source: Meshy(action_id: 544),
         ),
     },
