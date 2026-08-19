@@ -53,6 +53,14 @@ def test_rejects_unknown_direction_rings(directions: int) -> None:
         BakeSettings(directions=directions)
 
 
+@pytest.mark.parametrize("rate", [0, 61])
+def test_rejects_a_sprite_rate_outside_the_sane_range(rate: int) -> None:
+    """Rates arrive per animation, inside the `fps` dict, so no field level
+    constraint can reach them; the model validator is the only guard."""
+    with pytest.raises(ValidationError, match=r"fps must be in 1\.\.=60"):
+        BakeSettings(fps={"run": rate})
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -193,11 +201,38 @@ def test_key_light_comes_from_screen_upper_left() -> None:
 
 
 @pytest.mark.parametrize("count", [4, 8])
-def test_direction_rotation_walks_a_full_turn_counter_clockwise(count: int) -> None:
+def test_direction_rotation_walks_a_full_turn_clockwise(count: int) -> None:
     angles = [direction_rotation(i, count) for i in range(count)]
     assert angles[0] == 0.0, "direction 0 is unrotated"
     assert all(b < a for a, b in itertools.pairwise(angles))
     assert angles[-1] == pytest.approx(-2.0 * math.pi * (count - 1) / count)
+
+
+@pytest.mark.parametrize("count", [4, 8])
+def test_direction_names_follow_the_way_the_model_turns(count: int) -> None:
+    """The ring's names must agree with `direction_rotation`'s sign.
+
+    Index 0 faces the camera, which reads as south on screen, and a negative Z
+    angle turns the model clockwise, which increases the compass bearing.
+    Naming the ring the other way leaves south and north looking correct while
+    mirroring every diagonal and swapping east with west, so nothing looks
+    wrong until a character walks sideways.
+    """
+    bearings = {
+        "n": 0.0,
+        "ne": 45.0,
+        "e": 90.0,
+        "se": 135.0,
+        "s": 180.0,
+        "sw": 225.0,
+        "w": 270.0,
+        "nw": 315.0,
+    }
+    for index, name in enumerate(DIRECTION_NAMES[count]):
+        turned = (180.0 - math.degrees(direction_rotation(index, count))) % 360.0
+        assert bearings[name] == pytest.approx(turned), (
+            f"index {index} is named {name!r} but the bake turns it to {turned} deg"
+        )
 
 
 @pytest.mark.parametrize("count", [4, 8])

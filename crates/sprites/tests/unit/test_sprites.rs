@@ -132,10 +132,14 @@ fn the_committed_survivor_manifest_is_valid() {
     }
 }
 
+/// Rows follow the bake's clockwise ring, so `Facing`'s variant order no longer
+/// matches row position and the lookup must go through the name. Pinned against
+/// the shipped manifest, because a mirrored ring leaves south and north correct
+/// and only shows up when a character walks sideways.
 #[test]
-fn every_compass_direction_has_a_row_in_the_survivors_atlas() {
+fn the_survivors_atlas_rows_run_clockwise_from_south() {
     let atlas = atlas_of(SURVIVOR, "run");
-    for (row, direction) in ["s", "se", "e", "ne", "n", "nw", "w", "sw"]
+    for (row, direction) in ["s", "sw", "w", "nw", "n", "ne", "e", "se"]
         .into_iter()
         .enumerate()
     {

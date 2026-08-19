@@ -37,9 +37,8 @@ boundary protocol staged in `crates/game/src/lib.rs` stays unproven.
   rectangular limit cannot express, and nothing needs the camera to lag.
 - **Per entity appearance:** every entity draws the survivor, because there is
   only one character.
-- **Authored data under `data/`:** the one tuning number here is a constant,
-  and a loader plus a path into a simulation that may not do I/O is its own
-  milestone.
+- **Authored data under `data/`:** the one tuning number is a constant, and a
+  loader plus a path into a simulation that may not do I/O is its own milestone.
 - **Gamepad and a remapping UI:** Godot's own InputMap already remaps.
 
 ## Terminology
@@ -48,8 +47,7 @@ boundary protocol staged in `crates/game/src/lib.rs` stays unproven.
   direction. A discrete action is true for one instant instead.
 - **Tile space:** the simulation's coordinates, `1.0` = one tile edge. The
   simulation knows only this; only `crates/render` knows screen pixels.
-- **Field:** the placeholder 24 by 24 tile walkable area, standing in for real
-  worldgen.
+- **Field:** the 24 by 24 tile placeholder area, standing in for worldgen.
 - **Locomotion:** what a character is doing, `Idle` or `Running`. Simulation
   state the snapshot carries; the clip filename it maps to is not.
 - **Clip and row:** one animation of a character (`idle`, `run`) packed as one
@@ -61,8 +59,8 @@ boundary protocol staged in `crates/game/src/lib.rs` stays unproven.
 
 ### How does held input reach the simulation?
 
-The two clocks never match, and whatever crosses must already be in tile
-space, because `snapshot.rs:10-12` forbids screen space at the boundary.
+The two clocks never match, and `snapshot.rs:10-12` forbids screen space at
+the boundary.
 
 #### ✅ Option 1: A latest wins triple buffer carrying a tile space direction
 
@@ -81,11 +79,11 @@ sim.tick(*inputs.read(), &[]);                               // per tick
 - A third transport for `host` to own, and wrong for discrete actions.
 
 **Rationale:**
-- Already written into `lib.rs:22-31`, and the reason is arithmetic: one
-  reliable message per frame delivers 2.4 per tick at 144 fps and half of one
-  at 30 fps, so speed would track the display.
-- Converting inside the simulation instead would put tile pixel size and the
-  projection into the crate whose whole point is having no pixels.
+- Already in `lib.rs:22-31`, and the reason is arithmetic: one reliable message
+  per frame delivers 2.4 per tick at 144 fps and half of one at 30, so speed
+  would track the display.
+- Converting inside the simulation would put tile pixel size and the projection
+  into the crate whose whole point is having no pixels.
 
 #### ❌ Option 2: Held input as reliable `Intent`s on the command channel
 
@@ -121,8 +119,8 @@ for (_, v) in self.world.query_mut::<(&Player, &mut Velocity)>() { .. }
 **Rationale:**
 - The blast radius is four test literals, and a marker cannot fall out of sync
   with the entity it marks.
-- The snapshot still names the controlled id, because the camera needs a
-  target and only the simulation knows which entity that is.
+- The snapshot still names the controlled id, because the camera needs a target
+  and only the simulation knows which entity that is.
 
 #### ❌ Option 2: An id stored on `Sim`, or passed in by the frontend
 
@@ -141,8 +139,7 @@ frontend it is an authority decision made outside the simulation.
 
 ### What stops the survivor walking off the field?
 
-The camera follows, so leaving the field no longer loses the character. It
-fills the view with unpainted void instead.
+The camera follows, so walking off fills the view with unpainted void.
 
 #### ✅ Option 1: Clamp the player's position, after integration
 
@@ -153,7 +150,6 @@ position.current = position.current.clamp(Vec2::ZERO, far); // on &Player
 ```
 
 **Pros:**
-- Keeps him on painted ground, so void stays at the edge of the view.
 - Slides along an edge rather than sticking: only the blocked axis stops.
 - Shortens a move instead of jumping, so `Position::previous` stays correct.
 
@@ -183,8 +179,8 @@ position.current = position.current.clamp(Vec2::ZERO, far); // on &Player
 
 ### Who owns the sprite manifest types?
 
-`CharacterAssets` and friends live in `crates/xtask-art/src/pack.rs`, and the
-game must read the same `.ron` at runtime.
+`CharacterAssets` and friends live in `crates/xtask-art/src/pack.rs`; the game
+must read the same `.ron` at runtime.
 
 #### ✅ Option 1: A new `crates/sprites` crate that owns and validates the format
 
@@ -224,15 +220,12 @@ xtask-art = { path = "../xtask-art", default-features = false }
   feature gate makes the shipped dependency set a property of a CLI tool's
   default features, easy to break silently and hard to test.
 - Putting atlas layout in `game` puts a render concern, plus `serde` and `ron`,
-  into the simulation crate, which will never read a pixel rectangle.
+  in the simulation crate, which will never read a pixel rectangle.
 
 **Rationale:** Rejected. Copying the types instead is worse again: two
 definitions of one format kept in step by hope.
 
 ### Which Godot node draws the survivor?
-
-Frames are trimmed to their own content, so each carries an offset inside a
-shared cell, and the anchor is measured in that cell.
 
 #### ✅ Option 1: One `Sprite2D` per entity, region and offset set per frame
 
@@ -247,7 +240,6 @@ sprite.set_offset(p.offset);       // frame offset minus anchor
   plain data, so all of it is unit testable with no engine.
 - The frame index is a function of time, so turning cannot reset the cycle.
 - No runtime resource graph: two textures, three property writes.
-- Trimming needs nothing extra: the offset says where the pixels sat.
 
 **Cons:** frame advance is ours, which is one modulo.
 
@@ -269,7 +261,7 @@ frames.add_frame("run_se", &atlas_texture); // x8 directions x20 frames
 - Each direction is its own animation, so turning restarts the cycle unless
   frame and progress are copied across by hand every time.
 - Timing follows the engine's frame delta, so it drifts from the world, and
-  trimmed frames still need `AtlasTexture.margin` padded out per frame.
+  trimmed frames need `AtlasTexture.margin` padded out per frame.
 
 **Rationale:** Rejected. The built in saves one modulo and costs a resource
 graph, a turning bug to work around, and a second clock.
@@ -288,8 +280,8 @@ pub enum Locomotion { Idle, Running }
   never shows idle.
 - Follows the precedent `components.rs:43-44` sets for `Facing`: character
   state belongs to the simulation, not to whoever draws it.
-- Derived inside `snapshot` from `Velocity`, so there is no second copy of the
-  truth to disagree with it, and no new system or tick order change.
+- Derived inside `snapshot` from `Velocity` through an `Option<&Velocity>`
+  query, so nothing holds a second copy, and no tick order changes.
 
 **Cons:** a new `EntityView` field whose only reader today is a frontend.
 
@@ -372,15 +364,14 @@ Main (Node2D, y sort off)
   parent draw in tree order, so entities land on top.
 - Correct at the second entity with no code, because feet are the node origin
   and screen depth is exactly the y they sort on.
-- No tileset authoring, so nothing has to be edited to make it work.
 
 **Cons:** no interleaving, so a future wall draws under a character behind it.
 
 **Rationale:**
 - The wall case is an established pattern rather than a trap: Godot's official
-  `2d/isometric` demo y sorts a `Node2D` and the `TileMapLayer` inside it,
-  with `y_sort_origin = 32`. It needs a per tile origin authored in the
-  tileset, which has no consumer until a wall exists.
+  `2d/isometric` demo y sorts a `Node2D` and the `TileMapLayer` inside it, with
+  `y_sort_origin = 32`. It needs a per tile origin authored in the tileset,
+  which has no consumer until a wall exists.
 - `z_index` stays 0 everywhere. It is not ignored inside a y sorted parent, it
   overrides the sort: items are y sorted and then bucketed by `z_index`, and
   the buckets draw in z order, so a stray `z_index` silently defeats sorting.
@@ -403,8 +394,8 @@ scope.
 
 ### How does the camera follow an interpolated target?
 
-`EntityView::lerp(alpha)` already smooths the survivor, so anything that
-smooths a second time turns his motion into camera motion.
+`EntityView::lerp(alpha)` already smooths the survivor, so a second smoother
+turns his motion into camera motion.
 
 #### ✅ Option 1: A sibling `Camera2D`, positioned every `_process` from that lerp
 
@@ -416,7 +407,7 @@ self.camera.set_global_position(iso::tile_to_screen(drawn));
 - Pins the camera to his drawn position, so he is rock steady and every
   residual error lands on the terrain, the cheapest place to put it.
 - Survives the survivor's node being freed, which reconciliation can do at any
-  snapshot, and leaves a future deadzone or shake free of a parent transform.
+  snapshot.
 
 **Cons:** it relies on the transform notification path below, so turning
 smoothing on later silently reintroduces a frame of lag.
@@ -424,16 +415,15 @@ smoothing on later silently reintroduces a frame of lag.
 **Rationale:**
 - No lag, and this is load bearing: `SceneTree::process` calls `_process` then
   `flush_transform_notifications` in the same frame
-  (`scene/main/scene_tree.cpp:688`), and `Camera2D::_notification` handles
-  `NOTIFICATION_TRANSFORM_CHANGED` by updating scroll when smoothing and
-  physics interpolation are both off. `_process` is also the documented slot
-  for this work: "prior to rendering, and after physics ticks".
+  (`scene/main/scene_tree.cpp:688`), and `Camera2D::_notification` updates
+  scroll on `NOTIFICATION_TRANSFORM_CHANGED` when smoothing and physics
+  interpolation are both off. `_process` is also the documented slot: "prior to
+  rendering, and after physics ticks".
 - Without that path the lag is real: `Camera2D` precedes `Bridge` in
-  `main.tscn`'s tree order, and order inside a process group is
-  `process_priority` then tree order (`Node::ComparatorWithPriority`), so the
-  camera would update before the Bridge had written its position that frame.
-  Fixed in 4.3, cherry picked to 4.2.2, by
-  godotengine/godot#84465, closing #74203 and #77813, the latter being exactly
+  `main.tscn`, and order inside a process group is `process_priority` then tree
+  order (`Node::ComparatorWithPriority`), so the camera would update before the
+  Bridge wrote its position that frame. Fixed in 4.3, cherry picked to 4.2.2,
+  by godotengine/godot#84465, closing #74203 and #77813, the latter exactly
   this shape: a camera trailing its siblings when a lerp moves the target.
 - `process_callback` stays `CAMERA2D_PROCESS_IDLE`, the default. The rule from
   Godot's `2d/isometric` demo is to match the callback to wherever the target
@@ -472,7 +462,7 @@ self.camera.set_position_smoothing_enabled(true); // plus a speed
 - The engine carries a `FIXME` verbatim from 4.3 to master saying smoothing
   "may be called MULTIPLE TIMES on certain frames ... which will result in
   some haphazard results", and `position_smoothing_speed * delta` is not
-  clamped to 1.0, so a frame spike overshoots. (Its docs call that speed
+  clamped to 1.0, so a frame spike overshoots. (Its docs call that a speed in
   pixels per second; it is a raw lerp factor, which open PR #117637 corrects.)
 
 **Rationale:** Rejected. Conceptually wrong as well as buggy: the target is
@@ -548,7 +538,7 @@ Paths are relative to `crates/` except the `project/` ones. Cargo does not
 discover `tests/unit/mod.rs` on its own, so both new test targets need the
 `[[test]]` stanza `crates/game/Cargo.toml:16-18` already carries, and the
 coverage script runs `--lib --test unit`. `bridge.rs` stays the only file
-touching `Gd<T>`, which keeps everything else measured.
+touching `Gd<T>`.
 
 ## Specs & Standards
 
@@ -576,7 +566,7 @@ touching `Gd<T>`, which keeps everything else measured.
   <https://docs.godotengine.org/en/stable/classes/class_inputeventkey.html>
 - **gdext unit tests:** the godot-rust book states `cargo test` is for Rust
   only logic because the engine is unavailable to the test binary, which is
-  the constraint `iso.rs` and `sprite.rs` are written to satisfy.
+  the constraint `iso.rs` and `draw.rs` are written to satisfy.
   <https://godot-rust.github.io/book/contribute/dev-tools.html>
 
 ## Interfaces
@@ -605,20 +595,18 @@ impl Sim {
 
 Caller contract: `spawn` asserts that a `player: true` spawn carries a
 velocity, since nothing could otherwise move it. `tick` reads `input` once, so
-skipping ticks loses no held state. `RenderSnapshot::player` lets a frontend
-aim a camera without guessing which entity is controlled.
+skipping ticks loses no held state. `RenderSnapshot::player` names the camera's
+target, so a frontend never guesses which entity is controlled.
 
 ### `crates/host`
 
 ```rust
 /// Replaces the held input the next tick will read. Safe to call any number
 /// of times per frame, including zero, in which case the previous value
-/// stands and the player keeps walking.
+/// stands and the player keeps walking. Call it before `read`, and stop
+/// sampling on focus loss rather than writing a default.
 pub fn set_input(&mut self, input: Input);  // on SimHandle
 ```
-
-Callers must stop sampling on focus loss, and call this before `read`, which
-borrows the handle.
 
 ### `crates/sprites`
 
@@ -643,9 +631,9 @@ pub fn row_for(atlas: &AnimationAtlas, direction: &str) -> Option<usize>;
 /// Negative seconds clamp to zero. Wraps when the clip loops, holds the last
 /// frame when it does not.
 pub fn frame_at(atlas: &AnimationAtlas, seconds: f64) -> usize;
-/// `None` when this atlas has no such cell. Not total even after `parse`: a
-/// row and frame taken from one atlas can outrun another, which is what a
-/// clip change does when the two differ in direction count or length.
+/// `None` when this atlas has no such cell. A row and frame taken from one
+/// atlas can outrun another, which is what a clip change does when the two
+/// differ in direction count or length.
 pub fn frame(atlas: &AnimationAtlas, row: usize, frame: usize) -> Option<&FrameRect>;
 ```
 
@@ -691,13 +679,12 @@ for 4.7 rather than a hand written blob: `move_up` W, `move_down` S,
   compass vocabulary is not copied a third time beside `pack.rs:19` and
   `framing.py:17-20`. The frontend must never re-derive a row from a screen
   angle: the sectors are equal in tile space and unequal on screen.
-- **`EntityView::lerp` and `host::alpha_for`** already own interpolation. The
-  frontend calls `lerp(alpha)` for both the sprite and the camera target, and
-  interpolates nothing itself.
+- **`EntityView::lerp` and `host::alpha_for`** already own interpolation, for
+  both the sprite and the camera target; the frontend interpolates nothing.
 - **`pack.rs` `GUTTER`** already writes a two pixel transparent gutter between
   packed frames, with `process/fix_alpha_border=true` and mipmaps off, which
-  the committed atlas confirms: frames at x 464 (w 83), 549 and at 836
-  (w 79), 917 sit exactly two pixels apart. The ground layer is covered by
+  the committed atlas confirms: frames at x 464 (w 83), 549 and at 836 (w 79),
+  917 sit exactly two pixels apart. The ground layer is covered by
   `TileSetAtlasSource.use_texture_padding`, true by default. So no padding
   logic belongs in `render`; `region_filter_clip_enabled` is belt and braces.
 - **`Sim::with_entities`** stays the seam tests use to build a specific cast;
@@ -723,9 +710,6 @@ pub fn tick(&mut self, input: Input, intents: &[Intent]) {
     self.ticks += 1;
 }
 ```
-
-`Locomotion` is read straight off `Velocity` in `snapshot`, through an
-`Option<&Velocity>` in the query, so nothing holds a second copy of it.
 
 Undoing the isometric projection, which is why `W` means up the screen. The
 `normalize_or_zero` is what makes movement isotropic and must not be removed:
@@ -754,10 +738,10 @@ Every key combination, and the row it ends up showing:
 | A | (-1, 0) | (-0.71, 0.71) | West |
 | W + A | (-0.71, -0.71) | (-0.95, -0.32) | NorthWest |
 
-Frame choice is total because `parse` has already checked `frames > 0`. The
-placement puts a trimmed frame's anchor on the tile: the cell's top left goes
-at minus the anchor, the frame sits at `off_x, off_y` inside that cell, and
-`centered = false` makes `offset` the top left.
+Frame choice cannot panic, because `parse` has already checked `frames > 0`.
+The placement puts a trimmed frame's anchor on the tile: the cell's top left
+goes at minus the anchor, the frame sits at `off_x, off_y` inside that cell,
+and `centered = false` makes `offset` the top left.
 
 ```rust
 let elapsed = (seconds.max(0.0) * f64::from(atlas.fps)) as u64;
@@ -773,15 +757,15 @@ snapshot borrow is alive, whereas `sim.read()` borrows only `self.sim`.
 `focused` is a field flipped by `WM_WINDOW_FOCUS_IN` and `_OUT`; gating the
 sample is the fix, since writing a default in the handler alone is overwritten
 by the same frame's unconditional sampling. It must start `true`
-(`#[init(val = true)]`): `#[class(init)]` would otherwise default it `false`
-and leave WASD dead until a focus notification that may never arrive, because
-the window already had focus when the node entered the tree.
+(`#[init(val = true)]`): `#[class(init)]` would default it `false` and leave
+WASD dead until a focus notification that may never arrive, because the window
+already had focus when the node entered the tree.
 
 ```rust
 let held = if self.focused { sample() } else { Vector2::ZERO };
 sim.set_input(Input::new(iso::screen_dir_to_tile(held)));
 let (seconds, target, views) = { let f = sim.read(); .. }; // copy out first
-let changes = sprite::reconcile(&views, self.sprites.keys().copied());
+let changes = draw::reconcile(&views, self.sprites.keys().copied());
 // added: Sprite2D::new_alloc, configure, entities.add_child
 // removed: queue_free, then drop from self.sprites
 for view in &views { /* texture, region, offset, position */ }
@@ -799,25 +783,26 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   survivor has `cell_height: 240` for `idle` and `260` for `run`. Expect
   roughly 8 to 15 percent foot slide, and tune 4.0 by eye against `run`.
 - **96 percent line coverage** excludes only `render/src/bridge.rs` and
-  `xtask-art/src/main.rs`, so `iso.rs`, `sprite.rs` and all of
-  `crates/sprites` must be testable with no engine. They touch no `Gd<T>`, and
-  gdext's `Vector2` and `Rect2` are plain `#[repr(C)]` Rust structs.
+  `xtask-art/src/main.rs`, so `iso.rs`, `draw.rs` and all of `crates/sprites`
+  must be testable with no engine. They touch no `Gd<T>`, and gdext's
+  `Vector2` and `Rect2` are plain `#[repr(C)]` Rust structs.
 - **Derives the interfaces above leave implicit:** `Locomotion` needs
   `Debug, Clone, Copy, PartialEq` to sit inside `EntityView`, `Clip` needs
-  `Hash, Eq, PartialEq` to key a `HashMap`, and `Input` needs `Clone, Copy`
-  for `triple_buffer`.
+  `Hash, Eq, PartialEq` to key a `HashMap`, `Input` needs `Clone, Copy`.
 - **A `crates/render` test target is unproven.** CI runs `cargo nextest run`
   over the workspace on `ubuntu-24.04-arm` (`.github/workflows/rust.yml:76`)
   with no Godot installed, so a gdext linked test binary there is exactly the
   risk. T1 proves it before anything depends on it. If it fails, the pure
   functions move into a new engine free crate that may depend on `game`, which
-  `xtask-art` does not depend on, so nothing leaks into the pipeline. That
-  move also has to drop `Vector2` and `Rect2` from every signature, or it
-  reproduces the link failure it is escaping. They cannot move into
-  `crates/sprites`, because `reconcile` needs `EntityView`.
+  `xtask-art` does not, so nothing leaks into the pipeline. That move also has
+  to drop `Vector2` and `Rect2` from every signature, or it reproduces the link
+  failure it is escaping. They cannot move into `crates/sprites`, because
+  `reconcile` needs `EntityView`.
 - **Screen speed is direction dependent,** correctly, for a world space
   simulation: at 4.0 tiles per second East and West travel 543 px/s, the
-  screen diagonals 343, North and South 271.5, a 2:1 spread.
+  screen diagonals 343, North and South 271.5, a 2:1 spread. Kept, because
+  equalising the screen would make world speed direction dependent and leave the
+  run cadence matching one axis only.
 - **Edge sliding changes the facing.** Holding A at `x = 0` yields SouthWest,
   not West, and holding W and D at `y = 0` yields NorthWest even though the
   player asked for up and right. The residual is the honest travel direction.
@@ -827,18 +812,17 @@ self.camera.set_global_position(iso::tile_to_screen(target));
 - **`zoom` becomes `Vector2(1.0, 1.0)`:** one atlas texel per base viewport
   pixel, so neither minification aliasing nor magnification blur. The survivor
   goes from 6.7 to 16.7 percent of screen height and the camera gains 2048 by
-  864 px of travel. Under `canvas_items` stretch with
-  `aspect="expand"` (`project/project.godot:21`) the visible size is the 2560
-  by 1440 base at 16:9 and only grows on a wider or taller window, never
-  shrinks, so this is stable. Do not
-  chase integer zoom: the effective texel to device scale is
+  864 px of travel. Under `canvas_items` stretch with `aspect="expand"`
+  (`project/project.godot:21`) the visible area is the 2560 by 1440 base at
+  16:9 and only grows on an odder window, never shrinks, so this is stable. Do
+  not chase integer zoom: the texel to device scale is
   `zoom * (window_width / 2560)`, so integer zoom is an integer scale only at
   exactly 1440p, and this project already opted out of pixel perfect
-  rendering, which is right for baked 3D art. Do not enable
-  `snap_2d_transforms_to_pixel` either: it snaps item transforms and y sort
-  keys but not the canvas transform the camera writes, giving quantised
-  sprites sliding against a smooth background and y sort order flipping at
-  near equal depth (godotengine/godot#71074).
+  rendering, which is right for baked 3D art. Nor enable
+  `snap_2d_transforms_to_pixel`: it snaps item transforms and y sort keys but
+  not the canvas transform the camera writes, giving quantised sprites sliding
+  against a smooth background and y sort order flipping at near equal depth
+  (godotengine/godot#71074).
 - **Void at the field edge is expected, not a bug.** The field's screen
   bounding box is x in [-2208, 2400] and y in [0, 2304], with the diamond tips
   at the box's edge midpoints, so the box corners are pure void. `Camera2D`
@@ -847,7 +831,7 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   player 48 px from the top edge at tile (0, 0), and void free framing needs
   zoom of at least 1.181. Treat it as a background and vignette problem. A
   later clamp belongs in Rust in tile space, against `0 <= x + y <= 46` and
-  `-23 <= x - y <= 23`, which reuses `x + y`, already the depth sort key.
+  `-23 <= x - y <= 23`, reusing `x + y`, already the depth sort key.
 - **Leave physics interpolation and `physics_interpolation_mode` alone.** Both
   are off by default. Setting the mode explicitly on a `Camera2D` spams
   `Parameter "data.tree" is null` (godotengine/godot#97957), enabling
@@ -856,7 +840,7 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   `Engine::get_physics_interpolation_fraction`, a fraction of Godot's physics
   tick with no relationship to `host`'s `alpha`: two interpolators disagreeing
   every frame. The engine's warning about that override sits inside
-  `#ifdef TOOLS_ENABLED`, so a shipped build is silent about it.
+  `#ifdef TOOLS_ENABLED`, so a shipped build is silent.
 - **Do not enable mipmaps to fix shimmer.** `pack.rs:272` states its own
   precondition, "Two pixels is enough with mipmaps off", and `GUTTER = 2`: at
   mip level 1 the gutter is one texel and at level 2 half of one, so mipmaps
@@ -865,10 +849,12 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   re-run the free, deterministic pack stage first; a gutter surviving mip
   level 3 needs roughly 16 px and real atlas area.
 - **`Gd<T>` is `!Send` and `!Sync`,** with off main thread access documented as
-  undefined behaviour in release, the compiler enforced backstop behind the
+  undefined behaviour in release: the compiler enforced backstop behind the
   README's threading claim.
-- **Replay logs ticks, not frames,** because latest wins means what the
-  frontend wrote is not necessarily what the simulation read.
+- **Atlas rows run clockwise from south,** matching the bake's negative Z angle
+  per index. A mirrored ring leaves south and north correct, so it shows only
+  when a character walks sideways: `row_for` uses the name, never the position.
+- **Replay logs ticks, not frames:** latest wins drops what the frontend wrote.
 - **A missing or invalid manifest or texture** logs one `godot_error!` and
   draws nothing, matching how a dead simulation thread is already reported.
   The simulation keeps running. BC7 blocks are 4 by 4 and frame rects are not
@@ -877,8 +863,6 @@ self.camera.set_global_position(iso::tile_to_screen(target));
 
 ## Test Plan
 
-All headless, through the existing nextest and coverage commands.
-
 **`crates/game`**
 - `Input::new` clamps a longer than unit vector to unit length and zeroes a
   non finite one.
@@ -886,19 +870,18 @@ All headless, through the existing nextest and coverage commands.
   `PLAYER_SPEED` tiles, a unit diagonal moves exactly as far, and an entity
   without `Player` ignores input entirely.
 - Zero input stops the player and leaves his facing where it was, the case
-  `test_sim.rs` currently records as untestable.
+  `test_sim.rs` records as untestable today.
 - The player stops at each field edge; holding into a corner leaves the facing
   unchanged because no motion happened, while `locomotion` stays `Running`,
   which is the whole reason the snapshot publishes it. Holding into an edge
   diagonally still slides him along it.
 - `Facing::from_direction` returns the expected variant for all eight key
   combinations in the Logic table, not just the sector centres in `FACINGS`
-  (`test_sim.rs:217-226`). It stays `pub(crate)`, so the assertion goes
-  through `Sim` the way the existing facing tests do. The four screen
-  diagonals are the near boundary cases: short to long ratio exactly 1/3
-  against `SECTOR_EDGE` 0.414214, a 4.07 degree margin, and that margin is
-  the fact being pinned. `Facing::name()` returns the eight
-  manifest direction names.
+  (`test_sim.rs:217-226`). It stays `pub(crate)`, so the assertion goes through
+  `Sim` the way the existing facing tests do. The four screen diagonals are the
+  near boundary cases: short to long ratio exactly 1/3 against `SECTOR_EDGE`
+  0.414214, a 4.07 degree margin, and that margin is the fact being pinned.
+  `Facing::name()` returns the eight manifest direction names.
 - The same seed and input sequence produce an identical snapshot twice, and
   `Sim::new` yields exactly one entity at the middle of the field, which
   `RenderSnapshot::player` names.
@@ -926,9 +909,9 @@ All headless, through the existing nextest and coverage commands.
   anchors. This is the contract test between the pipeline and the game.
 - `frame_at` is frame 0 at time 0 and at negative time, wraps at the clip
   length when `loops`, and holds the last frame when it does not. `row_for`
-  answers all eight directions and returns `None` for one the atlas lacks.
-  Both non default branches use a synthetic atlas, because all three shipped
-  clips loop and the survivor is eight direction.
+  answers all eight directions and `None` for one the atlas lacks. Both non
+  default branches use a synthetic atlas, because all three shipped clips loop
+  and the survivor is eight direction.
 
 **`crates/render`**
 - `tile_to_screen` pins the measured mapping: the origin and one step along
@@ -939,10 +922,10 @@ All headless, through the existing nextest and coverage commands.
   minus the anchor as the offset.
 - `reconcile` reports a new id as added, a vanished id as removed, an
   unchanged set as neither. A recycled entity slot is the fourth case: hecs
-  packs a generation into the id, so it comes back as a different `u64`, and
-  the test pins that the old id is a removal and the new one an addition
-  rather than a silent reuse of the node. And `project.godot` contains
-  all four action names, so a lost binding fails a test, not the game.
+  packs a generation into the id, so it returns as a different `u64`, and the
+  test pins the old id as a removal and the new one as an addition rather than
+  a silent reuse of the node. And `project.godot` contains all four action
+  names, so a lost binding fails a test, not the game.
 
 **By playing the game,** the only way to reach `bridge.rs`: the survivor
 stands at the middle of the field with his feet on his tile, idle looping,
@@ -960,8 +943,7 @@ character.
 
 ## Documentation Changes
 
-Each change ships in the task that makes it true, so there is no documentation
-only pull request.
+Each change ships in the task that makes it true, so there is no docs only PR.
 
 - **`README.md`:** add `crates/sprites` to the monorepo layout and to the unit
   tier's wired-in crates beside `render`; name the third boundary transport in
@@ -987,9 +969,11 @@ only pull request.
 
 ## Development Environment Changes
 
-None. No new tool, no new environment variable, no `Brewfile` change: `serde`
-and `ron` are already pinned, the `api-4-7` pin is correct against current
-stable, and `crates/sprites` joins `members`.
+No new tool, no new environment variable, no `Brewfile` change: `serde` and
+`ron` are already pinned, the `api-4-7` pin is correct against current stable,
+and `crates/sprites` joins `members`. The bake's Python suite gains a `pytest`
+pre-commit hook and a CI job: it already required 100 percent coverage but
+nothing ran it, so it failed unseen.
 
 ## Tasks
 
@@ -1012,5 +996,5 @@ everything in `render` depends on its answer.
 | T2  | Held input drives the player | Add `game::Input` beside `Intent`, the `Player` marker, `Facing::name`, `Spawn::player`, `PLAYER_SPEED`, `apply_input`, `keep_player_on_the_field`, `Locomotion` with `EntityView::locomotion` and `RenderSnapshot::player`, and make `Sim::new` spawn the survivor at the field centre. Change `tick` to take the input and update `host`'s single call site to pass a default. Fix the named existing tests and the `sim.rs` doc. | Every `crates/game` test in the Test Plan passes, including the eight screen diagonals; the per package coverage command in the Test Plan reports 100 percent for `game`; clippy is clean. | none |
 | T3  | Input reaches the simulation | Add an inbound `Input` triple buffer to `crates/host` with `SimHandle::set_input`, read once per tick inside the catch up loop. Alias the `triple_buffer` writer on import so `game::Input` keeps its name. Update the module doc to say three transports. | The `crates/host` tests in the Test Plan pass, polling to a deadline; shutdown and alpha tests still pass. | T2 |
 | T4  | Sprite manifest crate | Create `crates/sprites` with the four serde types moved out of `pack.rs`, plus `Error`, `parse` with every invariant, `row_for`, `frame_at` and `frame`. Wire the `[[test]]` stanza and the workspace dependency, point `xtask-art` at it, and add the README row. | The `crates/sprites` tests pass, including every rejected invariant and the committed survivor manifest; `cargo art check` and all existing `xtask-art` tests still pass; no atlas or manifest file changes. | none |
-| T5  | The survivor is drawn and animates | Add the y sorted `Entities` node and zoom 1.0 to `main.tscn`, `iso.rs` and `sprite.rs` with their tests, and the per entity `Sprite2D` lifecycle in `bridge.rs`: load the manifest through `FileAccess`, load one texture per `Clip`, and create, update and free nodes through `reconcile`. Correct the `bridge.rs` and `components.rs` docs. | The `crates/render` unit tests pass in CI; running the game shows the survivor at the field centre, feet on his tile, idle looping, drawn over the ground with no edge bleed; the coverage gate passes with no new exclusions. | T1, T2, T4 |
+| T5  | The survivor is drawn and animates | Add the y sorted `Entities` node and zoom 1.0 to `main.tscn`, `iso.rs` and `draw.rs` with their tests, and the per entity `Sprite2D` lifecycle in `bridge.rs`: load the manifest through `FileAccess`, load one texture per `Clip`, and create, update and free nodes through `reconcile`. Correct the `bridge.rs` and `components.rs` docs. | The `crates/render` unit tests pass in CI; running the game shows the survivor at the field centre, feet on his tile, idle looping, drawn over the ground with no edge bleed; the coverage gate passes with no new exclusions. | T1, T2, T4 |
 | T6  | WASD moves him and the camera follows | Add the four input actions to `project.godot` bound to physical keycodes, sample them in `process` behind the `focused` gate, convert and hand them to `set_input`. Replace `frame_camera`'s one shot centring with a per frame `set_global_position` on the existing `camera` field, from the controlled entity's `lerp(alpha)`. | Each of the eight key combinations moves him the way it points on screen and shows the matching row; diagonals are not faster; he stops at every edge; the camera keeps him at the same screen point every frame at both 60 and 144 fps; releasing the keys returns him to idle; alt tabbing does not leave him walking. | T3, T5 |
