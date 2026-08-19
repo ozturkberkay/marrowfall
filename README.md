@@ -150,3 +150,21 @@ everything else itself.
 in the workspace `Cargo.toml` with the `api-4-7` feature, which must match
 both the installed engine minor version and `compatibility_minimum` in
 `project/rust.gdextension`. Upgrade all three together.
+
+## License
+
+The source code is **GPL-3.0-or-later** with an additional permission
+covering proprietary storefront SDKs, so a build may link the Steamworks SDK
+without that combination triggering copyleft over the SDK itself. Full text
+and the exact wording of the exception are in [LICENSE](LICENSE).
+
+`art/` is **not** covered by that license. It is proprietary, all rights
+reserved; see [art/LICENSE](art/LICENSE). Code without art does not make a
+playable game, which is the point: the source is open, the game is sold.
+
+"Marrowfall" and the Marrowfall logo are trademarks. The license grants no
+right to use them, so a redistributed build must rename and rebrand.
+
+Contributions must be signed off under the terms in
+[CONTRIBUTING.md](CONTRIBUTING.md); the storefront exception only holds if
+every source file linked into a build is covered by it.

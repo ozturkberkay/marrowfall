@@ -3,10 +3,13 @@ resolver = "3"
 members = ["crates/game", "crates/host", "crates/render", "crates/xtask-art"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 rust-version = "1.94"
 publish = false
+# The storefront SDK exception in LICENSE adds permissions on top of this; it
+# grants rights rather than removing them, so the SPDX id stays plain GPL.
+license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 game = { path = "crates/game" }
