@@ -3,7 +3,8 @@
 //! straight-line code.
 //!
 //! The three endpoints put their result URL under different keys, so
-//! [`Task::glb_url`] searches the known ones and the payload stays raw JSON, //! an unexpected shape then fails clearly rather than after the spend.
+//! [`Task::glb_url`] searches the known ones and the payload stays raw JSON,
+//! an unexpected shape then fails clearly rather than after the spend.
 
 use std::time::Duration;
 
