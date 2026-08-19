@@ -103,6 +103,14 @@ repos:
         language: system
         types: [python]
 
+      # PYTHON TESTS
+      - id: pytest
+        name: Python Unit Tests
+        entry: uv run pytest
+        language: system
+        files: \.py$
+        pass_filenames: false
+
       # BASH
       - id: bashunit
         name: Bash Unit Tests
