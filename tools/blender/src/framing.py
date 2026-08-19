@@ -13,10 +13,14 @@ import math
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-# Direction 0 faces the camera; index increases counter-clockwise.
+# Direction 0 faces the camera, and `direction_rotation` turns the model by a
+# negative Z angle per index, which reads as clockwise on screen. So the ring
+# runs south, south-west, west, and on round. Naming it the other way silently
+# mirrors every diagonal and swaps east with west, while leaving south and north
+# looking correct, which is what makes the mistake so easy to miss.
 DIRECTION_NAMES: dict[int, list[str]] = {
-    4: ["s", "e", "n", "w"],
-    8: ["s", "se", "e", "ne", "n", "nw", "w", "sw"],
+    4: ["s", "w", "n", "e"],
+    8: ["s", "sw", "w", "nw", "n", "ne", "e", "se"],
 }
 
 # Elevation of the camera above the horizon, in degrees. Must match the tile
