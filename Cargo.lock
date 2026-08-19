@@ -1648,6 +1648,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
+name = "sprites"
+version = "0.0.1"
+dependencies = [
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2294,6 +2302,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+ "sprites",
  "tempfile",
  "tokio",
  "wiremock",

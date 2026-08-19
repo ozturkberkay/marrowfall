@@ -8,12 +8,14 @@
 //!
 //! Cell size is *not* shared; the per-animation [`Anchor`] lines them up.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use image::{RgbaImage, imageops};
-use serde::{Deserialize, Serialize};
+
+/// The manifest format lives in `sprites`, because the game reads the same
+/// file. Re-exported so this module still reads as one pipeline stage.
+pub use sprites::{Anchor, AnimationAtlas, CharacterAssets, FrameRect};
 
 /// Compass directions in the order the Blender bake writes them.
 const DIRECTIONS_8: [&str; 8] = ["s", "se", "e", "ne", "n", "nw", "w", "sw"];
@@ -82,15 +84,6 @@ pub fn content_bounds(image: &RgbaImage, alpha_threshold: u8) -> Option<Rect> {
     })
 }
 
-/// Where the sprite touches the ground, in pixels within an atlas cell. The
-/// renderer puts this point on the entity's tile, which keeps feet planted
-/// while the body bobs.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub struct Anchor {
-    pub x: u32,
-    pub y: u32,
-}
-
 /// The scale shared by every animation of one character. Only scale and the
 /// rotation axis are shared; each animation crops to its own content, and the
 /// per-animation anchor is what lines them up.
@@ -102,51 +95,6 @@ pub struct CharacterScale {
     /// Canvas row the character stands on, taken from the reference animation.
     /// Shared so an airborne animation is not planted on the tile as if grounded.
     ground_y: u32,
-}
-
-/// Where one frame lives in the atlas, and where those pixels sit inside the
-/// untrimmed cell.
-///
-/// Trimming each frame to its own content is what keeps the atlas small, and
-/// `off_x`/`off_y` are what make it safe: the anchor still means what it meant,
-/// because a frame draws back at the position it would have occupied.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct FrameRect {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-    pub off_x: u32,
-    pub off_y: u32,
-}
-
-/// Layout of one packed animation atlas.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AnimationAtlas {
-    /// Atlas filename, relative to the character's asset directory.
-    pub file: String,
-    /// Direction names in row order.
-    pub directions: Vec<String>,
-    /// Frames per direction, the column count.
-    pub frames: u32,
-    /// Playback rate the animation was sampled at.
-    pub fps: u32,
-    /// Whether playback repeats.
-    pub loops: bool,
-    /// The untrimmed cell every frame is positioned within. The anchor is
-    /// relative to this, not to any trimmed rect.
-    pub cell_width: u32,
-    pub cell_height: u32,
-    pub anchor: Anchor,
-    /// One entry per frame, indexed `direction * frames + frame`.
-    pub rects: Vec<FrameRect>,
-}
-
-/// Everything the game needs to draw one character.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CharacterAssets {
-    pub name: String,
-    pub animations: BTreeMap<String, AnimationAtlas>,
 }
 
 /// One frame plus where it came from.
