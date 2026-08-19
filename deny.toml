@@ -23,7 +23,9 @@ yanked = "deny"
 
 [licenses]
 version = 2
-# Our own crates carry no `license` field because they are never published.
+# Our own crates are GPL-3.0-or-later, which is deliberately absent from the
+# allow list below: that list governs dependencies we take on, not the licence
+# we ship under. Skipped here because the crates are never published.
 private = { ignore = true }
 # Permissive licences only. MPL-2.0 is included for gdext, which is
 # file-level copyleft and does not reach our own sources. CDLA-Permissive-2.0

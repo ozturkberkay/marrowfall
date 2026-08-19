@@ -1,0 +1,28 @@
+                             MARROWFALL ART ASSETS
+
+                       Copyright (C) 2026 Berkay Ozturk
+                              All rights reserved.
+
+The contents of this directory are not covered by the GNU General Public
+License that applies to Marrowfall's source code (see ../LICENSE). No license
+is granted to copy, modify, distribute, sublicense, or otherwise use these
+files, in whole or in part, for any purpose.
+
+This covers, without limitation, the character specifications, concept art, 3D
+meshes, animation data, rendered sprite frames, packed atlases, and the
+Marrowfall logo and other brand artwork.
+
+The name "Marrowfall" and the Marrowfall logo are trademarks of the copyright
+holder. Building a modified version of the source code grants no right to use
+them. A redistributed build must carry a different name and different branding.
+
+
+                          NOTE ON GENERATED CONTENT
+
+Parts of the character art here are produced by generative AI services through
+the pipeline in crates/xtask-art. Purely AI-generated images may not be
+eligible for copyright protection in some jurisdictions, including the United
+States. The reservation of rights above is asserted over this directory as a
+whole and over all human-authored material within it, including brand artwork,
+character specifications, and the selection, arrangement, and processing of
+generated output.
