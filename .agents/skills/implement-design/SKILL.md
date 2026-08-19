@@ -22,10 +22,10 @@ You **must** follow these guidelines at all times:
 
 - Stick to the approved design document requirements. Do **not** deviate.
 - Every line of code you write is a liability and **must** be justified.
-  - You MUST ruthlessly optimize for simplicity, readability, and maintainability.
-  - Avoid hacks, shortcuts, duplication, and speculative additions.
-  - When introducing new paradigms and patterns, conform to researched best practices.
-  - Proactively anticipate feedback and meticulously refactor and simplify like a perfectionist.
+    - You MUST ruthlessly optimize for simplicity, readability, and maintainability.
+    - Avoid hacks, shortcuts, duplication, and speculative additions.
+    - When introducing new paradigms and patterns, conform to researched best practices.
+    - Proactively anticipate feedback and meticulously refactor and simplify like a perfectionist.
 - Less is more. Simple is better.
 - **NEVER** mix test with source code.
 - Test directories should ALWAYS mirror the structure of the source code directories.
@@ -36,41 +36,41 @@ You **must** follow these guidelines at all times:
 - Only disable linter rules if absolutely needed and keep the disable scope
   as narrow as possible. Your first instinct should be fixing the code!
 - You **must** follow these first principles at all times:
-  - Test Driven Development (TDD):
-    - Red: Write a small test for new functionality that fails because the feature
-      doesn't exist yet.
-    - Green: Write just enough code to make that test pass.
-    - Refactor: Clean up and improve the code and tests while ensuring the test
-      stays green.
-  - Three-Tier Testing Architecture:
-    - Unit: Pure business logic tests with zero external dependencies
-    - Integration: In-process integration tests with external dependencies
-    - E2E: Black-box testing of the whole system based on user stories
-  - Domain Driven Design (DDD):
-    - Use entities, value objects, aggregates, repositories, and services to model
-      complex domains.
-    - Use ubiquitous language that is shared between developers and domain experts.
-  - Functional Core, Imperative Shell (FCIS):
-    - Functional core: Unit testable business logic
-    - Imperative shell: External dependencies like I/O, use integration tests
-  - Hexagonal Architecture
-    - Core business logic is isolated from external systems, allowing easy swapping.
-  - SOLID Principles
-    - Single Responsibility Principle (SRP): A class should have one job or purpose.
-    - Open-Closed Principle (OCP): New features should be added by adding new code, not
-      modifying existing code.
-    - Liskov Substitution Principle (LSP): Subclasses must behave in a way that doesn't
-      break the functionality of the parent class.
-    - Interface Segregation Principle (ISP): Create smaller, specific interfaces rather than
-      one large, general-purpose one.
-    - Dependency Inversion Principle (DIP): High-level modules should not depend on low-level
-      modules; both should depend on abstractions (interfaces).
-  - Clean Code
-    - No duplication
-    - Readable over clever
-    - Comments only when necessary. Explain the why not the what. Make sure it's easy to
-      understand for people with no context, don't make it too information dense.
-    - Clear separation of concerns
+    - Test Driven Development (TDD):
+        - Red: Write a small test for new functionality that fails because the feature
+          doesn't exist yet.
+        - Green: Write just enough code to make that test pass.
+        - Refactor: Clean up and improve the code and tests while ensuring the test
+          stays green.
+    - Three-Tier Testing Architecture:
+        - Unit: Pure business logic tests with zero external dependencies
+        - Integration: In-process integration tests with external dependencies
+        - E2E: Black-box testing of the whole system based on user stories
+    - Domain Driven Design (DDD):
+        - Use entities, value objects, aggregates, repositories, and services to model
+          complex domains.
+        - Use ubiquitous language that is shared between developers and domain experts.
+    - Functional Core, Imperative Shell (FCIS):
+        - Functional core: Unit testable business logic
+        - Imperative shell: External dependencies like I/O, use integration tests
+    - Hexagonal Architecture
+        - Core business logic is isolated from external systems, allowing easy swapping.
+    - SOLID Principles
+        - Single Responsibility Principle (SRP): A class should have one job or purpose.
+        - Open-Closed Principle (OCP): New features should be added by adding new code, not
+          modifying existing code.
+        - Liskov Substitution Principle (LSP): Subclasses must behave in a way that doesn't
+          break the functionality of the parent class.
+        - Interface Segregation Principle (ISP): Create smaller, specific interfaces rather than
+          one large, general-purpose one.
+        - Dependency Inversion Principle (DIP): High-level modules should not depend on low-level
+          modules; both should depend on abstractions (interfaces).
+    - Clean Code
+        - No duplication
+        - Readable over clever
+        - Comments only when necessary. Explain the why not the what. Make sure it's easy to
+          understand for people with no context, keep it tiny.
+        - Clear separation of concerns
 
 ## Validation
 
