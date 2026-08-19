@@ -217,8 +217,6 @@ pub fn character_scale<'a>(
     })
 }
 
-/// Packs one animation into an atlas: a row per direction, a column per
-/// frame. Frames share one crop, so the character cannot jitter.
 /// Gutter between packed frames. Without it bilinear filtering samples a
 /// neighbouring frame at the seam. Two pixels is enough with mipmaps off.
 const GUTTER: u32 = 2;
@@ -315,6 +313,8 @@ fn existing_uid(path: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Packs one animation into an atlas: a row per direction, a column per frame.
+/// Every frame shares one crop, so the character cannot jitter.
 pub fn pack_animation(
     frames: &[Frame],
     directions: &'static [&'static str],
