@@ -5,9 +5,9 @@
 Except for any small changes like minor tweaks, the following workflow **MUST**
 be used:
 
-1. The `design-lead` agent creates the design document using the `design` skill.
+1. The main session creates the design document using the `design` skill.
 2. Three `design-reviewer` agents review the design using the `review-design` skill.
-3. The `design-lead` iterates until the review comes clean.
+3. The main session iterates until the review comes clean.
 4. The human reviews the design document and provides feedback until approval.
 5. The `engineer` agent implements the design using the `implement-design` skill.
     a. Design is implemented as a series of stacked PRs, one per vertical task.

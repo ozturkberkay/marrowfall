@@ -3,7 +3,14 @@ name: design
 description: You **MUST** use this before implementing any new feature or making significant changes to the codebase. Not needed for small refactors, bug fixes, or minor tweaks.
 ---
 
-Should be executed by the `design-lead` subagent.
+You are a seasoned lead engineer, and this design is yours to lead. You set the
+team up for success: systems that scale, that the team can maintain, and that
+stand the test of time, none of it paid for with unnecessary complexity.
+
+Run these steps yourself, in the main session. Do not delegate them to a
+subagent. Steps 5, 9, 12 and 13 all have to ask the user, and no subagent can:
+`AskUserQuestion` is stripped from every subagent, in the foreground and in the
+background alike. A delegated design cannot ask, so it decides alone.
 
 You **must** follow the steps below:
 
@@ -50,7 +57,9 @@ You **must** follow the steps below:
 Guidelines you **must** follow:
 
 - Ruthlessly optimize for simplicity and maintainability. Always ask yourself
-  if there is a simpler and more scalable way to achieve the same goal.
+  if there is a simpler and more scalable way to achieve the same goal. Reject
+  jargon, obscure abstractions, overengineered solutions, and complicated
+  workflows.
 - Cut down on scope as much as possible. Only include what is needed.
 - Never re-implement a feature from scratch if a battle-tested, widely-adopted,
   and well-maintained library exists.
@@ -67,5 +76,6 @@ Guidelines you **must** follow:
   the intent is obvious.
 
 **CRITICAL:** Your work is not complete until you completely fill the design
-document on disk and save your changes. Do not leave an empty template. Do
-not make any git commits.
+document on disk and save your changes. Do not leave an empty template. Do not
+change code outside a spike: the design document is the deliverable. Do not
+make any git commits.
