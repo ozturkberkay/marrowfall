@@ -48,14 +48,14 @@ investment.
 
 ### 3. Alone in the Dark
 
-The world of Marrowfall is bleak, lonely, and oppressive. Humans are rare —
-confined to a handful of scattered, fortified settlements clinging to existence.
-Between those settlements: nothing but ruins, crypts, corrupted wilderness, and
-the things that live in them. The player spends most of their time alone. There
-are no companions, no party members, no friendly faces around the next corner.
-This isolation is a core feature, not a limitation. The rare moments of safety —
-arriving at a settlement, finding a hidden shelter — should feel like genuine
-relief.
+The world of Marrowfall is bleak, lonely, and oppressive. Humans are rare, and
+where you find them is a camp or a passing caravan rather than a city. Between
+those: nothing but ruins, crypts, corrupted wilderness, and the things that live
+in them. The player spends most of their time alone. There are no companions, no
+party members, no friendly faces around the next corner. This isolation is a
+core feature, not a limitation. Because nowhere is on a map you were handed, the
+rare moments of safety are ones you found: cresting a rise and seeing a campfire
+should feel like genuine relief.
 
 ### 4. Death Has Teeth
 
@@ -116,31 +116,41 @@ don't.
 
 ### World Structure
 
-The world uses a **hybrid generation system**:
+**The whole world comes from a seed, and it has no edge.** Nothing is
+hand-placed. Every biome, every hill, every camp and every ruin is decided by
+the seed, so two players on different seeds share the rules of the world but
+none of its geography.
 
-- **Fixed elements:** Towns, key landmarks, major geographical features, and
-  certain important locations are hand-placed. These give the world structure
-  and serve as orientation points. A player can always navigate relative to
-  known settlements and landmarks.
-- **Procedural elements:** Dungeons, caves, wilderness zones, and the spaces
-  between landmarks are procedurally generated. Resource placement, enemy
-  encounters, and dungeon layouts are randomized. No two playthroughs are
-  identical.
+**Danger grows with distance from where you woke up.** That is the one rule the
+world guarantees, and it is what turns walking into progression:
 
-This ensures the world always feels *designed* at the macro level (you can learn
-the geography) while remaining unpredictable at the micro level (every dungeon
-is a fresh unknown).
+- The land around the origin is the safest ground in the world. It is where a
+  new survivor learns to fight and where a Hardcore character retreats to.
+- Every few kilometres outward, the land steps up a difficulty band. The bands
+  are not visible as lines; they show as the biomes changing character.
+- The frontier, is the hardest band and it runs on forever. There is no wall
+  and no last zone.
 
-### Environmental Zones (Examples)
+**Places are found, not authored.** The world holds points of interest, and they
+are scattered by spacing rules rather than placed by hand: a rule says how often
+a kind of place appears, how far apart two of them must be, how far from the
+origin it may start, and which difficulty bands it belongs to. So the density of
+places is designed while every location is yours to discover.
 
-| Zone | Description | Key Resources | Threats |
-|------|-------------|---------------|---------|
-| **Ashen Lowlands** | Fog-choked flatlands of dead grass and crumbling farmsteads | Iron ore, leather, bone | Skeletons, ghouls, wild dogs |
-| **The Blackweald** | A dense, lightless forest where the trees have petrified | Dark wood, spider silk, venom sacs | Giant spiders, corrupted treants, wraiths |
-| **Hollowreach Mines** | Collapsed mining network extending deep underground | Silver, gemstones, sulfur | Cave trolls, bats, mine spirits |
-| **The Charred Bastion** | Ruins of a once-great fortress, still smoldering | Steel fragments, runic stones, ash powder | Demons, fire elementals, cursed knights |
-| **Cryptveil Depths** | Ancient burial complex beneath a forgotten cathedral | Grave dust, enchanted bones, sealed tomes | Vampires, liches, bone constructs |
-| **Dragonmaw Peaks** | Volcanic mountain range, home to the most dangerous creatures | Dragon scale, obsidian, magma ore | Dragons, wyverns, flame drakes |
+### Biomes (Examples)
+
+A biome is a kind of land, not a place. The same biome appears wherever the seed
+puts it, as many times as the seed puts it, and it belongs to one difficulty
+band. These are examples of the kind, not a list of the world's contents.
+
+| Band | Biome | Description | Key Resources | Threats |
+|------|-------|-------------|---------------|---------|
+| Safest | **Ashen lowland** | Fog-choked flatlands of dead grass and crumbling farmsteads | Iron ore, leather, bone | Skeletons, ghouls, wild dogs |
+| Near | **Blackweald** | Dense, lightless forest where the trees have petrified | Dark wood, spider silk, venom sacs | Giant spiders, corrupted treants, wraiths |
+| Middle | **Scoured rock** | Bare stone terraces stripped down to the bone of the land | Silver, gemstones, sulfur | Cave trolls, bats, mine spirits |
+| Far | **Cinder waste** | Ground that still smoulders, littered with fortress rubble | Steel fragments, runic stones, ash powder | Demons, fire elementals, cursed knights |
+| Far | **Barrow field** | Low mounds over graves nobody remembers digging | Grave dust, enchanted bones, sealed tomes | Vampires, liches, bone constructs |
+| Frontier | **Emberpeak** | Volcanic high ground, home to the most dangerous creatures | Dragon scale, obsidian, magma ore | Dragons, wyverns, flame drakes |
 
 ---
 
@@ -154,8 +164,8 @@ EXPLORE  -->  FIGHT  -->  HARVEST  -->  CRAFT  -->  GROW  -->  PUSH DEEPER
   +---------------------------------------------------------------+
 ```
 
-1. **Explore** — Venture out from safety into the unknown. Discover new zones,
-   dungeons, resource nodes.
+1. **Explore** — Venture out from safety into the unknown. Discover new biomes,
+   caves, camps, resource nodes.
 2. **Fight** — Engage enemies with punishing, deliberate combat. Every encounter
    is dangerous.
 3. **Harvest** — Collect materials from slain enemies (bones, hides, scales,
@@ -164,7 +174,7 @@ EXPLORE  -->  FIGHT  -->  HARVEST  -->  CRAFT  -->  GROW  -->  PUSH DEEPER
    skills to create gear, tools, consumables, and components.
 5. **Grow** — Your skills improve through use. Your gear improves through better
    crafting. You become more capable.
-6. **Push Deeper** — Access areas that were previously too dangerous. Find rarer
+6. **Push Further** — Walk further out than you safely could before. Find rarer
    materials. Face stronger enemies. The cycle continues.
 
 There is no endpoint. The player decides when they're done — or in hardcore
@@ -343,8 +353,8 @@ The world also provides materials through gathering:
 
 ### Workstations
 
-Crafting requires the right workstation. These are found in settlements or can
-sometimes be discovered in the world:
+Crafting requires the right workstation. Some are found standing at camps and
+ruins; the rest you build at a camp you have claimed:
 
 - **Forge & Anvil** — Metal weapons and armor (Blacksmithing)
 - **Tanning Rack** — Leather processing and leather armor (Leatherworking)
@@ -501,7 +511,7 @@ feel notable.
 - **Currency:** Gold exists but is scarce. The economy is tight — not a power
   fantasy where the player hoards millions.
 - **Trading:** Barter with NPCs. Some may prefer materials over gold. Prices
-  fluctuate based on settlement needs.
+  vary from one camp or caravan to the next.
 - **No auction house, no player economy** — this is single-player. The economy
   is between you and the NPCs.
 - **Material scarcity:** Rare materials are genuinely rare. Dragon scales don't
@@ -519,7 +529,9 @@ setting.
 
 ### Normal Mode
 
-- On death, the player respawns at the last visited settlement or safe point.
+- On death, the player respawns at the last safe point they claimed, or at the
+  world origin if they have claimed none. There is nowhere on the map that is
+  safe by default, so a safe point is something you make.
 - **Corpse run:** The player's body remains where they died, along with any
   carried materials and unequipped gear. The player must return to their corpse
   to recover their belongings. If they die again before reaching it, the first
@@ -538,40 +550,48 @@ setting.
 
 ### Enemy Scaling
 
-Enemies do **not** scale to the player's level (there is no player level). Zones
-have fixed difficulty ranges. The Ashen Lowlands are always dangerous to a new
-character. The Dragonmaw Peaks are always lethal to all but the most prepared.
-The player learns which areas they can handle and which they cannot — yet.
+Enemies do **not** scale to the player's level (there is no player level).
+Difficulty comes from **where you are standing**, and specifically from how far
+that is from the origin. A patch of land near the origin is always survivable
+for a new character. The frontier is always lethal to all but the most prepared.
+
+Because the rule is distance and not the player, nothing you do makes the world
+harder. Walking further does. The player learns how far out they can currently
+go, and pushing that line is the progression.
 
 ---
 
 ## World Generation & Replayability
 
-### Fixed Elements
+### What Every World Shares
 
-- **Settlements:** A set number of towns/hamlets in consistent relative
-  locations. The player can learn the geography.
-- **Major landmarks:** Mountain ranges, coastlines, major ruins, rivers. These
-  form the skeleton of the world map.
-- **Zone biomes:** The Blackweald is always a dark forest. The Charred Bastion
-  is always a ruined fortress region. Biome identity is preserved.
+The rules, never the map:
 
-### Procedural Elements
+- **Danger grows outward.** The origin is the safest ground and the frontier is
+  the hardest, on every seed.
+- **Biome identity.** A blackweald is always a dark petrified forest, wherever
+  it turns up, and it always belongs to the same difficulty band.
+- **Spacing rules.** Each kind of place has a density and a minimum gap, so some
+  are common and close together while others are rare and far apart. How often a
+  kind appears is authored; where it appears is not.
+- **The origin is where you wake up**, and it is what every distance is measured
+  from.
 
-- **Dungeon layouts:** Every dungeon entrance leads to a different layout each
-  playthrough. Room configurations, trap placement, enemy encounters, and
-  treasure locations are randomized.
-- **Wilderness details:** The space between landmarks is procedurally generated.
-  Paths, clearings, caves, ruins, resource nodes — all shift between
-  playthroughs.
-- **Resource placement:** Ore veins, herb patches, and other gathering nodes
-  spawn in different locations.
-- **Enemy encounters:** While zone-appropriate enemies are consistent (you'll
-  find spiders in the Blackweald), their exact placement and composition varies.
+### What Changes With The Seed
+
+- **The whole map.** Which biomes exist, how big each patch is, which direction
+  each one lies in, and where the land rises and falls.
+- **Every place in it.** Where each point of interest sits, and which kind it is.
+- **Underground layouts.** If a place leads underground, the interior is its own
+  generated space, so it is never the same twice across playthroughs.
+- **Resource placement.** Ore veins, herb patches and other gathering nodes
+  follow the biomes, so they move when the biomes do.
+- **Enemy encounters.** Biome-appropriate enemies are consistent (spiders in a
+  blackweald), but their placement and composition varies.
 
 ### Replayability Drivers
 
-- Procedural generation ensures no two playthroughs are identical
+- A new seed is a genuinely new world, not a reshuffle of known places
 - Permadeath hardcore mode creates natural replayability (each death is a fresh
   start)
 - The classless skill system encourages different build paths per playthrough
@@ -613,7 +633,7 @@ The player learns which areas they can handle and which they cannot — yet.
 ### Audio Direction
 
 - **Minimal music.** Long stretches of silence or ambient sound. Music is used
-  sparingly and intentionally — a faint melody when approaching a settlement, a
+  sparingly and intentionally — a faint melody when approaching a camp, a
   low drone in deep dungeons, a surge during a boss encounter. The absence of
   music makes its presence powerful.
 - **Environmental sound design is paramount.** Dripping water, distant groans,
@@ -658,7 +678,7 @@ Players who:
 | **Progression** | Skill-by-use | Level + skill tree | Skill-by-use | Level + passive tree | Skill-by-use |
 | **Loot system** | Craft everything | Enemy drops | Mixed | Enemy drops | Craft everything |
 | **Combat feel** | Punishing, deliberate | Fast, power-fantasy | Varied | Punishing (early) → fast | Stamina-based |
-| **World gen** | Hybrid (fixed + proc) | Mostly procedural | Fixed | Fixed | Procedural |
+| **World gen** | Seed-defined, endless | Mostly procedural | Fixed | Fixed | Procedural |
 | **Tone** | Bleak, hopeless | Dark but heroic | Varied | Dark | Cozy survival |
 | **Story** | None (sandbox) | Linear campaign | Sandbox | Campaign | Sandbox |
 | **Permadeath** | Optional hardcore | Optional hardcore | Optional | Softcore/Hardcore | No |
@@ -677,24 +697,25 @@ illustrate how the systems work together.*
 
 ---
 
-You load into your character — a survivor 12 hours into a playthrough on
-Hardcore mode. You're at **Grimstead**, a small settlement of a dozen NPCs
-huddled behind a wooden palisade. You have a Fine Iron Sword (Blacksmithing 45
+You load into your character, a survivor 12 hours into a playthrough on Hardcore
+mode. You are at the camp you cleared and claimed two sessions ago, an hour's
+walk out from where you woke up. You have a Fine Iron Sword (Blacksmithing 45
 craft), a Bone Buckler (your first real shield, made from skeleton remains),
 leather armor you stitched together from wolf hides, and a small stack of
 healing salves (Alchemy 22).
 
-You check the merchant. She has a recipe scroll: **Reinforced Leather Armor**.
-It costs 80 gold. You have 53. You make a note of it and head out.
+A caravan is parked nearby, the second one you have found. The trader has a
+recipe scroll: **Reinforced Leather Armor**. It costs 80 gold. You have 53. You
+make a note of where the caravan is and head out.
 
-Your goal today: reach the **Hollowreach Mines**. You've heard there's silver
-ore down there, and you need it to upgrade your sword. The mines are northeast,
-past the Ashen Lowlands.
+Your goal today: the cave mouth you spotted north-east last session, further out
+than you have been. You need silver to upgrade your sword, and the bare rock out
+that way is where silver lives.
 
-You leave Grimstead. The gate closes behind you. Fog rolls in. The ambient sound
-shifts — the faint murmur of the settlement fades, replaced by wind and silence.
+You leave the camp. Fog rolls in. The ambient sound shifts, the murmur of the
+fire fading behind you, replaced by wind and silence.
 
-Ten minutes into the Lowlands, you spot a cluster of skeletons near a collapsed
+Ten minutes into the lowlands, you spot a cluster of skeletons near a collapsed
 farmhouse. Three of them, armed with rusted weapons. In normal mode, you might
 charge in. In Hardcore, you circle wide, studying their patrol pattern. You
 approach from the side, engage the isolated one first.
@@ -711,10 +732,9 @@ Skinning skill doesn't apply here — these are skeletons, not beasts.
 You press on. Near the mine entrance, you find a **wild herb patch** —
 nightshade, useful for potions. You gather it. Herbalism +0.2.
 
-The Hollowreach Mines are dark. You light a torch (crafted from wood + cloth +
-tallow). The torch doesn't last forever — you have three. The mines are
-procedurally generated, so you've never seen this layout before, even if you've
-been to Hollowreach on a previous character.
+The cave is dark. You light a torch (crafted from wood + cloth + tallow). The
+torch doesn't last forever, and you have three. Every cave has its own generated
+interior, so nobody has ever walked this layout, on this character or any other.
 
 First chamber: empty. Collapsed supports, old mining carts. You spot an **iron
 ore vein** in the wall. You pull out your pickaxe and mine. Mining +0.3. You get
@@ -733,33 +753,30 @@ dodges.
 
 The troll falls. You harvest: **troll hide (3), troll fat (2), massive bone
 (1)**. Troll fat is an alchemy ingredient you've been wanting. The massive bone
-might be useful for a new weapon — you'll check recipes back in town.
+might be useful for a new weapon, and you'll check recipes back at camp.
 
-Deeper in the mines, you find what you came for: a **silver ore vein**. Mining
-+0.5 (new material type bonus). You get 4 silver ore.
+Deeper in, you find what you came for: a **silver ore vein**. Mining +0.5 (new
+material type bonus). You get 4 silver ore.
 
 In the same chamber, half-hidden behind rubble: a **locked chest**. Your
 Lockpicking is only 15. You try it. Fail. Try again. Fail. The lock is beyond
 your current skill. You mark the location mentally and move on. Something to
-come back for when your Lockpicking improves.
+come back for when your Lockpicking improves.  Torch is getting low. You light
+your second one and decide to head back. On the way out, you take a different
+tunnel and discover a **small hidden room** with a bookshelf. On it: a torn page
+from an alchemical text. It's a recipe: **Troll Fat Salve**, a powerful healing
+item that uses troll fat. Your Alchemy is just barely high enough to attempt it.
 
-Torch is getting low. You light your second one and decide to head back. On the
-way out, you take a different tunnel and discover a **small hidden room** with a
-bookshelf. On it: a torn page from an alchemical text. It's a recipe: **Troll
-Fat Salve** — a powerful healing item that uses troll fat. Your Alchemy is just
-barely high enough to attempt it.
-
-You return to Grimstead. At the forge, you smelt your iron ore into ingots. At
-the alchemy table, you craft two Troll Fat Salves using the new recipe. At the
-tanning rack, you process the troll hide.
+You walk back to your camp. At the forge you built there, you smelt your iron
+ore into ingots. At the alchemy table, you craft two Troll Fat Salves using the
+new recipe. At the tanning rack, you process the troll hide.
 
 You're 27 gold short of that Reinforced Leather Armor recipe. You sell some
-excess bone fragments to the merchant. Still 14 short. You decide to save it for
-next time.
+excess bone fragments to the trader, if the caravan is still there. Still 14
+short. You decide to save it for next time.
 
-You log off in Grimstead, your character safe behind the palisade. Tomorrow:
-deeper into the mines, that locked chest, and maybe enough silver to forge
-something new.
+You log off at your fire, the only light for a kilometre. Tomorrow: back into
+that cave, the locked chest, and maybe enough silver to forge something new.
 
 No quest told you to do any of this. You decided.
 

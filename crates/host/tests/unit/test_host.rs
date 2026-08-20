@@ -3,6 +3,25 @@ use std::time::{Duration, Instant};
 
 use game::{EntityView, Input, RenderSnapshot, Sim, TICK_DT, Vec2};
 use host::{SimHandle, alpha_for, spawn};
+/// A world small enough that streaming a few chunks is instant, and a radius of
+/// one so a test spawns three by three chunks rather than a screenful.
+fn test_world() -> std::sync::Arc<worldgen::World> {
+    let rules = worldgen::parse(worldgen::Tables {
+        world: "region_pitch_tiles\tregion_jitter_pct\thome_bubble_tiles\n256\t60\t128\n",
+        tiers: "tier\tinner_tiles\tharder_stray\teasier_stray\tstray_pct\n0\t0\t0\t0\t0\n",
+        materials: "material\tblocks_walk\tblocks_jump\tblocks_shot\nsoil\t0\t0\t0\n",
+        biomes: "biome\ttier\tweight\tground\theight_amp\theight_period\nlow\t0\t10\tsoil\t3\t240\n",
+        site_classes: "class\tspacing\tseparation\tfill_pct\tmin_from_spawn\ttier_lo\ttier_hi\ncamp\t400\t240\t35\t0\t0\t0\n",
+        sites: "site\tclass\tweight\tfootprint\ncampfire\tcamp\t1\t3\n",
+    })
+    .unwrap();
+    std::sync::Arc::new(worldgen::World::new(rules, 7))
+}
+
+/// A running simulation with the world streaming around it.
+fn running() -> SimHandle {
+    spawn(Sim::new(), test_world(), 1)
+}
 
 fn tick() -> Duration {
     Duration::from_secs_f64(TICK_DT)
@@ -33,7 +52,7 @@ fn alpha_clamps_once_the_next_tick_is_overdue() {
 
 #[test]
 fn the_sim_thread_ticks_and_reports_itself_alive() {
-    let mut handle = spawn(Sim::new(1));
+    let mut handle = running();
 
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut saw_partway_through_a_tick = false;
@@ -66,7 +85,7 @@ fn the_sim_thread_ticks_and_reports_itself_alive() {
 /// the only teardown path there is.
 #[test]
 fn dropping_the_handle_does_not_hang() {
-    let handle = spawn(Sim::new(1));
+    let handle = running();
 
     let start = Instant::now();
     drop(handle);
@@ -102,7 +121,7 @@ fn poll_until(handle: &mut SimHandle, ready: impl Fn(&RenderSnapshot) -> bool, c
 /// that a read does not consume the buffer.
 #[test]
 fn one_input_written_once_keeps_the_player_walking() {
-    let mut handle = spawn(Sim::new(1));
+    let mut handle = running();
     let start = player_of(handle.read().snapshot).pos;
 
     handle.set_input(Input::new(Vec2::new(1.0, 0.0)));
@@ -116,7 +135,7 @@ fn one_input_written_once_keeps_the_player_walking() {
 
 #[test]
 fn a_player_nobody_is_driving_stands_still() {
-    let mut handle = spawn(Sim::new(1));
+    let mut handle = running();
     let start = player_of(handle.read().snapshot).pos;
 
     poll_until(&mut handle, |snapshot| snapshot.tick >= 30, "no ticks ran");

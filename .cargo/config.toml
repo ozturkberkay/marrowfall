@@ -5,3 +5,7 @@
 # (cargo's own `xtask-build-man` crate is invoked as `cargo build-man`).
 [alias]
 art = "run --release --package xtask-art --"
+# `cargo world preview` renders a region of a seed to a PNG, so a generator can
+# be tuned without launching the game. Release, because it paints millions of
+# tiles and a debug build makes that a coffee break.
+world = "run --release --package xtask-world --"

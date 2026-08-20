@@ -18,15 +18,13 @@ REQUIRED_COVERAGE=96
 #
 # Two files cannot be reached from a plain test binary:
 #
-#   render/src/bridge.rs  a Godot node. Instantiating it needs a running
-#                         engine, so it is exercised by launching the game,
-#                         not by the test harness.
-#   xtask-art/src/main.rs the binary entry point, which exists only to call
-#                         `cli::run_from_args`. That function IS covered.
-#
-# Everything else is measured. Excluding anything further needs a reason as
-# good as these two.
-IGNORE='(render/src/bridge\.rs|xtask-art/src/main\.rs)'
+#   render/src/bridge.rs    a Godot node. Instantiating it needs a running
+#                           engine, so it is exercised by launching the game,
+#                           not by the test harness.
+#   xtask-art/src/main.rs   the binary entry point, which exists only to call
+#                           `cli::run_from_args`. That function IS covered.
+#   xtask-world/src/main.rs the same, for the world preview tool.
+IGNORE='(render/src/bridge\.rs|xtask-art/src/main\.rs|xtask-world/src/main\.rs)'
 
 for tool in cargo-llvm-cov cargo-nextest; do
   if ! command -v "${tool}" &> /dev/null; then
@@ -50,6 +48,6 @@ done
 # toolchain is enough, no nightly needed.
 cargo llvm-cov --no-clean nextest \
   --workspace \
-  --lib --test unit \
+  --lib --test unit --test integration \
   --ignore-filename-regex "${IGNORE}" \
   --fail-under-lines "${REQUIRED_COVERAGE}"

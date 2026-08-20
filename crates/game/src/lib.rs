@@ -5,18 +5,32 @@
 //! Determinism: no wall clock, no OS randomness, no I/O. Identical seeds and
 //! intent streams must replay identical worlds.
 
+mod chunks;
 mod components;
 mod sim;
 mod snapshot;
-mod terrain;
 
+pub use chunks::{Chunks, STEP_LIMIT};
 pub use components::Facing;
 pub use sim::{PLAYER_SPEED, Sim, Spawn, TICK_DT, TICK_HZ};
 pub use snapshot::{EntityView, Locomotion, RenderSnapshot};
-pub use terrain::{GROUND_VARIANTS, TerrainGrid};
 
-/// Re-exported because it appears in the boundary protocol: frontends must be
-/// able to name it without picking their own `glam` version.
+/// A position or displacement in the world, in tile units.
+///
+/// `f64`, because the world outlives `f32`. Screen coordinates grow about 107
+/// pixels per tile, so by roughly 20 km an `f32` can no longer place a sprite to
+/// the nearest quarter pixel, and the frontier is past that. Minecraft and
+/// Unreal 5 both landed here for the same reason.
+///
+/// An alias rather than a bare re-export, so a frontend names this instead of
+/// the concrete type and the width can change again without touching callers.
+pub type WorldVec = glam::DVec2;
+
+/// A direction, always at or near unit length, which is what [`Input`] carries.
+///
+/// Stays `f32`: a direction is never large, so it has nothing to gain from the
+/// extra width. Re-exported because it appears in the boundary protocol, so a
+/// frontend must be able to name it without picking its own `glam` version.
 pub use glam::Vec2;
 
 /// Everything a player holds down this tick.

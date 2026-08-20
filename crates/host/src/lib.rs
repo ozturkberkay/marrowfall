@@ -6,6 +6,8 @@
 //!   right now matters, so superseded samples are dropped.
 //! - A latest-wins triple buffer of snapshots out. A frontend only ever wants
 //!   the newest one.
+//! - A reliable channel of chunks out. Every one must arrive: a dropped chunk
+//!   leaves a permanent hole in the painted world.
 //!
 //! Both directions are latest-wins because the clocks do not match, not for
 //! symmetry. One reliable input message per frame delivers 2.4 per tick at
@@ -20,14 +22,20 @@
 //! nearly free: `Gd<T>` is not `Send`, so the compiler would have stopped a
 //! Godot handle crossing onto this thread wherever the code lived.
 
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use game::{Input, RenderSnapshot, Sim, TICK_DT};
+use worldgen::{ChunkCoord, World};
 // `Input` is aliased, because `game::Input` is the held player input this crate
 // carries. The buffer's write end is a different thing.
 use triple_buffer::{Input as Writer, Output, TripleBuffer};
+
+mod stream;
+
+pub use stream::{ChunkMessage, Streamer};
 
 /// Control messages into the simulation thread.
 enum SimCommand {
@@ -54,7 +62,7 @@ struct Published {
 #[derive(Debug)]
 pub struct Frame<'a> {
     pub snapshot: &'a RenderSnapshot,
-    pub alpha: f32,
+    pub alpha: f64,
 }
 
 /// How far through a tick a frame lands: `0` at the tick's own deadline, `1` at
@@ -63,8 +71,11 @@ pub struct Frame<'a> {
 /// [`SimHandle::read`] applies this. It is public so the mapping is pinned by a
 /// test rather than by inspection.
 #[must_use]
-pub fn alpha_for(since_due: Duration) -> f32 {
-    (since_due.as_secs_f64() / TICK_DT).clamp(0.0, 1.0) as f32
+pub fn alpha_for(since_due: Duration) -> f64 {
+    // `f64` all the way out. It is computed in `f64` here, and `EntityView::lerp`
+    // wants `f64`, so narrowing in between only lost precision and cost two
+    // casts.
+    (since_due.as_secs_f64() / TICK_DT).clamp(0.0, 1.0)
 }
 
 /// Main-thread handle to the running simulation. Dropping it stops the thread
@@ -74,6 +85,7 @@ pub struct SimHandle {
     commands: Sender<SimCommand>,
     inputs: Writer<Input>,
     snapshots: Output<Published>,
+    chunks: Receiver<ChunkMessage>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -104,6 +116,18 @@ impl SimHandle {
         }
     }
 
+    /// Every chunk that arrived or was dropped since the last call.
+    ///
+    /// A `Vec` and not an iterator: an iterator borrowed from `&mut self` would
+    /// stop the caller touching any other field while looping, which is the trap
+    /// [`Frame`] already documents.
+    ///
+    /// Must be called every frame. Nothing bounds the queue, so a frontend that
+    /// stops draining grows it without limit.
+    pub fn take_chunks(&mut self) -> Vec<ChunkMessage> {
+        self.chunks.try_iter().collect()
+    }
+
     /// Whether the simulation thread is still running.
     ///
     /// A panicked thread stops publishing, and the triple buffer keeps handing
@@ -128,11 +152,12 @@ impl Drop for SimHandle {
     }
 }
 
-/// Spawns the simulation thread, moving `sim` onto it.
+/// Spawns the simulation thread, moving `sim` onto it, and starts streaming the
+/// world around the player.
 ///
-/// The returned handle is the only route to the simulation. Terrain and
-/// anything else read off `Sim` directly has to be taken before this call.
-pub fn spawn(sim: Sim) -> SimHandle {
+/// `radius` is how many chunks out from the player's own chunk stay resident, on
+/// each axis. The returned handle is the only route to the simulation.
+pub fn spawn(sim: Sim, world: Arc<World>, radius: u8) -> SimHandle {
     let (commands, command_rx) = crossbeam_channel::unbounded();
 
     // One clock read for the seed and the loop both, so alpha stays continuous
@@ -145,16 +170,26 @@ pub fn spawn(sim: Sim) -> SimHandle {
     };
     let (snapshot_tx, snapshots) = TripleBuffer::new(&seed).split();
     let (inputs, input_rx) = TripleBuffer::new(&Input::default()).split();
+    let (chunk_tx, chunks) = crossbeam_channel::unbounded();
 
     let thread = thread::Builder::new()
         .name("marrowfall-sim".into())
-        .spawn(move || run(sim, &command_rx, input_rx, snapshot_tx, epoch))
+        .spawn(move || {
+            let streamer = stream::Streamer::new(
+                world,
+                radius,
+                sim.player_chunk().unwrap_or(ChunkCoord::new(0, 0)),
+                chunk_tx,
+            );
+            run(sim, streamer, &command_rx, input_rx, snapshot_tx, epoch);
+        })
         .expect("failed to spawn simulation thread");
 
     SimHandle {
         commands,
         inputs,
         snapshots,
+        chunks,
         thread: Some(thread),
     }
 }
@@ -164,6 +199,7 @@ pub fn spawn(sim: Sim) -> SimHandle {
 /// rather than bursting.
 fn run(
     mut sim: Sim,
+    mut streamer: stream::Streamer,
     commands: &Receiver<SimCommand>,
     mut inputs: Output<Input>,
     mut snapshots: Writer<Published>,
@@ -181,6 +217,12 @@ fn run(
         match commands.recv_deadline(next_tick) {
             Ok(SimCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {}
+        }
+
+        // Before the tick, so a tick never reads a chunk that arrived halfway
+        // through it, and so collision and painting agree on the same window.
+        if let Some(centre) = sim.player_chunk() {
+            streamer.update(centre, &mut sim);
         }
 
         let mut ran = 0;

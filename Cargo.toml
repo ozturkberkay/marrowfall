@@ -5,7 +5,9 @@ members = [
     "crates/host",
     "crates/render",
     "crates/sprites",
+    "crates/worldgen",
     "crates/xtask-art",
+    "crates/xtask-world",
 ]
 
 [workspace.package]
@@ -21,6 +23,7 @@ license = "GPL-3.0-or-later"
 game = { path = "crates/game" }
 host = { path = "crates/host" }
 sprites = { path = "crates/sprites" }
+worldgen = { path = "crates/worldgen" }
 
 godot = { version = "0.5.5", features = ["api-4-7"] }
 hecs = "0.11"
@@ -31,6 +34,11 @@ triple_buffer = "9.0"
 # The sprite manifest format is written by the art pipeline and read by the
 # game, so these two also ship inside the GDExtension library.
 ron = "0.12"
+
+# Worldgen. `fastnoise-lite` is pinned to `std` only: its `libm` feature swaps in
+# a different maths implementation, and the world must not change under us.
+fastnoise-lite = { version = "1.1.1", default-features = false, features = ["std"] }
+csv = "1.4"
 serde = { version = "1.0", features = ["derive"] }
 
 # Art pipeline (xtask-art) only.

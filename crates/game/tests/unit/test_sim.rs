@@ -1,30 +1,57 @@
 use game::{
     EntityView, Facing, Input, Locomotion, PLAYER_SPEED, RenderSnapshot, Sim, Spawn, TICK_HZ, Vec2,
+    WorldVec,
 };
-
-const SEED: u64 = 0x4D61_7272_6F77; // "Marrow"
 
 /// Deliberately awkward magnitudes on both axes, so no assertion can lean on
 /// a velocity that happens to round cleanly.
-const DRIFT: Vec2 = Vec2::new(3.0, -7.0);
+const DRIFT: WorldVec = WorldVec::new(3.0, -7.0);
 
 /// One axis each. Named for the axis, not a screen direction: which way `+y`
 /// points on screen is the frontend's business, not the simulation's.
-const ALONG_X: Vec2 = Vec2::new(3.0, 0.0);
-const ALONG_Y: Vec2 = Vec2::new(0.0, -7.0);
+const ALONG_X: WorldVec = WorldVec::new(3.0, 0.0);
+const ALONG_Y: WorldVec = WorldVec::new(0.0, -7.0);
 
 /// Far enough inside the field that a second of walking cannot reach an edge.
 /// So a test about speed is not also a test about the clamp.
-const MIDFIELD: Vec2 = Vec2::new(8.0, 8.0);
+const MIDFIELD: WorldVec = WorldVec::new(8.0, 8.0);
 
 /// A world holding exactly these entities, with their ids positionally, so a
 /// caller can destructure them by name.
 fn world_of<const N: usize>(spawns: [Spawn; N]) -> (Sim, [u64; N]) {
-    let (sim, ids) = Sim::with_entities(SEED, &spawns);
+    let (mut sim, ids) = Sim::with_entities(&spawns);
+    give_it_ground(&mut sim);
     (sim, ids.try_into().expect("one id per spawn"))
 }
 
-fn moving(at: Vec2, velocity: Vec2) -> Spawn {
+/// Flat, open chunks around the origin.
+///
+/// Without them nothing moves, and that is correct rather than a nuisance: an
+/// unloaded tile is not open ground, so a simulation that has been handed no
+/// chunks has nowhere to walk. Every movement test therefore has to say what it
+/// is standing on.
+fn give_it_ground(sim: &mut Sim) {
+    let rules = worldgen::parse(worldgen::Tables {
+        world: "region_pitch_tiles\tregion_jitter_pct\thome_bubble_tiles\n256\t0\t4096\n",
+        tiers: "tier\tinner_tiles\tharder_stray\teasier_stray\tstray_pct\n0\t0\t0\t0\t0\n",
+        materials: "material\tblocks_walk\tblocks_jump\tblocks_shot\nsoil\t0\t0\t0\n",
+        // Zero amplitude, so the ground is level and a movement assertion is
+        // about movement rather than about a step it happened to meet.
+        biomes: "biome\ttier\tweight\tground\theight_amp\theight_period\nlow\t0\t10\tsoil\t0\t240\n",
+        site_classes: "class\tspacing\tseparation\tfill_pct\tmin_from_spawn\ttier_lo\ttier_hi\ncamp\t400\t240\t35\t0\t0\t0\n",
+        sites: "site\tclass\tweight\tfootprint\ncampfire\tcamp\t1\t3\n",
+    })
+    .unwrap();
+    let world = worldgen::World::new(rules, 7);
+    for y in -2..=2 {
+        for x in -2..=2 {
+            let coord = worldgen::ChunkCoord::new(x, y);
+            sim.insert_chunk(std::sync::Arc::new(worldgen::generate_chunk(&world, coord)));
+        }
+    }
+}
+
+fn moving(at: WorldVec, velocity: WorldVec) -> Spawn {
     Spawn {
         at,
         velocity: Some(velocity),
@@ -34,10 +61,10 @@ fn moving(at: Vec2, velocity: Vec2) -> Spawn {
 
 /// The one entity that held input drives. It starts still, because input is the
 /// only thing that gives it a velocity.
-fn player(at: Vec2) -> Spawn {
+fn player(at: WorldVec) -> Spawn {
     Spawn {
         at,
-        velocity: Some(Vec2::ZERO),
+        velocity: Some(WorldVec::ZERO),
         player: true,
     }
 }
@@ -56,22 +83,22 @@ fn view_of(snapshot: &RenderSnapshot, id: u64) -> EntityView {
 }
 
 #[test]
-fn same_seed_generates_identical_terrain() {
-    assert_eq!(Sim::new(SEED).terrain(), Sim::new(SEED).terrain());
-}
-
-#[test]
-fn different_seeds_generate_different_terrain() {
-    assert_ne!(Sim::new(SEED).terrain(), Sim::new(SEED + 1).terrain());
+fn a_new_simulation_holds_no_ground_yet() {
+    // Terrain streams in from outside, so a fresh simulation knows nothing about
+    // the world until chunks arrive. Anything reading the ground has to treat
+    // that as "not known", never as open space.
+    let sim = Sim::new();
+    assert!(sim.chunks().is_empty());
+    assert_eq!(sim.chunks().tile(worldgen::IVec2::ZERO), None);
 }
 
 #[test]
 fn the_same_world_built_the_same_way_replays_identically() {
     let run = || {
         let (mut sim, _) = world_of([
-            moving(Vec2::new(1.0, 2.0), DRIFT),
+            moving(WorldVec::new(1.0, 2.0), DRIFT),
             Spawn {
-                at: Vec2::new(5.0, 5.0),
+                at: WorldVec::new(5.0, 5.0),
                 velocity: None,
                 player: false,
             },
@@ -89,7 +116,7 @@ fn the_same_world_built_the_same_way_replays_identically() {
 
 #[test]
 fn ticking_advances_time_by_fixed_steps() {
-    let mut sim = Sim::new(SEED);
+    let mut sim = Sim::new();
     for _ in 0..TICK_HZ {
         sim.tick(Input::default(), &[]);
     }
@@ -99,7 +126,7 @@ fn ticking_advances_time_by_fixed_steps() {
 
 #[test]
 fn a_snapshot_reports_the_tick_and_time_it_describes() {
-    let mut sim = Sim::new(SEED);
+    let mut sim = Sim::new();
     for _ in 0..TICK_HZ {
         sim.tick(Input::default(), &[]);
     }
@@ -119,16 +146,16 @@ fn snapshot_of_empty_world_has_no_entities() {
 
 #[test]
 fn a_starting_cast_appears_in_snapshots() {
-    let (sim, [id]) = world_of([moving(Vec2::new(4.0, 5.0), DRIFT)]);
+    let (sim, [id]) = world_of([moving(WorldVec::new(4.0, 5.0), DRIFT)]);
 
     let view = only_entity(&sim.snapshot());
     assert_eq!(view.id, id);
-    assert_eq!(view.pos, Vec2::new(4.0, 5.0));
+    assert_eq!(view.pos, WorldVec::new(4.0, 5.0));
 }
 
 #[test]
 fn a_new_entity_has_nothing_to_interpolate() {
-    let (sim, _) = world_of([moving(Vec2::new(4.0, 5.0), DRIFT)]);
+    let (sim, _) = world_of([moving(WorldVec::new(4.0, 5.0), DRIFT)]);
 
     let view = only_entity(&sim.snapshot());
     assert_eq!(view.prev_pos, view.pos);
@@ -136,7 +163,7 @@ fn a_new_entity_has_nothing_to_interpolate() {
 
 #[test]
 fn a_tick_leaves_both_ends_of_the_move_to_interpolate() {
-    let start = Vec2::new(1.0, 1.0);
+    let start = WorldVec::new(1.0, 1.0);
     let (mut sim, _) = world_of([moving(start, DRIFT)]);
 
     sim.tick(Input::default(), &[]);
@@ -149,8 +176,10 @@ fn a_tick_leaves_both_ends_of_the_move_to_interpolate() {
 
 #[test]
 fn a_second_of_ticks_moves_each_entity_by_its_own_velocity() {
-    let (mut sim, [along_x, along_y]) =
-        world_of([moving(Vec2::ZERO, ALONG_X), moving(Vec2::ZERO, ALONG_Y)]);
+    let (mut sim, [along_x, along_y]) = world_of([
+        moving(WorldVec::ZERO, ALONG_X),
+        moving(WorldVec::ZERO, ALONG_Y),
+    ]);
 
     for _ in 0..TICK_HZ {
         sim.tick(Input::default(), &[]);
@@ -171,7 +200,7 @@ fn a_second_of_ticks_moves_each_entity_by_its_own_velocity() {
 
 #[test]
 fn each_tick_resumes_where_the_last_one_ended() {
-    let (mut sim, _) = world_of([moving(Vec2::ZERO, DRIFT)]);
+    let (mut sim, _) = world_of([moving(WorldVec::ZERO, DRIFT)]);
 
     let mut before = sim.snapshot();
     for tick in 1..=4 {
@@ -189,8 +218,8 @@ fn each_tick_resumes_where_the_last_one_ended() {
 #[test]
 fn each_entity_keeps_its_own_positions() {
     let (mut sim, [along_x, along_y]) = world_of([
-        moving(Vec2::ZERO, ALONG_X),
-        moving(Vec2::new(9.0, 9.0), ALONG_Y),
+        moving(WorldVec::ZERO, ALONG_X),
+        moving(WorldVec::new(9.0, 9.0), ALONG_Y),
     ]);
     assert_ne!(along_x, along_y);
 
@@ -214,9 +243,9 @@ fn each_entity_keeps_its_own_positions() {
 /// zero. Both must hold their ground.
 #[test]
 fn a_still_entity_holds_its_place_however_it_was_built() {
-    for velocity in [None, Some(Vec2::ZERO)] {
+    for velocity in [None, Some(WorldVec::ZERO)] {
         let (mut sim, _) = world_of([Spawn {
-            at: Vec2::new(4.0, 4.0),
+            at: WorldVec::new(4.0, 4.0),
             velocity,
             player: false,
         }]);
@@ -226,7 +255,7 @@ fn a_still_entity_holds_its_place_however_it_was_built() {
         }
 
         let view = only_entity(&sim.snapshot());
-        assert_eq!(view.pos, Vec2::new(4.0, 4.0), "{velocity:?} drifted");
+        assert_eq!(view.pos, WorldVec::new(4.0, 4.0), "{velocity:?} drifted");
         assert_eq!(view.prev_pos, view.pos);
     }
 }
@@ -234,27 +263,27 @@ fn a_still_entity_holds_its_place_however_it_was_built() {
 /// Tile directions and the screen direction each one points, measured against
 /// Godot's isometric tilemap. Both tile axes run down the screen, so the screen
 /// cardinals are tile diagonals.
-const FACINGS: [(Vec2, Facing, &str); 8] = [
-    (Vec2::new(1.0, 1.0), Facing::South, "s"),
-    (Vec2::new(1.0, 0.0), Facing::SouthEast, "se"),
-    (Vec2::new(1.0, -1.0), Facing::East, "e"),
-    (Vec2::new(0.0, -1.0), Facing::NorthEast, "ne"),
-    (Vec2::new(-1.0, -1.0), Facing::North, "n"),
-    (Vec2::new(-1.0, 0.0), Facing::NorthWest, "nw"),
-    (Vec2::new(-1.0, 1.0), Facing::West, "w"),
-    (Vec2::new(0.0, 1.0), Facing::SouthWest, "sw"),
+const FACINGS: [(WorldVec, Facing, &str); 8] = [
+    (WorldVec::new(1.0, 1.0), Facing::South, "s"),
+    (WorldVec::new(1.0, 0.0), Facing::SouthEast, "se"),
+    (WorldVec::new(1.0, -1.0), Facing::East, "e"),
+    (WorldVec::new(0.0, -1.0), Facing::NorthEast, "ne"),
+    (WorldVec::new(-1.0, -1.0), Facing::North, "n"),
+    (WorldVec::new(-1.0, 0.0), Facing::NorthWest, "nw"),
+    (WorldVec::new(-1.0, 1.0), Facing::West, "w"),
+    (WorldVec::new(0.0, 1.0), Facing::SouthWest, "sw"),
 ];
 
 #[test]
 fn a_new_entity_faces_south() {
-    let (sim, _) = world_of([moving(Vec2::ZERO, DRIFT)]);
+    let (sim, _) = world_of([moving(WorldVec::ZERO, DRIFT)]);
     assert_eq!(only_entity(&sim.snapshot()).facing, Facing::South);
 }
 
 #[test]
 fn facing_follows_the_direction_travelled() {
     for (velocity, want, _) in FACINGS {
-        let (mut sim, _) = world_of([moving(Vec2::ZERO, velocity)]);
+        let (mut sim, _) = world_of([moving(WorldVec::ZERO, velocity)]);
         sim.tick(Input::default(), &[]);
         assert_eq!(
             only_entity(&sim.snapshot()).facing,
@@ -269,13 +298,13 @@ fn facing_follows_the_direction_travelled() {
 #[test]
 fn facing_switches_sector_at_the_diagonal_boundary() {
     let cases = [
-        (Vec2::new(1.0, 0.4), Facing::SouthEast),
-        (Vec2::new(1.0, 0.5), Facing::South),
-        (Vec2::new(0.4, 1.0), Facing::SouthWest),
-        (Vec2::new(0.5, 1.0), Facing::South),
+        (WorldVec::new(1.0, 0.4), Facing::SouthEast),
+        (WorldVec::new(1.0, 0.5), Facing::South),
+        (WorldVec::new(0.4, 1.0), Facing::SouthWest),
+        (WorldVec::new(0.5, 1.0), Facing::South),
     ];
     for (velocity, want) in cases {
-        let (mut sim, _) = world_of([moving(Vec2::ZERO, velocity)]);
+        let (mut sim, _) = world_of([moving(WorldVec::ZERO, velocity)]);
         sim.tick(Input::default(), &[]);
         assert_eq!(
             only_entity(&sim.snapshot()).facing,
@@ -287,7 +316,7 @@ fn facing_switches_sector_at_the_diagonal_boundary() {
 
 #[test]
 fn facing_holds_steady_while_travelling() {
-    let (mut sim, _) = world_of([moving(Vec2::ZERO, Vec2::new(-1.0, -1.0))]);
+    let (mut sim, _) = world_of([moving(WorldVec::ZERO, WorldVec::new(-1.0, -1.0))]);
 
     for _ in 0..TICK_HZ {
         sim.tick(Input::default(), &[]);
@@ -297,9 +326,9 @@ fn facing_holds_steady_while_travelling() {
 
 #[test]
 fn a_still_entity_keeps_facing_south() {
-    for velocity in [None, Some(Vec2::ZERO)] {
+    for velocity in [None, Some(WorldVec::ZERO)] {
         let (mut sim, _) = world_of([Spawn {
-            at: Vec2::new(4.0, 4.0),
+            at: WorldVec::new(4.0, 4.0),
             velocity,
             player: false,
         }]);
@@ -337,9 +366,8 @@ const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
     ("W+A", Vec2::new(-3.0, -1.0), Facing::NorthWest),
 ];
 
-/// The two combinations the clamp tests hold, named and not indexed.
+/// Held north, named rather than indexed at each use.
 const HOLDING_W: Vec2 = KEY_COMBINATIONS[0].1;
-const HOLDING_A: Vec2 = KEY_COMBINATIONS[6].1;
 
 #[test]
 fn every_key_combination_faces_the_way_it_points_on_screen() {
@@ -363,7 +391,7 @@ fn a_second_of_held_input_moves_the_player_by_the_player_speed() {
     }
 
     let landed = only_entity(&sim.snapshot()).pos;
-    let want = MIDFIELD + Vec2::new(PLAYER_SPEED, 0.0);
+    let want = MIDFIELD + WorldVec::new(PLAYER_SPEED, 0.0);
     assert!(
         landed.abs_diff_eq(want, 1e-3),
         "landed at {landed}, not {want}"
@@ -431,103 +459,37 @@ fn releasing_the_keys_stops_the_player_and_leaves_his_facing_alone() {
     assert_eq!(stopped.locomotion, Locomotion::Idle);
 }
 
-/// Where to start, which way to push, and where the field must stop him. One
-/// tile short of each edge, so a second of walking overshoots it.
-fn field_edges() -> [(Vec2, Vec2, Vec2); 4] {
-    let (probe, _) = world_of([]);
-    let far = Vec2::new(
-        (probe.terrain().width() - 1) as f32,
-        (probe.terrain().height() - 1) as f32,
-    );
-    let mid = far / 2.0;
-    [
-        (Vec2::new(1.0, mid.y), Vec2::NEG_X, Vec2::new(0.0, mid.y)),
-        (
-            Vec2::new(far.x - 1.0, mid.y),
-            Vec2::X,
-            Vec2::new(far.x, mid.y),
-        ),
-        (Vec2::new(mid.x, 1.0), Vec2::NEG_Y, Vec2::new(mid.x, 0.0)),
-        (
-            Vec2::new(mid.x, far.y - 1.0),
-            Vec2::Y,
-            Vec2::new(mid.x, far.y),
-        ),
-    ]
-}
-
 #[test]
-fn the_player_stops_at_every_field_edge() {
-    for (start, held, want) in field_edges() {
-        let (mut sim, _) = world_of([player(start)]);
-
-        for _ in 0..TICK_HZ {
-            sim.tick(Input::new(held), &[]);
-        }
-
-        let landed = only_entity(&sim.snapshot()).pos;
-        assert_eq!(landed, want, "holding {held} from {start} left the field");
-    }
-}
-
-/// Only the blocked axis stops, so he slides along an edge instead of sticking
-/// to it. The direction that is left is the honest one: holding A at `x = 0`
-/// really does move him south-west.
-#[test]
-fn holding_into_an_edge_diagonally_slides_the_player_along_it() {
-    let (mut sim, _) = world_of([player(Vec2::new(0.0, 8.0))]);
-
-    for _ in 0..TICK_HZ {
-        sim.tick(Input::new(HOLDING_A), &[]);
-    }
-
-    let view = only_entity(&sim.snapshot());
-    assert_eq!(view.pos.x, 0.0, "he left the field: {}", view.pos);
-    assert!(
-        view.pos.y > 8.0,
-        "he stuck instead of sliding: {}",
-        view.pos
-    );
-    assert_eq!(view.facing, Facing::SouthWest);
-}
-
-/// Each screen cardinal drives straight at a field corner. Both tile axes
-/// clamp at once there, so a held key produces exactly zero motion. Facing has
-/// nothing to read and holds. Locomotion still reports the intent, which is
-/// the whole reason the snapshot carries it.
-#[test]
-fn holding_into_a_corner_still_looks_like_running() {
-    let (mut sim, _) = world_of([player(Vec2::ZERO)]);
+fn holding_a_direction_moves_him_and_reads_as_running() {
+    // The interesting half of this, a velocity that asks for motion where none
+    // happens, needs something to walk into. Terrain collision is what brings it
+    // back, and it is where the "running at a wall" case belongs.
+    let (mut sim, _) = world_of([player(WorldVec::ZERO)]);
 
     for _ in 0..TICK_HZ {
         sim.tick(Input::new(HOLDING_W), &[]);
     }
 
     let view = only_entity(&sim.snapshot());
-    assert_eq!(view.pos, Vec2::ZERO);
-    assert_eq!(view.facing, Facing::South, "facing changed with no motion");
+    assert_ne!(view.pos, WorldVec::ZERO, "held input moved nothing");
+    assert_eq!(view.facing, Facing::North);
     assert_eq!(view.locomotion, Locomotion::Running);
 }
 
 #[test]
-fn a_new_world_holds_the_survivor_at_the_middle_of_the_field() {
-    let sim = Sim::new(SEED);
-    let middle = Vec2::new(
-        (sim.terrain().width() / 2) as f32,
-        (sim.terrain().height() / 2) as f32,
-    );
-
-    let snapshot = sim.snapshot();
-    let view = only_entity(&snapshot);
-    assert_eq!(view.pos, middle);
-    assert_eq!(view.locomotion, Locomotion::Idle);
-    assert_eq!(snapshot.player, Some(view.id));
+fn the_survivor_spawns_at_the_world_origin() {
+    // Not a field centre: every difficulty band and the home bubble measure from
+    // the origin, so spawning elsewhere would drop the player at an arbitrary
+    // distance into the world.
+    let sim = Sim::new();
+    let view = only_entity(&sim.snapshot());
+    assert_eq!(view.pos, WorldVec::ZERO);
 }
 
 #[test]
 fn the_same_seed_and_input_sequence_replay_identically() {
     let run = || {
-        let mut sim = Sim::new(SEED);
+        let mut sim = Sim::new();
         for tick in 0..TICK_HZ as usize {
             let (_, held, _) = KEY_COMBINATIONS[tick % KEY_COMBINATIONS.len()];
             sim.tick(Input::new(held), &[]);

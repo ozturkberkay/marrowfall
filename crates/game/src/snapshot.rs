@@ -24,8 +24,7 @@
 //! full because they are cosmetic. A fact belongs here only if a frontend
 //! could still see it two snapshots later.
 
-use glam::Vec2;
-
+use crate::WorldVec;
 use crate::components::Facing;
 
 /// What a character does. Simulation state, not a clip filename, so it is still
@@ -46,15 +45,21 @@ pub struct EntityView {
     /// Stable identifier; frontends key scene objects on it across snapshots.
     pub id: u64,
     /// World-space position in tile units at this tick.
-    pub pos: Vec2,
+    pub pos: WorldVec,
     /// Position when this tick began. Equal to `pos` for an entity that
     /// spawned or held still, so it draws in place instead of sliding.
-    pub prev_pos: Vec2,
+    pub prev_pos: WorldVec,
     /// Which way it looks. Kept across a stop, so it never snaps back to a
     /// default when an entity stands still.
     pub facing: Facing,
     /// What it does. Which clip that picks is the frontend's decision.
     pub locomotion: Locomotion,
+    /// The height of the ground it stands on, in whole steps.
+    ///
+    /// Here rather than derived by the frontend, because the frontend may not
+    /// hold the chunk the simulation used, and a character drawn at the wrong
+    /// height stands in the air or sinks into a plateau.
+    pub height: i8,
 }
 
 impl EntityView {
@@ -66,7 +71,7 @@ impl EntityView {
     /// behind will ask for more than a tick, and gets the newest known
     /// position instead of an invented one.
     #[must_use]
-    pub fn lerp(&self, alpha: f32) -> Vec2 {
+    pub fn lerp(&self, alpha: f64) -> WorldVec {
         self.prev_pos.lerp(self.pos, alpha.clamp(0.0, 1.0))
     }
 }
