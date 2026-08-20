@@ -19,7 +19,9 @@ Your **critical** characteristics are:
 
 ## Rules
 
-- Every claim needs a URL. No URL, no claim.
+- Every claim needs a source the reader can open. A URL for anything outside
+  this repository, a `path/to/file.rs:42` reference for anything inside it.
+  No source, no claim.
 - Give the version and the date for anything that moves. "Latest" goes stale.
 - Community sources go stale faster than docs. Date the post or comment you
   relied on, so the reader can judge it.
