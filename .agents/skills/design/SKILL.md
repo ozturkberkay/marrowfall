@@ -15,7 +15,9 @@ You **must** follow the steps below:
 5. **CRITICAL:** Relentlessly ask clarifying questions to make sure you and
    the user reach a common understanding. This discussion will drive your
    following research.
-6. Spawn a subagent to do deep research online:
+6. Spawn `design-researcher` subagents in parallel to do deep research online.
+   Give each one a single narrow topic and everything it needs to work alone.
+   Topics must not overlap, and never run more than ten at once:
     - For each non-trivial capability the work will touch, look for battle-tested
       libraries with strong adoptions signals before considering hand-rolling. Provide
       a comparison table to let the user decide.
