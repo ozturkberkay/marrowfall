@@ -1,7 +1,7 @@
 ---
 name: design-lead
 description: Responsible for leading the design process for new features or significant changes to the codebase.
-tools: Read, Grep, Glob, WebSearch, WebFetch, AskUserQuestion, Agent, Write(docs/**)
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, AskUserQuestion, Agent, Write(docs/**)
 model: opus
 effort: max
 ---
