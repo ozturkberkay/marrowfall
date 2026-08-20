@@ -38,3 +38,42 @@ fn a_non_finite_direction_becomes_still() {
         );
     }
 }
+
+#[test]
+fn nothing_aims_unless_something_asks() {
+    assert_eq!(Input::default().aim(), Vec2::ZERO);
+    assert_eq!(Input::new(Vec2::X).aim(), Vec2::ZERO);
+    // The dead radius and a lost window focus both arrive as a zero aim.
+    assert_eq!(Input::new(Vec2::X).aiming(Vec2::ZERO).aim(), Vec2::ZERO);
+}
+
+/// The aim is a direction, so only its angle matters. `move_dir` is a separate
+/// held value and pointing must not touch it.
+#[test]
+fn a_long_aim_is_normalised_and_leaves_the_keys_alone() {
+    let input = Input::new(Vec2::new(1.0, 0.0)).aiming(Vec2::new(30.0, -40.0));
+
+    let aim = input.aim();
+    assert!(
+        aim.abs_diff_eq(Vec2::new(0.6, -0.8), 1e-6),
+        "50 units long became {aim}"
+    );
+    assert_eq!(input.move_dir(), Vec2::new(1.0, 0.0));
+}
+
+/// Normalising a non-finite aim would spread NaN into the facing. Saying
+/// nothing instead leaves facing following movement.
+#[test]
+fn a_non_finite_aim_points_nowhere() {
+    for broken in [
+        Vec2::new(f32::NAN, 0.0),
+        Vec2::new(0.0, f32::INFINITY),
+        Vec2::splat(f32::NEG_INFINITY),
+    ] {
+        assert_eq!(
+            Input::new(Vec2::X).aiming(broken).aim(),
+            Vec2::ZERO,
+            "{broken} should point nowhere"
+        );
+    }
+}

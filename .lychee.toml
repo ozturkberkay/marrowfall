@@ -4,6 +4,9 @@ exclude = [
   # GitHub raw content aggressively rate-limits unauthenticated requests;
   # lychee hits 403/429 on cold caches.
   "^https://github\\.com/.*/raw/",
+  # Adobe's help site breaks lychee's HTTP/2 client ("protocol error") on every
+  # run. The pages are live: curl gets 200 over both HTTP/1.1 and HTTP/2.
+  "^https://helpx\\.adobe\\.com/",
 ]
 
 # Allow private loopbacks to keep the test harness simple.

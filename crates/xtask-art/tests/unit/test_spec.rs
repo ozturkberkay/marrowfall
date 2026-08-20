@@ -44,14 +44,14 @@ fn placeholder_description_is_rejected() {
 #[test]
 fn only_supported_direction_counts_are_accepted() {
     let mut spec = spec();
-    for bad in [0, 3, 6, 7, 12, 16] {
+    for bad in [0, 3, 6, 7, 12, 64] {
         spec.bake.directions = bad;
         assert!(
             spec.validate().is_err(),
             "{bad} directions should be rejected"
         );
     }
-    for good in [4, 8] {
+    for good in [4, 8, 16, 32] {
         spec.bake.directions = good;
         spec.validate().unwrap();
     }

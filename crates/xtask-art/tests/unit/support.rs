@@ -122,7 +122,7 @@ pub fn install_library(root: &std::path::Path) -> AnimationLibrary {
     let library = a_library();
     library.save(root).expect("saving the library");
     for name in library.animations.keys() {
-        let glb = AnimationLibrary::glb(root, name);
+        let glb = library.glb(root, name);
         std::fs::create_dir_all(glb.parent().expect("glb has a parent")).expect("mkdir");
         std::fs::write(glb, b"glTF").expect("writing a stub animation");
     }

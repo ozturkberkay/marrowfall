@@ -49,10 +49,16 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "multipart",
+    # Mixamo's catalogue is addressed entirely by query string.
+    "query",
     "rustls",
     "webpki-roots",
 ] }
+# Chrome keeps its site storage in a LevelDB; this reads a copy of one.
+# Pure Rust, so no system library and nothing to install on a fresh machine.
+rusty-leveldb = { version = "4.0.1", default-features = false, features = ["fs"] }
 serde_json = "1.0"
+tempfile = "3.27.0"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "time", "fs"] }
 
 [workspace.lints.clippy]

@@ -10,6 +10,8 @@ decides what to do with them.
 """
 
 import math
+import tomllib
+from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -18,9 +20,32 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # runs south, south-west, west, and on round. The other naming mirrors every
 # diagonal and swaps east with west, and it leaves south and north looking
 # correct. That is what makes the mistake easy to miss.
+#
+# Past sixteen the compass runs out of names, so that ring is numbered from the
+# same stop in the same order. Must match `direction_names` in
+# `crates/xtask-art/src/pack.rs`, which a test cross-checks.
 DIRECTION_NAMES: dict[int, list[str]] = {
     4: ["s", "w", "n", "e"],
     8: ["s", "sw", "w", "nw", "n", "ne", "e", "se"],
+    16: [
+        "s",
+        "ssw",
+        "sw",
+        "wsw",
+        "w",
+        "wnw",
+        "nw",
+        "nnw",
+        "n",
+        "nne",
+        "ne",
+        "ene",
+        "e",
+        "ese",
+        "se",
+        "sse",
+    ],
+    32: [f"{index:02d}" for index in range(32)],
 }
 
 # Elevation of the camera above the horizon, in degrees. Must match the tile
@@ -37,6 +62,8 @@ KEY_LIGHT_ELEVATION_DEG = 60.0
 FRAMING_MARGIN = 1.08
 
 Vec3 = tuple[float, float, float]
+Vec4 = tuple[float, float, float, float]
+"""A quaternion, in Blender's w, x, y, z order."""
 
 
 class Frozen(BaseModel):
@@ -195,6 +222,12 @@ def direction_rotation(index: int, count: int) -> float:
     Index 0 is unrotated, which is the character facing the camera: Meshy
     exports him facing -Y and the camera sits there. Verified by rendering the
     ring, not derived, the geometry is too close to call either way.
+
+    The stops are evenly spaced in the *world*, so every wedge is the same
+    number of world degrees. The 2:1 projection then makes them uneven on
+    screen, which is honest: gameplay happens in the world, and the answer to a
+    wedge being too coarse is more stops, not a different arrangement of the
+    same ones.
     """
     return -(2.0 * math.pi / count) * index
 
@@ -258,6 +291,76 @@ def missing_bones(animated: set[str], available: set[str]) -> list[str]:
     return sorted(animated - available)
 
 
+def bare_bone_name(name: str) -> str:
+    """`mixamorig:LeftArm` -> `leftarm`: no namespace, no case.
+
+    The form two rigs' bone names are compared in.
+    """
+    return name.rsplit(":", 1)[-1].lower()
+
+
+def unfilled_roles(names: dict[str, str], bones: Iterable[str]) -> list[str]:
+    """Roles this rig has no bone for, so a retarget cannot drive them."""
+    available = {bare_bone_name(bone) for bone in bones}
+    return sorted(
+        role for role, bone in names.items() if bare_bone_name(bone) not in available
+    )
+
+
+class SkeletonRoles(Frozen):
+    """Which bone name fills each anatomical role, one map per convention.
+
+    Read from `art/skeletons/<skeleton>.toml`. Matching by role rather than by
+    name is what stops this rig's `Spine`, its highest, taking the motion of
+    Mixamo's `Spine`, its lowest.
+    """
+
+    canonical: str
+    """The convention the canonical rig itself is named in."""
+    conventions: dict[str, dict[str, str]]
+    """Convention name to role to bone name."""
+
+    @classmethod
+    def parse(cls, text: str) -> "SkeletonRoles":
+        return cls(**tomllib.loads(text))
+
+    @model_validator(mode="after")
+    def the_canonical_convention_must_be_declared(self) -> "SkeletonRoles":
+        if self.canonical not in self.conventions:
+            known = sorted(self.conventions)
+            raise ValueError(
+                f"canonical convention {self.canonical!r} is not in {known}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def every_convention_must_fill_every_role(self) -> "SkeletonRoles":
+        """A role only one convention knows about cannot be retargeted."""
+        roles = set(self.conventions[self.canonical])
+        for name, convention in self.conventions.items():
+            if difference := roles.symmetric_difference(convention):
+                raise ValueError(
+                    f"convention {name!r} disagrees about {sorted(difference)}, "
+                    f"every convention must fill the same roles"
+                )
+        return self
+
+    def convention(self, name: str) -> dict[str, str]:
+        """One convention's role to bone name map."""
+        if (convention := self.conventions.get(name)) is None:
+            known = sorted(self.conventions)
+            raise ValueError(f"unknown bone naming convention {name!r}, known: {known}")
+        return convention
+
+    def bone_map(self, convention: str) -> dict[str, str]:
+        """Bare source bone name to canonical bone name, paired by role."""
+        canonical = self.conventions[self.canonical]
+        return {
+            bare_bone_name(bone): canonical[role]
+            for role, bone in self.convention(convention).items()
+        }
+
+
 # How far two rigs' bind poses may differ before an animation is refused.
 # Meshy reconstructs each character separately, so identical rigs still land a
 # degree or two apart; 64 degrees apart is a T-pose against an A-pose.
@@ -289,5 +392,69 @@ def bind_pose_mismatch(
         angle = bone_direction_angle(character[name], animation[name])
         if angle > tolerance_deg:
             off.append((name, angle))
+    off.sort(key=lambda pair: pair[1], reverse=True)
+    return off
+
+
+def rest_height(points: Iterable[Vec3]) -> float:
+    """Vertical span of an armature's rest bones, in world units.
+
+    Rest positions rather than a posed mesh, because an animation file carries
+    only its armature and a carrier triangle. Nothing to measure reads as zero,
+    which `translation_scale` refuses with a message that says why.
+    """
+    heights = [point[2] for point in points]
+    return max(heights) - min(heights) if heights else 0.0
+
+
+def translation_scale(source: float, target: float) -> float:
+    """How much to grow a clip's lengths for this character.
+
+    Rotation is proportion independent; `location` is not, it is a length in
+    the units of the rig the clip was authored against. A run's vertical bob
+    measured for a 1.7 m body is twice too large on a body half that tall.
+    """
+    if not (math.isfinite(source) and math.isfinite(target)) or source <= 0:
+        raise ValueError(f"cannot size a clip from {source} and {target}")
+    ratio = target / source
+    if not 0.2 <= ratio <= 5.0:
+        raise ValueError(f"ratio {ratio:.2f} outside 0.2..5.0, wrong rig?")
+    return ratio
+
+
+# How far a clip's first and last pose may differ before it is worth a look.
+# Tighter than the bind pose tolerance: a gait either closes or it hitches.
+LOOP_TOLERANCE_DEG = 2.0
+
+
+def rotation_angle(a: Vec4, b: Vec4) -> float:
+    """Angle in degrees between two rotations.
+
+    A quaternion and its negation are the same rotation, hence the absolute
+    value: without it, half the comparisons read as a full turn apart.
+    """
+    dot = abs(sum(x * y for x, y in zip(a, b, strict=True)))
+    length = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
+    if length == 0.0:
+        return 0.0
+    return math.degrees(2.0 * math.acos(min(1.0, dot / length)))
+
+
+def loop_mismatch(
+    first: dict[str, Vec4],
+    last: dict[str, Vec4],
+    tolerance_deg: float = LOOP_TOLERANCE_DEG,
+) -> list[tuple[str, float]]:
+    """Bones whose first and last pose differ, worst first.
+
+    A looping clip has to be one whole cycle, or playback jumps back to the
+    start pose once a loop. Advisory: whether a clip is a cycle is a judgement
+    call, so this reports and never refuses.
+    """
+    off = [
+        (name, angle)
+        for name in sorted(set(first) & set(last))
+        if (angle := rotation_angle(first[name], last[name])) > tolerance_deg
+    ]
     off.sort(key=lambda pair: pair[1], reverse=True)
     return off

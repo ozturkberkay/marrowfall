@@ -3,10 +3,12 @@
 //! Split into a library so the tests in `tests/` can reach it: an
 //! integration test cannot import a binary-only crate.
 
+pub mod chrome;
 pub mod cli;
 pub mod library;
 pub mod lock;
 pub mod meshy;
+pub mod mixamo;
 pub mod openai;
 pub mod pack;
 pub mod preview;

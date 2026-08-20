@@ -1,5 +1,6 @@
 use crate::support::a_library;
 use std::path::Path;
+use xtask_art::library::{Animation, MotionSource};
 use xtask_art::lock::{
     LOCAL_PIPELINE_VERSION, Lock, Provider, Stage, StageRecord, TaskRef, fingerprint,
 };
@@ -230,6 +231,41 @@ fn local_stages_are_versioned_so_algorithm_fixes_invalidate_output() {
     assert_eq!(
         versioned(Stage::Model),
         fingerprint(Stage::Model, &spec, &library)
+    );
+}
+
+/// Free motion must not be able to invalidate a paid stage.
+#[test]
+fn adding_a_free_animation_does_not_re_run_the_paid_rig() {
+    let base_library = a_library();
+    let base_spec = spec();
+    let rig_before = fingerprint(Stage::Rig, &base_spec, &base_library);
+    let bake_before = fingerprint(Stage::Bake, &base_spec, &base_library);
+
+    let mut library = base_library.clone();
+    let mut spec = base_spec.clone();
+    library.animations.insert(
+        "strafe_left".to_owned(),
+        Animation {
+            skeleton: xtask_art::library::HUMANOID.to_owned(),
+            loops: true,
+            fps: 24,
+            source: MotionSource::Mixamo {
+                product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9".to_owned(),
+            },
+        },
+    );
+    spec.animations.push("strafe_left".to_owned());
+
+    assert_eq!(
+        fingerprint(Stage::Rig, &spec, &library),
+        rig_before,
+        "a Mixamo clip is free, so it cannot make the rig stage run again"
+    );
+    assert_ne!(
+        fingerprint(Stage::Bake, &spec, &library),
+        bake_before,
+        "the bake does read it, because it reads one file per animation"
     );
 }
 

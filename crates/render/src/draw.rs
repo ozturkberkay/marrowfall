@@ -1,11 +1,13 @@
-//! What the frontend draws each frame, and which nodes must exist.
+//! What the frontend draws each frame, and which nodes must exist. Measuring
+//! the cursor against the survivor is here too, because it needs the same fact:
+//! the node origin is the sprite's feet.
 //!
 //! Pure functions over plain data, with no `Gd<T>`, so every decision here is
 //! unit testable without an engine. `bridge.rs` keeps the property writes.
 
 use std::collections::HashSet;
 
-use game::{EntityView, Locomotion};
+use game::{EntityView, Locomotion, Vec2};
 use godot::builtin::{Rect2, Vector2};
 use sprites::{AnimationAtlas, FrameRect};
 
@@ -14,11 +16,20 @@ use sprites::{AnimationAtlas, FrameRect};
 pub enum Clip {
     Idle,
     Run,
+    WalkBack,
+    StrafeLeft,
+    StrafeRight,
 }
 
 impl Clip {
     /// Every clip the frontend can show, which is what startup preloads.
-    pub const ALL: [Clip; 2] = [Self::Idle, Self::Run];
+    pub const ALL: [Clip; 5] = [
+        Self::Idle,
+        Self::Run,
+        Self::WalkBack,
+        Self::StrafeLeft,
+        Self::StrafeRight,
+    ];
 
     /// Which clip a simulation state draws as. This mapping is render policy.
     /// The simulation publishes what he does, never which PNG shows it.
@@ -26,7 +37,10 @@ impl Clip {
     pub fn for_locomotion(locomotion: Locomotion) -> Self {
         match locomotion {
             Locomotion::Idle => Self::Idle,
-            Locomotion::Running => Self::Run,
+            Locomotion::Forward => Self::Run,
+            Locomotion::Backward => Self::WalkBack,
+            Locomotion::StrafeLeft => Self::StrafeLeft,
+            Locomotion::StrafeRight => Self::StrafeRight,
         }
     }
 
@@ -36,7 +50,39 @@ impl Clip {
         match self {
             Self::Idle => "idle",
             Self::Run => "run",
+            Self::WalkBack => "walk_back",
+            Self::StrafeLeft => "strafe_left",
+            Self::StrafeRight => "strafe_right",
         }
+    }
+
+    /// Whether this clip is a stride, so it plays on the shared gait cycle
+    /// rather than at its own authored rate. Exhaustive on purpose: an attack
+    /// clip has to answer this too.
+    #[must_use]
+    pub fn is_locomotion(self) -> bool {
+        match self {
+            Self::Idle => false,
+            Self::Run | Self::WalkBack | Self::StrafeLeft | Self::StrafeRight => true,
+        }
+    }
+
+    /// This clip if the bake has produced it, otherwise the closest one that
+    /// has, or `None` when even the stand-in is missing.
+    ///
+    /// The run stands in for any other stride, because `strafe_left` and
+    /// `strafe_right` do not exist yet. His feet then push the wrong way, which
+    /// reads far better than a body frozen mid stride. Nothing stands in for
+    /// `idle`, which is not a stride, or for the run itself.
+    #[must_use]
+    pub fn with_art(self, has_art: impl Fn(Self) -> bool) -> Option<Self> {
+        if has_art(self) {
+            return Some(self);
+        }
+        if !self.is_locomotion() {
+            return None;
+        }
+        has_art(Self::Run).then_some(Self::Run)
     }
 }
 
@@ -65,6 +111,87 @@ pub fn placement(atlas: &AnimationAtlas, rect: &FrameRect) -> Placement {
             rect.off_y as f32 - atlas.anchor.y as f32,
         ),
     }
+}
+
+/// Half the height the survivor is baked at (`sprite_height` in his art spec),
+/// so the middle of his body above the feet his node origin sits on.
+pub const BODY_MIDDLE: f32 = 120.0;
+
+/// How close to the middle of his body the cursor may sit before it stops
+/// asking for a direction at all.
+///
+/// Small on purpose. He is drawn 240 pixels tall and a tile is 96 pixels deep,
+/// so a disc that covered all of him would also cover the tile in front of him
+/// and make a near enemy impossible to point at.
+pub const DEAD_RADIUS: f32 = 24.0;
+
+/// Where the cursor sits relative to the survivor's body, in screen pixels, or
+/// zero when it is too close to ask for a direction.
+///
+/// The camera pins his *feet* to the middle of the viewport, because the node
+/// origin is the sprite's ground anchor. So the middle of the screen is not the
+/// middle of him, and the dead zone has to be lifted onto his body: otherwise
+/// resting the cursor on his chest reads as a hard push north.
+///
+/// Both points are in the viewport's own coordinates, whose scale a stretched
+/// window does not change.
+#[must_use]
+pub fn cursor_offset(mouse: Vector2, viewport: Vector2) -> Vector2 {
+    // Up the screen is negative y.
+    let body = viewport / 2.0 - Vector2::new(0.0, BODY_MIDDLE);
+    let offset = mouse - body;
+    if offset.length() < DEAD_RADIUS {
+        return Vector2::ZERO;
+    }
+    offset
+}
+
+/// Which atlas row shows `aim`, out of however many rows the atlas has.
+///
+/// Quantised in tile space, never on screen: the ring is evenly spaced there,
+/// and the projection would skew it. Row 0 is south, which is tile `(1, 1)`, 45
+/// degrees round from `+x`, and the ring runs from there in the order the bake
+/// wrote it.
+///
+/// Render-only, so `atan2` is fine here. The simulation never does this.
+#[must_use]
+pub fn row_for_aim(atlas: &AnimationAtlas, aim: Vec2) -> Option<usize> {
+    let count = atlas.directions.len();
+    if count == 0 || aim == Vec2::ZERO {
+        return None;
+    }
+    let step = std::f32::consts::TAU / count as f32;
+    let angle = aim.y.atan2(aim.x) - std::f32::consts::FRAC_PI_4;
+    let index = (angle / step).round() as i32;
+    Some(index.rem_euclid(count as i32) as usize)
+}
+
+/// One full stride, in seconds: `run`'s own cycle, its 20 frames at its 24 fps.
+///
+/// Written as the division so the run keeps its authored rate exactly. Every
+/// other locomotion clip plays over this same cycle, whatever its own length, so
+/// the fraction through the stride carries across a clip change and the legs do
+/// not jump mid step. Unreal's Sync Groups scale every follower to the leader
+/// the same way. The cost is that a clip authored at another rate plays a little
+/// fast or slow, so its foot slide differs from the run's.
+pub const GAIT_SECONDS: f64 = 20.0 / 24.0;
+
+/// Which frame of `atlas` shows `seconds` into the shared gait cycle.
+///
+/// Only for a stride: `idle` is not one and keeps `sprites::frame_at`, which
+/// plays a clip at its authored rate. Every stride loops, so this always wraps.
+#[must_use]
+pub fn locomotion_frame(atlas: &AnimationAtlas, seconds: f64) -> usize {
+    // `sprites::parse` rejects a frameless atlas, but the fields are public.
+    let frames = atlas.frames.max(1) as usize;
+    // Negative seconds clamp to zero, which absorbs the seed snapshot from
+    // before the first tick.
+    let phase = (seconds.max(0.0) / GAIT_SECONDS).fract();
+    // A float-to-int cast saturates in Rust, so a nonsense time cannot wrap.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let frame = (phase * frames as f64) as usize;
+    // A phase of exactly one would otherwise index past the last frame.
+    frame.min(frames - 1)
 }
 
 /// Ids that need a node, and nodes to free.

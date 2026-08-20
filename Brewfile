@@ -14,4 +14,6 @@ cask "claude"
 cask "claude-code@latest"
 cask "visual-studio-code"
 cask "blender"
+# `cargo art fetch` reads the Mixamo session from Chrome, and opens it to log in.
+cask "google-chrome"
 cask "godot"

@@ -1,4 +1,4 @@
-//! Runs the Marrowfall simulation on its own thread, and owns the three
+//! Runs the Marrowfall simulation on its own thread, and owns the four
 //! transports that cross that boundary:
 //!
 //! - A command channel in. Every message must arrive.

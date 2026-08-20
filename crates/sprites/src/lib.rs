@@ -94,7 +94,7 @@ impl std::error::Error for Error {}
 
 /// Reads a manifest and checks that every animation in it can be drawn.
 ///
-/// This one check at the edge is what makes [`frame_at`] and [`row_for`] total.
+/// This one check at the edge is what makes [`frame_at`] and [`frame`] total.
 /// No caller has to guard against a manifest that contradicts itself.
 pub fn parse(text: &str) -> Result<CharacterAssets, Error> {
     let assets: CharacterAssets = ron::from_str(text).map_err(Error::Syntax)?;
@@ -107,14 +107,6 @@ pub fn parse(text: &str) -> Result<CharacterAssets, Error> {
         }
     }
     Ok(assets)
-}
-
-/// Which row of `atlas` holds `direction`, or `None` when it has no such row.
-/// That is how a four-direction atlas answers "se". The caller then leaves the
-/// sprite on the frame it had.
-#[must_use]
-pub fn row_for(atlas: &AnimationAtlas, direction: &str) -> Option<usize> {
-    atlas.directions.iter().position(|name| name == direction)
 }
 
 /// Which frame of `atlas` shows `seconds` into playback.

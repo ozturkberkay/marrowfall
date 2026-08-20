@@ -7,7 +7,8 @@ fn lerp_blends_between_the_two_ends_of_a_tick() {
         prev_pos: WorldVec::ZERO,
         pos: WorldVec::new(10.0, -4.0),
         facing: Facing::South,
-        locomotion: Locomotion::Running,
+        locomotion: Locomotion::Forward,
+        aim: Facing::South.axis(),
         height: 0,
     };
 
@@ -22,7 +23,8 @@ fn lerp_clamps_alpha_to_this_tick() {
         prev_pos: WorldVec::new(1.0, 1.0),
         pos: WorldVec::new(5.0, 1.0),
         facing: Facing::South,
-        locomotion: Locomotion::Running,
+        locomotion: Locomotion::Forward,
+        aim: Facing::South.axis(),
         height: 0,
     };
 

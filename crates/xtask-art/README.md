@@ -60,3 +60,18 @@ Python in the repo, because `bpy` is Python-only and Blender is the one tool
 that cannot be driven any other way. `cargo art` shells out to
 `blender --background --python …` for the bake and the split, and does
 everything else itself.
+
+## Shared animations
+
+Motion is declared once in `art/animations/library.ron` and shared by every
+character on the same skeleton. Most of it is committed. What is not, because
+its licence allows the animation but not republishing the file, is fetched:
+
+```bash
+cargo art fetch            # every clip declared but missing
+cargo art fetch walk_back  # just one, --force to replace it
+```
+
+The first run opens Chrome at Mixamo and waits while you log in, because
+exporting needs a session credential that lasts about a day. Nothing is stored:
+the credential is read from the browser each time it is needed.

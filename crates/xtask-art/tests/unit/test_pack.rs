@@ -1,7 +1,8 @@
-use image::RgbaImage;
-use xtask_art::pack::*;
+use std::collections::BTreeMap;
 
 use image::Rgba;
+use image::RgbaImage;
+use xtask_art::pack::*;
 
 /// Opaque rectangle on a transparent canvas.
 fn stamped(w: u32, h: u32, rect: Rect) -> RgbaImage {
@@ -407,6 +408,62 @@ fn direction_names_match_the_bake_order() {
     );
     assert_eq!(direction_names(4).unwrap(), ["s", "w", "n", "e"].as_slice());
     assert!(direction_names(6).is_err());
+    assert!(direction_names(64).is_err());
+}
+
+/// `DIRECTION_NAMES` from `tools/blender/src/framing.py`, keyed by ring size.
+///
+/// Parsed rather than copied, because a copy here would be a third list to keep
+/// in step. Embedded and not read, so a moved file fails the build. A ring the
+/// bake builds from a rule instead of spelling out parses as `None`.
+fn bake_direction_names() -> BTreeMap<u32, Option<Vec<String>>> {
+    const FRAMING: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/blender/src/framing.py"
+    ));
+
+    let dict = FRAMING
+        .split_once("DIRECTION_NAMES: dict[int, list[str]] = {")
+        .and_then(|(_, tail)| tail.split_once("\n}"))
+        .expect("framing.py must declare DIRECTION_NAMES")
+        .0;
+    // Whitespace-free, so it reads the same however the formatter wraps it.
+    let flat: String = dict.chars().filter(|c| !c.is_whitespace()).collect();
+    flat.split_terminator("],")
+        .map(|ring| {
+            let (count, names) = ring.split_once(":[").expect("a count and its names");
+            let names = names
+                .split_terminator(',')
+                .map(|name| Some(name.strip_prefix('"')?.strip_suffix('"')?.to_owned()))
+                .collect();
+            (count.parse().expect("an integer ring size"), names)
+        })
+        .collect()
+}
+
+/// The packer names the rows and the bake writes them in that order, so a
+/// mismatch silently mislabels every row of every atlas.
+#[test]
+fn every_ring_matches_the_bakes_own_names() {
+    // Past sixteen the compass runs out of names, so that ring is numbered from
+    // the same stop. The bake builds it with this rule rather than a list.
+    let numbered: Vec<String> = (0..32).map(|index| format!("{index:02}")).collect();
+
+    let rings = bake_direction_names();
+    assert_eq!(
+        rings.len(),
+        4,
+        "framing.py knows a ring the packer does not"
+    );
+    for (&count, spelled_out) in &rings {
+        let want: Vec<&str> = spelled_out
+            .as_ref()
+            .unwrap_or(&numbered)
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(direction_names(count).unwrap(), want, "the {count} ring");
+    }
 }
 
 #[test]

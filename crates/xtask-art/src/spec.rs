@@ -143,7 +143,8 @@ pub struct Texture {
 /// Sprite bake settings, passed through to the Blender script.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bake {
-    /// Compass directions rendered, evenly spaced. 8 is the Diablo II layout.
+    /// Compass directions rendered, evenly spaced. Diablo II shipped 16 for
+    /// player characters and 8 for monsters.
     pub directions: u32,
     /// Render size in pixels before downscaling.
     pub render_size: u32,
@@ -249,8 +250,8 @@ impl CharacterSpec {
         // that can name the rows of an atlas. Failing here beats failing after
         // the paid stages have already run.
         anyhow::ensure!(
-            matches!(self.bake.directions, 4 | 8),
-            "directions must be 4 or 8, got {}",
+            matches!(self.bake.directions, 4 | 8 | 16 | 32),
+            "directions must be 4, 8, 16 or 32, got {}",
             self.bake.directions
         );
         anyhow::ensure!(

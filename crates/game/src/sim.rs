@@ -1,7 +1,7 @@
 use crate::chunks::Chunks;
-use crate::components::{Facing, Player, Position, Velocity};
+use crate::components::{Aim, Facing, Player, Position, Velocity};
 use crate::snapshot::{EntityView, Locomotion, RenderSnapshot};
-use crate::{Input, Intent, WorldVec};
+use crate::{Input, Intent, Vec2, WorldVec};
 
 /// Simulation ticks per second. Frontends must call [`Sim::tick`] at this
 /// rate (via a fixed-timestep accumulator) for real-time play.
@@ -16,7 +16,18 @@ pub const TICK_DT: f64 = 1.0 / TICK_HZ as f64;
 /// does not match the tile projection, so sprite height is foreshortened and
 /// ground travel is not. No arithmetic turns one into the other, so tune this
 /// by eye against the run cycle's foot slide.
+///
+/// This is a *ceiling*, not the speed in every direction. A frontend drawing a
+/// 2:1 diamond may hand in a shortened direction, to even out how fast travel
+/// reads on screen, and backing away is slower still.
 pub const PLAYER_SPEED: f64 = 4.0;
+
+/// How fast he backs away, as a fraction of [`PLAYER_SPEED`].
+///
+/// Retreating costs something, which is the point of the control scheme. It
+/// also fixes a foot slide: `walk_back` is authored for a walking gait, so
+/// dragging it along at full running speed reads as frantic.
+pub const BACKWARD_SPEED: f64 = 0.55;
 
 /// What to create an entity with. Named fields, so `at` and `velocity` cannot
 /// be swapped at a call site, and later components are additive.
@@ -149,7 +160,7 @@ impl Sim {
             entity.add(Velocity(velocity));
         }
         if spawn.player {
-            entity.add(Player);
+            entity.add(Player).add(Aim(Vec2::ZERO));
         }
         self.world.spawn(entity.build()).to_bits().get()
     }
@@ -187,14 +198,26 @@ impl Sim {
     pub fn snapshot(&self) -> RenderSnapshot {
         let entities = self
             .world
-            .query::<(hecs::Entity, &Position, &Facing, Option<&Velocity>)>()
+            .query::<(
+                hecs::Entity,
+                &Position,
+                &Facing,
+                Option<&Velocity>,
+                Option<&Aim>,
+            )>()
             .iter()
-            .map(|(entity, position, facing, velocity)| EntityView {
+            .map(|(entity, position, facing, velocity, aim)| EntityView {
                 id: entity.to_bits().get(),
                 pos: position.current,
                 prev_pos: position.previous,
                 facing: *facing,
-                locomotion: locomotion_of(velocity),
+                locomotion: stride_of(
+                    velocity.map_or(WorldVec::ZERO, |Velocity(asked)| *asked),
+                    aim.map_or(Vec2::ZERO, |Aim(aim)| *aim),
+                ),
+                // Falls back to the snapped facing, so everything without a
+                // cursor still publishes a usable direction.
+                aim: pointed(aim).unwrap_or_else(|| facing.axis()),
                 // Carried across the boundary because the frontend cannot work
                 // it out: it may not hold the chunk the simulation used, and the
                 // two must agree on where a character's feet are.
@@ -231,8 +254,15 @@ impl Sim {
     /// for it: an entity walking into a wall has velocity but no motion.
     /// A teleport assigns `previous` to match, so it moves nothing here.
     fn apply_facing(&mut self) {
-        for (position, facing) in self.world.query_mut::<(&Position, &mut Facing)>() {
-            if let Some(direction) = Facing::from_direction(position.current - position.previous) {
+        for (position, facing, aim) in self
+            .world
+            .query_mut::<(&Position, &mut Facing, Option<&Aim>)>()
+        {
+            // A pointed aim wins outright; everything else still turns the way
+            // it moved.
+            let moved = position.current - position.previous;
+            let asked = pointed(aim).map_or(moved, |aim| aim.as_dvec2());
+            if let Some(direction) = Facing::from_direction(asked) {
                 *facing = direction;
             }
         }
@@ -243,9 +273,16 @@ impl Sim {
     fn apply_input(&mut self, input: Input) {
         // The one place a direction becomes a world displacement, so the
         // widening happens here rather than being scattered.
-        let velocity = input.move_dir().as_dvec2() * PLAYER_SPEED;
+        let asked = input.move_dir().as_dvec2() * PLAYER_SPEED;
+        let velocity = match stride_of(asked, input.aim()) {
+            Locomotion::Backward => asked * BACKWARD_SPEED,
+            _ => asked,
+        };
         for player in self.world.query_mut::<hecs::With<&mut Velocity, &Player>>() {
             player.0 = velocity;
+        }
+        for aim in self.world.query_mut::<hecs::With<&mut Aim, &Player>>() {
+            aim.0 = input.aim();
         }
     }
 
@@ -298,11 +335,47 @@ fn tile_of(at: WorldVec) -> worldgen::IVec2 {
     worldgen::IVec2::new(at.x.floor() as i32, at.y.floor() as i32)
 }
 
-/// Running whenever a velocity asks for motion, even at a wall where nothing
-/// moves. Derived here, so nothing holds a second copy of it.
-fn locomotion_of(velocity: Option<&Velocity>) -> Locomotion {
-    match velocity {
-        Some(Velocity(asked)) if *asked != WorldVec::ZERO => Locomotion::Running,
-        _ => Locomotion::Idle,
+/// The aim, but only when something really points it. Zero means "no request",
+/// and one place decides that so a caller cannot read the rule differently.
+fn pointed(aim: Option<&Aim>) -> Option<Vec2> {
+    aim.map(|Aim(aim)| *aim).filter(|aim| *aim != Vec2::ZERO)
+}
+
+/// Which way `travel` goes against `aim`. One function, used to pick the speed
+/// and to publish the stride, so those two can never disagree about which way
+/// he is going.
+///
+/// Neither vector has to be unit length: the comparison and both signs are
+/// scale invariant. `travel` is what a velocity *asks* for and not the motion
+/// that survived, so a character shoving into a wall still reports his stride.
+///
+/// A zero aim means nothing points him anywhere, so he travels forward by
+/// definition. That is the shared path for an NPC, a test, the cursor resting
+/// inside its dead radius, and a lost window focus.
+fn stride_of(travel: WorldVec, aim: Vec2) -> Locomotion {
+    if travel == WorldVec::ZERO {
+        return Locomotion::Idle;
+    }
+    if aim == Vec2::ZERO {
+        return Locomotion::Forward;
+    }
+    let aim = aim.as_dvec2();
+    let ahead = travel.dot(aim);
+    // Negative is his left. A person who faces you has his left hand on your
+    // right.
+    let side = aim.perp_dot(travel);
+    // Comparing the two products is the 45 degree split with no constant at
+    // all, and it uses only multiplication and comparison, so it replays bit
+    // for bit. A tie is forward or backward, never a strafe.
+    if ahead.abs() >= side.abs() {
+        if ahead > 0.0 {
+            Locomotion::Forward
+        } else {
+            Locomotion::Backward
+        }
+    } else if side < 0.0 {
+        Locomotion::StrafeLeft
+    } else {
+        Locomotion::StrafeRight
     }
 }

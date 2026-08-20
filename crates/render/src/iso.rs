@@ -11,6 +11,19 @@ use godot::builtin::Vector2;
 
 use crate::origin::Origin;
 
+/// How much of the isometric foreshortening to cancel out of walking speed.
+///
+/// The 2:1 diamond means the two cannot both be constant, so this picks where
+/// on that scale to sit:
+///
+/// - `0.0` holds *world* speed constant. Every direction crosses the same
+///   number of tiles per second, and sideways covers twice the screen pixels.
+///   This is what Diablo II does, and it is the honest projection.
+/// - `1.0` holds *screen* speed constant. Every direction covers the same
+///   pixels per second, and walking up the screen crosses twice the tiles.
+/// - Anything between splits the difference.
+pub const ISO_SPEED_COMPENSATION: f32 = 0.5;
+
 /// One tile's diamond, in pixels.
 pub const TILE_WIDTH: f32 = 192.0;
 pub const TILE_HEIGHT: f32 = 96.0;
@@ -65,12 +78,32 @@ pub fn chunk_to_screen(coord: worldgen::ChunkCoord, origin: Origin) -> Vector2 {
 /// Undoes the projection for a *direction*, which is why `W` means up the
 /// screen. Zero in gives zero out.
 ///
-/// Do not remove the `normalize_or_zero`. It is what makes movement isotropic:
-/// the raw inverse is anisotropic by exactly 2x, because `W` maps to magnitude
+/// The one inverse in the frontend, and it serves both the movement keys and
+/// the cursor. Two of them drift: the keys were once converted by two different
+/// sums, so fixing one left the other wrong.
+///
+/// Do not remove the normalising. It is what makes movement isotropic: the raw
+/// inverse is anisotropic by exactly 2x, because `W` maps to magnitude
 /// `sqrt(2)/96` and `D` to `sqrt(2)/192`.
 #[must_use]
 pub fn screen_dir_to_tile(screen: Vector2) -> Vec2 {
+    compensated(screen, ISO_SPEED_COMPENSATION)
+}
+
+/// [`screen_dir_to_tile`] with the trade made explicit, so a test can pin both
+/// ends of it. Never longer than unit length, whatever the compensation, because
+/// `game::Input` clamps anything longer and that would silently undo this.
+#[must_use]
+pub fn compensated(screen: Vector2, compensation: f32) -> Vec2 {
+    let screen = screen.normalized_or_zero();
+    if screen == Vector2::ZERO {
+        return Vec2::ZERO;
+    }
     let x = screen.x / TILE_WIDTH; // screen x in tile widths
     let y = screen.y / TILE_HEIGHT; // screen y in tile heights
-    Vec2::new(x + y, y - x).normalize_or_zero()
+    let tile = Vec2::new(x + y, y - x).normalize();
+    // Pixels one tile unit covers this way, against the cheapest direction:
+    // 1.0 up the screen, 2.0 sideways, because the diamond is 2:1.
+    let cost = std::f32::consts::SQRT_2 * (tile.x - tile.y).abs().hypot((tile.x + tile.y) * 0.5);
+    tile / cost.powf(compensation)
 }

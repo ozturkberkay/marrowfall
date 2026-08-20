@@ -9,7 +9,6 @@ use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::cli::{RunOptions, run};
-use xtask_art::library::AnimationLibrary;
 use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
@@ -313,7 +312,7 @@ async fn a_paid_stage_failing_partway_still_records_what_was_charged() {
 
     // The animation must actually be bought for this to be a partial failure,
     // so take it back out of the shared library first.
-    std::fs::remove_file(AnimationLibrary::glb(dir.path(), "idle")).unwrap();
+    std::fs::remove_file(a_library().glb(dir.path(), "idle")).unwrap();
 
     server.reset().await;
     Mock::given(method("GET"))

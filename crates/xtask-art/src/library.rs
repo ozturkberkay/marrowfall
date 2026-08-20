@@ -1,10 +1,11 @@
 //! The shared animation library: motion declared once, reused by every
 //! character on the same skeleton, the way Godot and Unity share clips.
 //!
-//! Sharing works because almost all of a clip is bone *rotation*, which is
-//! independent of proportions. The exception is `location`, which varies on
-//! `Hips`, `LeftShoulder` and `neck` and is in the units of the rig it was
-//! bought against, so a run's vertical bob is sized for that character.
+//! Sharing works in two halves. Motion is fitted to the skeleton's canonical
+//! rig when it is fetched, so every clip has the same bone names and the same
+//! rest pose; and its `location` channels, which are lengths rather than
+//! proportion-independent rotations, are sized to whichever character is
+//! playing it when it is baked.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
-/// This project's standard biped: 24 bones, Mixamo naming, no fingers.
-/// A hand-rigged humanoid must match these bone names to be the same skeleton.
+/// This project's standard biped: 24 bones, no fingers, named by Meshy's
+/// auto-rigger. A hand-rigged one must match `art/skeletons/humanoid.toml` to
+/// be the same skeleton.
 pub const HUMANOID: &str = "humanoid";
 
 /// Where a motion comes from, and so how its file gets on disk. Nothing
@@ -23,6 +25,9 @@ pub enum MotionSource {
     /// Retargeted from Meshy's animation library, selected by numeric id.
     /// Bought once, then shared by every character on the same skeleton.
     Meshy { action_id: u32 },
+    /// Fetched from Mixamo by product id, then fitted to the canonical rig.
+    /// Free, so `costs_credits` stays false.
+    Mixamo { product_id: String },
     /// Hand-authored, in Blender, or anywhere else, and committed with the
     /// rest of the art. There is nothing to fetch and nothing to pay for.
     Authored,
@@ -32,6 +37,30 @@ impl MotionSource {
     /// Whether obtaining this motion costs money.
     pub const fn costs_credits(&self) -> bool {
         matches!(self, Self::Meshy { .. })
+    }
+
+    /// Whether the file itself may be published with the rest of the art.
+    ///
+    /// Meshy's paid plan hands ownership over, and those clips cost credits,
+    /// so committing them stops every contributor buying them again. Adobe
+    /// grants the *use* of a Mixamo animation but forbids redistributing the
+    /// file, and this repository is public. One boolean per provider, so
+    /// adding one is a decision rather than a licence audit.
+    pub const fn redistributable(&self) -> bool {
+        match self {
+            Self::Meshy { .. } | Self::Authored => true,
+            Self::Mixamo { .. } => false,
+        }
+    }
+
+    /// How this provider names the bones it ships, a table in
+    /// `art/skeletons/<skeleton>.toml`. Declared rather than guessed from the
+    /// file, so a new provider is a decision the compiler asks for.
+    pub const fn bone_convention(&self) -> &'static str {
+        match self {
+            Self::Meshy { .. } | Self::Authored => "meshy",
+            Self::Mixamo { .. } => "mixamo",
+        }
     }
 }
 
@@ -65,8 +94,38 @@ impl AnimationLibrary {
     }
 
     /// The GLB holding one animation's motion, with no mesh.
-    pub fn glb(root: &Path, name: &str) -> PathBuf {
-        root.join("art/animations").join(format!("{name}.glb"))
+    ///
+    /// Motion we may publish sits beside the library and is committed; motion
+    /// we may not is gitignored and re-fetched on each machine. An unknown
+    /// name reads as committed, which is where nothing will be found either
+    /// way.
+    pub fn glb(&self, root: &Path, name: &str) -> PathBuf {
+        let publishable = self
+            .animations
+            .get(name)
+            .is_none_or(|animation| animation.source.redistributable());
+        let dir = if publishable {
+            "art/animations"
+        } else {
+            "art/animations/local"
+        };
+        root.join(dir).join(format!("{name}.glb"))
+    }
+
+    /// Where a provider's own download is staged before it is fitted to the
+    /// canonical rig. Derived and gitignored, and kept after a fetch so a bad
+    /// one can be looked at.
+    pub fn staged_download(root: &Path, name: &str) -> PathBuf {
+        root.join("art/staging/downloads")
+            .join(format!("{name}.fbx"))
+    }
+
+    /// The armature every clip for this skeleton is authored against.
+    ///
+    /// A path rather than a declaration: a second skeleton is a second file
+    /// and no code change. See `art/skeletons/README.md`.
+    pub fn reference_rig(root: &Path, skeleton: &str) -> PathBuf {
+        root.join("art/skeletons").join(format!("{skeleton}.glb"))
     }
 
     /// Loads the library, or an empty one if the project has no animations yet.
@@ -171,5 +230,68 @@ impl AnimationLibrary {
                 ),
             ]),
         }
+    }
+}
+
+/// What one fetch produced. Recorded so a re-run skips finished work, and so
+/// a reviewer can tell which upstream motion made the file on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fetched {
+    /// Where it came from, as the library declared it at the time.
+    pub source: MotionSource,
+    /// Fingerprint of the provider's own download, before any conversion.
+    pub download: String,
+    /// Fingerprint of the GLB the retarget wrote from it.
+    pub glb: String,
+}
+
+/// Machine-owned record of every fetched clip: a sidecar to `library.ron`,
+/// for the reason [`crate::lock`] gives, keep the hand-authored file diffable.
+/// Keyed by library name, so it lines up with the library and with the GLB.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LibraryLock {
+    #[serde(default)]
+    pub fetched: BTreeMap<String, Fetched>,
+}
+
+impl LibraryLock {
+    pub fn path(root: &Path) -> PathBuf {
+        root.join("art/animations/library.lock")
+    }
+
+    /// Loads the record, or an empty one if nothing has been fetched yet.
+    pub fn load(root: &Path) -> Result<Self> {
+        let path = Self::path(root);
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        ron::from_str(&text)
+            .with_context(|| format!("parsing {} (delete it to re-fetch)", path.display()))
+    }
+
+    pub fn save(&self, root: &Path) -> Result<()> {
+        let path = Self::path(root);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let config = ron::ser::PrettyConfig::new().struct_names(true);
+        // ron omits the trailing newline; without it every write trips the
+        // end-of-file pre-commit hook.
+        let text = ron::ser::to_string_pretty(self, config)? + "\n";
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// Records one fetch, replacing whatever was there.
+    pub fn record(&mut self, name: &str, source: MotionSource, download: &[u8], glb: &[u8]) {
+        self.fetched.insert(
+            name.to_owned(),
+            Fetched {
+                source,
+                download: crate::lock::digest(download),
+                glb: crate::lock::digest(glb),
+            },
+        );
     }
 }

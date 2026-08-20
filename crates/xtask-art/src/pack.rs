@@ -20,16 +20,29 @@ pub use sprites::{Anchor, AnimationAtlas, CharacterAssets, FrameRect};
 /// Compass directions in the order the Blender bake writes them. Index 0 faces
 /// the camera, and the model turns clockwise from there. So the ring runs
 /// south, south-west, west, and on round. Must match `DIRECTION_NAMES` in
-/// `tools/blender/src/framing.py`.
-const DIRECTIONS_8: [&str; 8] = ["s", "sw", "w", "nw", "n", "ne", "e", "se"];
+/// `tools/blender/src/framing.py`, which a test cross-checks.
 const DIRECTIONS_4: [&str; 4] = ["s", "w", "n", "e"];
+const DIRECTIONS_8: [&str; 8] = ["s", "sw", "w", "nw", "n", "ne", "e", "se"];
+const DIRECTIONS_16: [&str; 16] = [
+    "s", "ssw", "sw", "wsw", "w", "wnw", "nw", "nnw", "n", "nne", "ne", "ene", "e", "ese", "se",
+    "sse",
+];
+
+/// Past sixteen the compass runs out of names, so this ring is numbered from
+/// the same stop in the same order.
+const DIRECTIONS_32: [&str; 32] = [
+    "00", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15",
+    "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31",
+];
 
 /// Direction names for an evenly spaced ring.
 pub fn direction_names(count: u32) -> Result<&'static [&'static str]> {
     match count {
-        8 => Ok(&DIRECTIONS_8),
         4 => Ok(&DIRECTIONS_4),
-        other => bail!("unsupported direction count {other}; expected 4 or 8"),
+        8 => Ok(&DIRECTIONS_8),
+        16 => Ok(&DIRECTIONS_16),
+        32 => Ok(&DIRECTIONS_32),
+        other => bail!("unsupported direction count {other}; expected 4, 8, 16 or 32"),
     }
 }
 
