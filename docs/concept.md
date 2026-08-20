@@ -128,8 +128,8 @@ world guarantees, and it is what turns walking into progression:
   new survivor learns to fight and where a Hardcore character retreats to.
 - Every few kilometres outward, the land steps up a difficulty band. The bands
   are not visible as lines; they show as the biomes changing character.
-- The frontier, is the hardest band and it runs on forever. There is no wall
-  and no last zone.
+- The frontier, past roughly fifteen kilometres, is the hardest band and it runs
+  on forever. There is no wall and no last zone.
 
 **Places are found, not authored.** The world holds points of interest, and they
 are scattered by spacing rules rather than placed by hand: a rule says how often
@@ -761,11 +761,13 @@ material type bonus). You get 4 silver ore.
 In the same chamber, half-hidden behind rubble: a **locked chest**. Your
 Lockpicking is only 15. You try it. Fail. Try again. Fail. The lock is beyond
 your current skill. You mark the location mentally and move on. Something to
-come back for when your Lockpicking improves.  Torch is getting low. You light
-your second one and decide to head back. On the way out, you take a different
-tunnel and discover a **small hidden room** with a bookshelf. On it: a torn page
-from an alchemical text. It's a recipe: **Troll Fat Salve**, a powerful healing
-item that uses troll fat. Your Alchemy is just barely high enough to attempt it.
+come back for when your Lockpicking improves.
+
+Torch is getting low. You light your second one and decide to head back. On the
+way out, you take a different tunnel and discover a **small hidden room** with a
+bookshelf. On it: a torn page from an alchemical text. It's a recipe: **Troll
+Fat Salve**, a powerful healing item that uses troll fat. Your Alchemy is just
+barely high enough to attempt it.
 
 You walk back to your camp. At the forge you built there, you smelt your iron
 ore into ingots. At the alchemy table, you craft two Troll Fat Salves using the

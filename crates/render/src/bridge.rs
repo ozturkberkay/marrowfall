@@ -164,8 +164,12 @@ impl INode for GameBridge {
         // Before drawing, so every position this frame shares one origin. A
         // rebase mid-frame would put the camera and the sprites in different
         // frames of reference for exactly one frame, which reads as a jump.
-        if let Some(player) = player_position(&snapshot, alpha) {
-            self.origin.follow(player);
+        if let Some(player) = player_position(&snapshot, alpha)
+            && self.origin.follow(player)
+        {
+            // Disjoint fields, so this cannot be a method: `sim` above is
+            // already a mutable borrow of `self`.
+            rebase_chunks(&mut self.chunk_layers, self.origin);
         }
 
         // Before drawing, so a chunk that arrived this frame is painted in the
@@ -280,13 +284,7 @@ impl GameBridge {
         layer.set_occlusion_enabled(false);
         layer.set_y_sort_enabled(true);
         // Local cell coordinates, so the layer itself carries the chunk's offset.
-        layer.set_position(iso::tile_to_screen(
-            game::WorldVec::new(
-                f64::from(view.coord.origin().x),
-                f64::from(view.coord.origin().y),
-            ),
-            self.origin,
-        ));
+        layer.set_position(iso::chunk_to_screen(view.coord, self.origin));
 
         let data = tiles::tile_map_data(view);
         layer.set_tile_map_data_from_array(&PackedByteArray::from(data.as_slice()));
@@ -411,6 +409,18 @@ impl GameBridge {
 
 /// Where the player is drawn this frame, or `None` when the snapshot has no
 /// player to follow.
+/// Moves every painted chunk to the new origin.
+///
+/// A layer's position is written once, when the chunk is painted, so nothing else
+/// would move it. Entity sprites and the camera are placed fresh every frame and
+/// rebase on their own, so without this terrain is left behind and drifts out of
+/// alignment by however far the origin jumped.
+fn rebase_chunks(layers: &mut HashMap<worldgen::ChunkCoord, Gd<TileMapLayer>>, origin: Origin) {
+    for (coord, layer) in layers.iter_mut() {
+        layer.set_position(iso::chunk_to_screen(*coord, origin));
+    }
+}
+
 fn player_position(snapshot: &RenderSnapshot, alpha: f64) -> Option<game::WorldVec> {
     snapshot
         .player

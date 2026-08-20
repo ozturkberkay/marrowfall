@@ -183,8 +183,10 @@ impl Streamer {
 
     /// Hands finished chunks to the simulation and the frontend.
     fn deliver(&mut self, sim: &mut Sim) {
-        // `try_iter` so a tick never blocks on generation.
-        for Done { coord, issue, view } in self.completions.try_iter().collect::<Vec<_>>() {
+        // `try_recv` in a loop, not `try_iter().collect()`: this runs every tick
+        // on the simulation thread, and taking one value at a time ends the
+        // borrow on `self.completions` without allocating a `Vec` to do it.
+        while let Ok(Done { coord, issue, view }) = self.completions.try_recv() {
             // Superseded or evicted while in flight. Without this check the
             // frontend paints a chunk outside residency, and a coordinate that
             // left and re-entered arrives twice with colliding node names.
