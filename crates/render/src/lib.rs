@@ -7,10 +7,13 @@
 
 mod bridge;
 
-// Public so the separate unit-test crate can reach them. Both hold pure logic
-// with no engine in it, which leaves `bridge.rs` the only unmeasured file.
+// Public so the separate unit-test crate can reach them. All of these hold pure
+// logic, which leaves `bridge.rs` the only unmeasured file: it is a Godot node,
+// and instantiating one needs a running engine.
 pub mod draw;
 pub mod iso;
+pub mod origin;
+pub mod tiles;
 
 use godot::prelude::*;
 

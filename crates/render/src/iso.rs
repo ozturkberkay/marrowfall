@@ -6,21 +6,47 @@
 //!
 //! `Vec2` is `game`'s re-export, so this crate never picks its own `glam`.
 
-use game::Vec2;
+use game::{Vec2, WorldVec};
 use godot::builtin::Vector2;
+
+use crate::origin::Origin;
 
 /// One tile's diamond, in pixels.
 pub const TILE_WIDTH: f32 = 192.0;
 pub const TILE_HEIGHT: f32 = 96.0;
 
-/// Where the centre of `tile` sits on screen.
+/// Screen pixels per height step.
+///
+/// One quarter of the tile's screen height, which is the same ratio OpenTTD uses
+/// against its own tile. Belongs here and not in `worldgen`: a pixel is an art
+/// fact, and that crate is the one with no pixels in it.
+pub const HEIGHT_STEP: f32 = TILE_HEIGHT / 4.0;
+
+/// Where the centre of `tile` sits on screen, relative to `origin`.
+///
+/// The subtraction happens in `f64` and the narrowing to `Vector2` is the last
+/// operation. That order is the whole point: doing it the other way round would
+/// throw away the precision the wider world position exists to keep.
 #[must_use]
-pub fn tile_to_screen(tile: Vec2) -> Vector2 {
-    let half_width = TILE_WIDTH / 2.0;
-    let half_height = TILE_HEIGHT / 2.0;
+pub fn tile_to_screen(tile: WorldVec, origin: Origin) -> Vector2 {
+    ground_to_screen(tile, 0, origin)
+}
+
+/// Where a point at `height` steps above the ground sits on screen.
+///
+/// Height moves things up the screen rather than into a sort key. Godot y sorts
+/// terrain by cell and entities by node position, and inside a y sorted parent a
+/// `z_index` overrides the sort rather than refining it, so raising the drawn
+/// position is the mechanism. Cliff tiles then carry a per tile `y_sort_origin`
+/// so they still sort by their base.
+#[must_use]
+pub fn ground_to_screen(tile: WorldVec, height: i8, origin: Origin) -> Vector2 {
+    let local = tile - origin.tile();
+    let half_width = f64::from(TILE_WIDTH) / 2.0;
+    let half_height = f64::from(TILE_HEIGHT) / 2.0;
     Vector2::new(
-        (tile.x - tile.y) * half_width + half_width,
-        (tile.x + tile.y) * half_height + half_height,
+        ((local.x - local.y) * half_width + half_width) as f32,
+        ((local.x + local.y) * half_height + half_height) as f32 - f32::from(height) * HEIGHT_STEP,
     )
 }
 

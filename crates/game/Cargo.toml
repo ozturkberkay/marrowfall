@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 hecs.workspace = true
 glam.workspace = true
+worldgen.workspace = true
 
 [lints]
 workspace = true
@@ -16,3 +17,6 @@ workspace = true
 [[test]]
 name = "unit"
 path = "tests/unit/mod.rs"
+
+[dev-dependencies]
+worldgen.workspace = true

@@ -1,0 +1,32 @@
+[package]
+name = "xtask-world"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "xtask_world"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xtask-world"
+path = "src/main.rs"
+
+[[test]]
+name = "unit"
+path = "tests/unit/mod.rs"
+
+[dependencies]
+worldgen = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+image = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }
+tempfile = "3.27.0"

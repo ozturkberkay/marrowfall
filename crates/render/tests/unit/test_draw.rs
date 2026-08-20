@@ -1,4 +1,4 @@
-use game::{EntityView, Facing, Locomotion, Vec2};
+use game::{EntityView, Facing, Locomotion, WorldVec};
 use godot::builtin::{Rect2, Vector2};
 use render::draw::{self, Clip};
 use sprites::{Anchor, AnimationAtlas, FrameRect};
@@ -37,10 +37,11 @@ fn atlas() -> AnimationAtlas {
 fn view(id: u64) -> EntityView {
     EntityView {
         id,
-        pos: Vec2::ZERO,
-        prev_pos: Vec2::ZERO,
+        pos: WorldVec::ZERO,
+        prev_pos: WorldVec::ZERO,
         facing: Facing::South,
         locomotion: Locomotion::Idle,
+        height: 0,
     }
 }
 

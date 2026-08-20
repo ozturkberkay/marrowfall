@@ -27,8 +27,10 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 │   ├── host/                 # Sim runner (thread + channels)
 │   ├── render/               # Godot frontend (gdext)
 │   ├── sprites/              # Sprite manifest format (pipeline writes, game reads)
-│   └── xtask-art/            # The character art pipeline
-├── project/                  # Godot project
+│   ├── worldgen/             # World generation
+│   ├── xtask-art/            # The character art pipeline
+│   └── xtask-world/          # World preview tool
+├── project/                  # Godot project, including `data/` tuning tables
 ├── art/                      # Concepts, sprites, animations, branding
 ├── scripts/                  # Shell scripts and git hooks
 ├── docs/                     # Design docs, blog posts etc.
@@ -64,8 +66,8 @@ is what lets one command run a whole tier across the workspace:
 
 | Tier | Dependencies | Command | Wired in |
 | ----------- | ------------------------------------- | -------------------------------------------------- | --------------------------- |
-| Unit | Mocks only, zero I/O | `cargo nextest run --workspace --test unit` | `game`, `host`, `render`, `sprites`, `xtask-art` |
-| Integration | Real threads and channels, no engine | `cargo nextest run --workspace --test integration` | nothing yet |
+| Unit | Mocks only, zero I/O | `cargo nextest run --workspace --test unit` | `game`, `host`, `render`, `sprites`, `worldgen`, `xtask-art`, `xtask-world` |
+| Integration | Real threads and channels, no engine | `cargo nextest run --workspace --test integration` | `host` |
 | E2E | Black box, launches `godot --headless` | `cargo nextest run --workspace --test e2e` | nothing yet |
 
 > **gdext gotcha:** after recompiling Rust, restart the Godot editor, the

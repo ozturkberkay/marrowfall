@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 game.workspace = true
+worldgen.workspace = true
 host.workspace = true
 godot.workspace = true
 sprites.workspace = true

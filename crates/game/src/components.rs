@@ -1,7 +1,7 @@
 //! ECS components: plain data only. Systems live with the code that runs
 //! them, not here.
 
-use glam::Vec2;
+use crate::WorldVec;
 
 /// Where an entity is, in tile units (1.0 = one tile edge), and where it was
 /// when the current tick began.
@@ -19,14 +19,14 @@ use glam::Vec2;
 /// moved with it, the motion that facing reads is gone.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Position {
-    pub current: Vec2,
-    pub previous: Vec2,
+    pub current: WorldVec,
+    pub previous: WorldVec,
 }
 
 impl Position {
     /// Starts an entity at rest, with both ends of its first tick at `at`.
     #[must_use]
-    pub fn new(at: Vec2) -> Self {
+    pub fn new(at: WorldVec) -> Self {
         Self {
             current: at,
             previous: at,
@@ -39,7 +39,7 @@ impl Position {
 /// Its presence is what marks an entity as moving. Entities without it are
 /// skipped by integration and drawn where they stand.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Velocity(pub Vec2);
+pub struct Velocity(pub WorldVec);
 
 /// Marks the entity that held input drives.
 ///
@@ -67,10 +67,10 @@ pub enum Facing {
 }
 
 /// tan(22.5 degrees): half of one 45 degree sector.
-const SECTOR_EDGE: f32 = 0.414_213_57;
+const SECTOR_EDGE: f64 = 0.414_213_562_373_095_1;
 
 /// -1, 0 or 1: the sign of `value`, or 0 when it is short beside `other`.
-fn quantised_sign(value: f32, other: f32) -> i8 {
+fn quantised_sign(value: f64, other: f64) -> i8 {
     if value.abs() <= other.abs() * SECTOR_EDGE {
         0
     } else if value > 0.0 {
@@ -102,8 +102,8 @@ impl Facing {
     /// wedges. On screen they are not, so a frontend must never quantise a
     /// screen angle. Comparisons only, so the result is bit-identical
     /// everywhere.
-    pub(crate) fn from_direction(direction: Vec2) -> Option<Self> {
-        if direction == Vec2::ZERO {
+    pub(crate) fn from_direction(direction: WorldVec) -> Option<Self> {
+        if direction == WorldVec::ZERO {
             return None;
         }
         let x = quantised_sign(direction.x, direction.y);

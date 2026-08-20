@@ -1,0 +1,14 @@
+biome	tier	weight	ground	height_amp	height_period
+ashen_lowland	0	10	dead_grass	3	240
+dead_grass_plain	0	7	dead_grass	2	160
+sunken_fen	0	3	mud	1	80
+blackweald	1	10	dark_soil	4	320
+fog_marsh	1	5	mud	2	160
+charred_waste	2	10	ash	5	400
+ember_heath	2	6	cinder	3	240
+cinder_flats	3	10	cinder	6	480
+scoured_rock	3	5	stone	5	400
+bone_shelf	4	10	stone	7	560
+ash_dunes	4	6	ash	4	320
+marrow_frontier	5	10	ash	8	640
+the_pale	5	7	stone	6	480

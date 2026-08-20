@@ -33,17 +33,20 @@
 //! first.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use godot::classes::notify::NodeNotification;
-use godot::classes::{Camera2D, FileAccess, Sprite2D, Texture2D, TileMapLayer};
+use godot::classes::{Camera2D, FileAccess, Sprite2D, Texture2D, TileMapLayer, TileSet};
 use godot::prelude::*;
 
-use game::{Input, RenderSnapshot, Sim, TICK_DT, TerrainGrid};
-use host::SimHandle;
+use game::{Input, RenderSnapshot, Sim, TICK_DT};
+use host::{ChunkMessage, SimHandle};
 use sprites::CharacterAssets;
 
 use crate::draw::{self, Clip};
 use crate::iso;
+use crate::origin::Origin;
+use crate::tiles;
 
 /// Fixed development seed; replaced by the new-game/save flow later.
 const DEV_SEED: u64 = 0x4D61_7272_6F77; // "Marrow"
@@ -51,17 +54,28 @@ const DEV_SEED: u64 = 0x4D61_7272_6F77; // "Marrow"
 /// The only character there is, so every entity draws him.
 const CHARACTER_DIR: &str = "res://assets/characters/survivor";
 
+/// Where the tuning tables live. `res://` maps to `project/`, so these are the
+/// files under `project/data`.
+const DATA_DIR: &str = "res://data";
+
+/// How many chunks out from the player stay resident, on each axis. A screen
+/// shows about 400 tiles, so one chunk is roughly two and a half screens and a
+/// radius of two keeps the edge of the world well off camera.
+const RESIDENCY_RADIUS: u8 = 2;
+
 #[derive(GodotClass)]
 #[class(init, base=Node)]
 pub struct GameBridge {
     base: Base<Node>,
-    /// TileMapLayer the sim's ground terrain is painted into.
-    #[init(node = "../Ground")]
-    ground: OnReady<Gd<TileMapLayer>>,
+    /// Y-sorted parent of every streamed chunk layer and every entity sprite.
+    /// One parent, because Godot sorts within a subtree: ground and entities in
+    /// separate parents can never interleave, so a cliff could never occlude a
+    /// character.
+    #[init(node = "../World")]
+    world: OnReady<Gd<Node2D>>,
     /// Y-sorted parent of every entity sprite. A field and not a `base()`
     /// lookup, because `base_mut()` borrows all of `self`.
-    #[init(node = "../Entities")]
-    entities: OnReady<Gd<Node2D>>,
+
     /// Camera pinned to the player's drawn position.
     #[init(node = "../Camera2D")]
     camera: OnReady<Gd<Camera2D>>,
@@ -76,21 +90,45 @@ pub struct GameBridge {
     assets: Option<CharacterAssets>,
     textures: HashMap<Clip, Gd<Texture2D>>,
     sprites: HashMap<u64, Gd<Sprite2D>>,
+    /// One layer per chunk. Per chunk because `TileMapLayer` serialises a cell
+    /// coordinate as an `i16`, so one layer for an endless world would wrap; and
+    /// because freeing a chunk is then freeing one node.
+    chunk_layers: HashMap<worldgen::ChunkCoord, Gd<TileMapLayer>>,
+    /// The tileset every chunk layer shares.
+    tile_set: Option<Gd<TileSet>>,
     announced: bool,
+    /// Whether the first resident window has been reported. Streaming is silent
+    /// once it works, so this is the one line that says it started.
+    announced_world: bool,
     reported_death: bool,
+    /// What every drawn position is expressed relative to. Without it, screen
+    /// coordinates grow with distance until `f32` can no longer place a sprite
+    /// to the nearest quarter pixel, which happens well inside this world.
+    origin: Origin,
 }
 
 #[godot_api]
 impl INode for GameBridge {
     fn ready(&mut self) {
-        let sim = Sim::new(DEV_SEED);
-        self.paint_ground(sim.terrain());
+        // No world means no collision, no residency and nothing to paint, so
+        // this is fatal rather than something to draw around. A missing file and
+        // an empty one are indistinguishable through `get_file_as_string`, which
+        // is why the read is checked rather than trusted.
+        let Some(rules) = self.load_rules() else {
+            return;
+        };
+        let world = Arc::new(worldgen::World::new(rules, DEV_SEED));
+        self.tile_set = try_load::<TileSet>("res://assets/tiles/ground.tileset.tres").ok();
+        if self.tile_set.is_none() {
+            godot_error!("[marrowfall] ground.tileset.tres missing; the world will not paint");
+        }
+        let sim = Sim::new();
         self.load_survivor();
         // Teardown is `SimHandle`'s own `Drop`, so the sim lives as long as
         // this node rather than as long as its membership of the tree.
         // `exit_tree` would also fire on a reparent, killing the sim while
         // `ready` never runs again.
-        self.sim = Some(host::spawn(sim));
+        self.sim = Some(host::spawn(sim, world, RESIDENCY_RADIUS));
     }
 
     fn process(&mut self, _delta: f64) {
@@ -123,6 +161,27 @@ impl INode for GameBridge {
             godot_print!("[marrowfall] sim thread live at tick {}", snapshot.tick);
         }
 
+        // Before drawing, so every position this frame shares one origin. A
+        // rebase mid-frame would put the camera and the sprites in different
+        // frames of reference for exactly one frame, which reads as a jump.
+        if let Some(player) = player_position(&snapshot, alpha) {
+            self.origin.follow(player);
+        }
+
+        // Before drawing, so a chunk that arrived this frame is painted in the
+        // same frame of reference as everything else.
+        let messages = sim.take_chunks();
+        self.apply_chunks(messages);
+
+        let wanted = usize::from(RESIDENCY_RADIUS) * 2 + 1;
+        if !self.announced_world && self.chunk_layers.len() >= wanted * wanted {
+            self.announced_world = true;
+            godot_print!(
+                "[marrowfall] world streaming: {} chunks painted",
+                self.chunk_layers.len()
+            );
+        }
+
         self.draw_entities(&snapshot, alpha);
         self.follow_player(&snapshot, alpha);
     }
@@ -141,21 +200,99 @@ impl INode for GameBridge {
 }
 
 impl GameBridge {
-    /// Paints the sim's ground grid into the TileMapLayer: variant `n` maps
-    /// to atlas column `n` of source 0 (see `ground.tileset.tres`).
-    fn paint_ground(&mut self, terrain: &TerrainGrid) {
-        for (x, y, variant) in terrain.iter() {
-            self.ground
-                .set_cell_ex(Vector2i::new(x as i32, y as i32))
-                .source_id(0)
-                .atlas_coords(Vector2i::new(i32::from(variant), 0))
-                .done();
+    /// Reads the tuning tables, or reports why the world cannot start.
+    fn load_rules(&self) -> Option<worldgen::WorldRules> {
+        let read = |name: &str| {
+            let path = format!("{DATA_DIR}/{name}");
+            let mut file = FileAccess::open(&path, godot::classes::file_access::ModeFlags::READ)?;
+            let text = file.get_as_text().to_string();
+            file.close();
+            Some(text)
+        };
+        let names = [
+            "world.tsv",
+            "tiers.tsv",
+            "materials.tsv",
+            "biomes.tsv",
+            "site_classes.tsv",
+            "sites.tsv",
+        ];
+        let mut texts = Vec::with_capacity(names.len());
+        for name in names {
+            match read(name) {
+                Some(text) => texts.push(text),
+                None => {
+                    godot_error!("[marrowfall] cannot read {DATA_DIR}/{name}; there is no world");
+                    return None;
+                }
+            }
         }
-        godot_print!(
-            "[marrowfall] painted {}x{} ground tiles",
-            terrain.width(),
-            terrain.height()
-        );
+        match worldgen::parse(worldgen::Tables {
+            world: &texts[0],
+            tiers: &texts[1],
+            materials: &texts[2],
+            biomes: &texts[3],
+            site_classes: &texts[4],
+            sites: &texts[5],
+        }) {
+            Ok(rules) => Some(rules),
+            Err(error) => {
+                godot_error!("[marrowfall] {error}");
+                None
+            }
+        }
+    }
+
+    /// Creates, paints and frees one `TileMapLayer` per streamed chunk.
+    fn apply_chunks(&mut self, messages: Vec<ChunkMessage>) {
+        for message in messages {
+            match message {
+                ChunkMessage::Dropped(coord) => {
+                    if let Some(mut layer) = self.chunk_layers.remove(&coord) {
+                        layer.queue_free();
+                    }
+                }
+                ChunkMessage::Ready(view) => self.paint_chunk(&view),
+            }
+        }
+    }
+
+    /// Paints one chunk, replacing any layer already at that coordinate.
+    ///
+    /// A coordinate can arrive twice if it left and re-entered residency, so the
+    /// old node is freed first: two nodes with one name is a Godot error.
+    fn paint_chunk(&mut self, view: &worldgen::ChunkView) {
+        let Some(tile_set) = self.tile_set.clone() else {
+            return;
+        };
+        if let Some(mut stale) = self.chunk_layers.remove(&view.coord) {
+            stale.queue_free();
+        }
+
+        let mut layer = TileMapLayer::new_alloc();
+        layer.set_name(&format!("chunk_{}_{}", view.coord.x, view.coord.y));
+        layer.set_tile_set(&tile_set);
+        // The simulation owns collision and pathfinding, and each of these is a
+        // separate subsystem inside Godot's per change update, so leaving them on
+        // would cost work for answers nothing reads.
+        layer.set_collision_enabled(false);
+        layer.set_navigation_enabled(false);
+        layer.set_occlusion_enabled(false);
+        layer.set_y_sort_enabled(true);
+        // Local cell coordinates, so the layer itself carries the chunk's offset.
+        layer.set_position(iso::tile_to_screen(
+            game::WorldVec::new(
+                f64::from(view.coord.origin().x),
+                f64::from(view.coord.origin().y),
+            ),
+            self.origin,
+        ));
+
+        let data = tiles::tile_map_data(view);
+        layer.set_tile_map_data_from_array(&PackedByteArray::from(data.as_slice()));
+
+        self.world.add_child(&layer);
+        self.chunk_layers.insert(view.coord, layer);
     }
 
     /// Loads the manifest and one atlas texture per clip, all or nothing.
@@ -193,7 +330,7 @@ impl GameBridge {
     }
 
     /// Creates, moves and frees one `Sprite2D` per entity in the snapshot.
-    fn draw_entities(&mut self, snapshot: &RenderSnapshot, alpha: f32) {
+    fn draw_entities(&mut self, snapshot: &RenderSnapshot, alpha: f64) {
         let Some(assets) = self.assets.as_ref() else {
             return;
         };
@@ -206,20 +343,24 @@ impl GameBridge {
         }
         for id in changes.added {
             let sprite = new_sprite();
-            self.entities.add_child(&sprite);
+            self.world.add_child(&sprite);
             self.sprites.insert(id, sprite);
         }
 
         // `snapshot.time` stamps `pos`, but `lerp(0)` draws `prev_pos`, one
         // tick earlier. This walks back to the instant really drawn. Without it
         // the clip stays 16.7 ms ahead of the sprite for good.
-        let seconds = snapshot.time - (1.0 - f64::from(alpha)) * TICK_DT;
+        let seconds = snapshot.time - (1.0 - alpha) * TICK_DT;
 
         for view in &snapshot.entities {
             let Some(sprite) = self.sprites.get_mut(&view.id) else {
                 continue;
             };
-            sprite.set_position(iso::tile_to_screen(view.lerp(alpha)));
+            sprite.set_position(iso::ground_to_screen(
+                view.lerp(alpha),
+                view.height,
+                self.origin,
+            ));
 
             // A missing clip, row or frame leaves the sprite as it is, which is
             // the only sane answer mid-clip.
@@ -253,16 +394,28 @@ impl GameBridge {
     /// scroll from that notification. Position smoothing and physics
     /// interpolation both stay off. Either one adds a frame of lag, and is a
     /// second interpolator that argues with `host`'s `alpha`.
-    fn follow_player(&mut self, snapshot: &RenderSnapshot, alpha: f32) {
+    fn follow_player(&mut self, snapshot: &RenderSnapshot, alpha: f64) {
         let Some(view) = snapshot
             .player
             .and_then(|id| snapshot.entities.iter().find(|view| view.id == id))
         else {
             return;
         };
-        self.camera
-            .set_global_position(iso::tile_to_screen(view.lerp(alpha)));
+        self.camera.set_global_position(iso::ground_to_screen(
+            view.lerp(alpha),
+            view.height,
+            self.origin,
+        ));
     }
+}
+
+/// Where the player is drawn this frame, or `None` when the snapshot has no
+/// player to follow.
+fn player_position(snapshot: &RenderSnapshot, alpha: f64) -> Option<game::WorldVec> {
+    snapshot
+        .player
+        .and_then(|id| snapshot.entities.iter().find(|view| view.id == id))
+        .map(|view| view.lerp(alpha))
 }
 
 /// Which way the movement keys point on screen, or nowhere when the window is
