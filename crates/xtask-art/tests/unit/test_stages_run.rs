@@ -8,7 +8,7 @@ use base64::Engine as _;
 use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::library::AnimationLibrary;
+use xtask_art::library::{Animation, HUMANOID, MotionSource};
 use xtask_art::lock::TaskRef;
 use xtask_art::meshy::Endpoint;
 use xtask_art::spec::View;
@@ -343,6 +343,7 @@ async fn download_writes_the_character_and_one_file_per_animation() {
     install_strip_stub(dir.path(), &mut env);
 
     let record = stages::download(
+        &a_library(),
         &paths,
         dir.path(),
         &[
@@ -361,7 +362,7 @@ async fn download_writes_the_character_and_one_file_per_animation() {
     .unwrap();
 
     assert!(paths.character_glb().exists());
-    assert!(AnimationLibrary::glb(dir.path(), "idle").exists());
+    assert!(a_library().glb(dir.path(), "idle").exists());
     assert!(record.note.unwrap().contains("2 GLB"));
 }
 
@@ -390,6 +391,7 @@ async fn a_rigged_character_supersedes_the_bare_mesh() {
     install_strip_stub(dir.path(), &mut env);
 
     let record = stages::download(
+        &a_library(),
         &paths,
         dir.path(),
         &[
@@ -421,7 +423,7 @@ async fn download_with_nothing_recorded_says_which_stage_to_run() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
 
-    let error = stages::download(&paths, dir.path(), &[])
+    let error = stages::download(&a_library(), &paths, dir.path(), &[])
         .await
         .unwrap_err()
         .to_string();
@@ -443,6 +445,7 @@ async fn a_task_that_exposes_no_glb_is_reported_with_its_status() {
     env.with_api(&server.uri());
 
     let error = stages::download(
+        &a_library(),
         &paths,
         dir.path(),
         &[TaskRef::Rig {
@@ -518,7 +521,7 @@ async fn an_animation_already_in_the_library_is_not_bought_again() {
     let dir = tempfile::tempdir().unwrap();
     let _paths = Paths::new(dir.path(), "skeleton");
     let spec = a_spec("skeleton");
-    let shared = AnimationLibrary::glb(dir.path(), &spec.animations[0]);
+    let shared = a_library().glb(dir.path(), &spec.animations[0]);
     std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
     std::fs::write(&shared, b"glTF").unwrap();
 
@@ -567,6 +570,62 @@ fn install_strip_stub(root: &std::path::Path, env: &mut EnvGuard) {
     env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
 }
 
+// --- retarget -------------------------------------------------------------
+
+/// A clip from a provider that names its bones its own way.
+fn a_mixamo_clip() -> Animation {
+    Animation {
+        skeleton: HUMANOID.to_owned(),
+        loops: true,
+        fps: 20,
+        source: MotionSource::Mixamo {
+            product_id: "c9ccc468-b96c-11e4-a802-0aaa78deedf9".to_owned(),
+        },
+    }
+}
+
+#[test]
+fn the_retarget_needs_its_script() {
+    let dir = tempfile::tempdir().unwrap();
+    let error = stages::retarget(
+        &dir.path().join("walk_back.fbx"),
+        &dir.path().join("walk_back.glb"),
+        "walk_back",
+        &a_mixamo_clip(),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("retarget_animation.py"), "got: {error}");
+}
+
+/// The canonical rig is what a clip is fitted to, so its absence is the one
+/// failure that cannot be worked around by re-fetching.
+#[test]
+fn the_retarget_needs_the_canonical_rig_and_says_where_it_comes_from() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("tools/blender/src")).unwrap();
+    std::fs::write(
+        dir.path().join("tools/blender/src/retarget_animation.py"),
+        "",
+    )
+    .unwrap();
+
+    let error = stages::retarget(
+        &dir.path().join("walk_back.fbx"),
+        &dir.path().join("walk_back.glb"),
+        "walk_back",
+        &a_mixamo_clip(),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("humanoid"), "names the skeleton: {error}");
+    assert!(error.contains("art/skeletons/README.md"), "got: {error}");
+}
+
 #[tokio::test]
 async fn a_downloaded_animation_is_stripped_but_the_character_is_not() {
     let server = MockServer::start().await;
@@ -612,6 +671,7 @@ async fn a_downloaded_animation_is_stripped_but_the_character_is_not() {
         .set("MARROWFALL_STRIP_LOG", log.to_str().unwrap());
 
     stages::download(
+        &a_library(),
         &paths,
         dir.path(),
         &[

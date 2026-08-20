@@ -16,7 +16,7 @@ CharacterSpec(
         resolution: K2,
     ),
     bake: Bake(
-        directions: 8,
+        directions: 16,
         render_size: 512,
         sprite_height: 240,
         forearm_roll: 0.0,

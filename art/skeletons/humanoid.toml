@@ -1,0 +1,55 @@
+# Which bone fills each role, per naming convention.
+#
+# Retargeting matches by role, never by name: `Spine` is this rig's highest
+# spine bone and Mixamo's lowest. A provider is a table here plus a
+# `MotionSource` variant, tied together by `MotionSource::bone_convention`.
+
+canonical = "meshy"
+
+[conventions.meshy]
+hips = "Hips"
+spine_lower = "Spine02"
+spine_middle = "Spine01"
+spine_upper = "Spine"
+neck = "neck"
+head = "Head"
+left_shoulder = "LeftShoulder"
+left_arm = "LeftArm"
+left_forearm = "LeftForeArm"
+left_hand = "LeftHand"
+left_upper_leg = "LeftUpLeg"
+left_leg = "LeftLeg"
+left_foot = "LeftFoot"
+left_toe = "LeftToeBase"
+right_shoulder = "RightShoulder"
+right_arm = "RightArm"
+right_forearm = "RightForeArm"
+right_hand = "RightHand"
+right_upper_leg = "RightUpLeg"
+right_leg = "RightLeg"
+right_foot = "RightFoot"
+right_toe = "RightToeBase"
+
+[conventions.mixamo]
+hips = "Hips"
+spine_lower = "Spine"
+spine_middle = "Spine1"
+spine_upper = "Spine2"
+neck = "Neck"
+head = "Head"
+left_shoulder = "LeftShoulder"
+left_arm = "LeftArm"
+left_forearm = "LeftForeArm"
+left_hand = "LeftHand"
+left_upper_leg = "LeftUpLeg"
+left_leg = "LeftLeg"
+left_foot = "LeftFoot"
+left_toe = "LeftToeBase"
+right_shoulder = "RightShoulder"
+right_arm = "RightArm"
+right_forearm = "RightForeArm"
+right_hand = "RightHand"
+right_upper_leg = "RightUpLeg"
+right_leg = "RightLeg"
+right_foot = "RightFoot"
+right_toe = "RightToeBase"

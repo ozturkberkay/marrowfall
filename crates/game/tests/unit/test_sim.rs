@@ -1,6 +1,6 @@
 use game::{
-    EntityView, Facing, Input, Locomotion, PLAYER_SPEED, RenderSnapshot, Sim, Spawn, TICK_HZ, Vec2,
-    WorldVec,
+    BACKWARD_SPEED, EntityView, Facing, Input, Locomotion, PLAYER_SPEED, RenderSnapshot, Sim,
+    Spawn, TICK_HZ, Vec2, WorldVec,
 };
 
 /// Deliberately awkward magnitudes on both axes, so no assertion can lean on
@@ -263,15 +263,15 @@ fn a_still_entity_holds_its_place_however_it_was_built() {
 /// Tile directions and the screen direction each one points, measured against
 /// Godot's isometric tilemap. Both tile axes run down the screen, so the screen
 /// cardinals are tile diagonals.
-const FACINGS: [(WorldVec, Facing, &str); 8] = [
-    (WorldVec::new(1.0, 1.0), Facing::South, "s"),
-    (WorldVec::new(1.0, 0.0), Facing::SouthEast, "se"),
-    (WorldVec::new(1.0, -1.0), Facing::East, "e"),
-    (WorldVec::new(0.0, -1.0), Facing::NorthEast, "ne"),
-    (WorldVec::new(-1.0, -1.0), Facing::North, "n"),
-    (WorldVec::new(-1.0, 0.0), Facing::NorthWest, "nw"),
-    (WorldVec::new(-1.0, 1.0), Facing::West, "w"),
-    (WorldVec::new(0.0, 1.0), Facing::SouthWest, "sw"),
+const FACINGS: [(Vec2, Facing); 8] = [
+    (Vec2::new(1.0, 1.0), Facing::South),
+    (Vec2::new(1.0, 0.0), Facing::SouthEast),
+    (Vec2::new(1.0, -1.0), Facing::East),
+    (Vec2::new(0.0, -1.0), Facing::NorthEast),
+    (Vec2::new(-1.0, -1.0), Facing::North),
+    (Vec2::new(-1.0, 0.0), Facing::NorthWest),
+    (Vec2::new(-1.0, 1.0), Facing::West),
+    (Vec2::new(0.0, 1.0), Facing::SouthWest),
 ];
 
 #[test]
@@ -282,8 +282,8 @@ fn a_new_entity_faces_south() {
 
 #[test]
 fn facing_follows_the_direction_travelled() {
-    for (velocity, want, _) in FACINGS {
-        let (mut sim, _) = world_of([moving(WorldVec::ZERO, velocity)]);
+    for (velocity, want) in FACINGS {
+        let (mut sim, _) = world_of([moving(WorldVec::ZERO, velocity.as_dvec2())]);
         sim.tick(Input::default(), &[]);
         assert_eq!(
             only_entity(&sim.snapshot()).facing,
@@ -337,17 +337,6 @@ fn a_still_entity_keeps_facing_south() {
     }
 }
 
-#[test]
-fn each_facing_names_its_manifest_direction() {
-    for (_, facing, name) in FACINGS {
-        assert_eq!(
-            facing.name(),
-            name,
-            "{facing:?} is named {name:?} in an atlas"
-        );
-    }
-}
-
 /// Every key combination, and the tile direction the frontend's inverse
 /// projection turns it into. Written as the exact integer ratio that projection
 /// produces.
@@ -369,6 +358,10 @@ const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
 /// Held north, named rather than indexed at each use.
 const HOLDING_W: Vec2 = KEY_COMBINATIONS[0].1;
 
+/// One aim, for the tests about travel. South is tile `(1, 1)`, straight down
+/// the screen, so travelling east is a step to his own left.
+const POINTING_SOUTH: Vec2 = Vec2::new(1.0, 1.0);
+
 #[test]
 fn every_key_combination_faces_the_way_it_points_on_screen() {
     for (keys, held, want) in KEY_COMBINATIONS {
@@ -378,6 +371,164 @@ fn every_key_combination_faces_the_way_it_points_on_screen() {
             only_entity(&sim.snapshot()).facing,
             want,
             "holding {keys} should look {want:?}"
+        );
+    }
+}
+
+/// A pointed aim wins outright, so he keeps watching the cursor while he walks
+/// somewhere else. That is the whole point of the control scheme.
+#[test]
+fn a_pointed_aim_turns_the_player_whatever_way_he_walks() {
+    for (aim, want) in FACINGS {
+        let (mut sim, _) = world_of([player(MIDFIELD)]);
+        sim.tick(Input::new(HOLDING_W).aiming(aim), &[]);
+        assert_eq!(
+            only_entity(&sim.snapshot()).facing,
+            want,
+            "pointing {aim} while holding W should look {want:?}"
+        );
+    }
+}
+
+/// The cursor resting on him, the dead radius and a lost window focus all
+/// arrive as a zero aim, and he goes back to facing the way he walks.
+#[test]
+fn a_zero_aim_returns_the_player_to_movement_facing() {
+    let (mut sim, _) = world_of([player(MIDFIELD)]);
+
+    sim.tick(Input::new(HOLDING_W).aiming(POINTING_SOUTH), &[]);
+    assert_eq!(only_entity(&sim.snapshot()).facing, Facing::South);
+
+    sim.tick(Input::new(HOLDING_W), &[]);
+    assert_eq!(only_entity(&sim.snapshot()).facing, Facing::North);
+}
+
+/// Only the player has a cursor. Everything else still turns the way it moves,
+/// which is what an NPC does, from one tick's displacement, and its stride is
+/// forward because it points the way it travels.
+#[test]
+fn the_aim_reaches_nothing_but_the_player() {
+    let (mut sim, [drifting]) = world_of([moving(MIDFIELD, ALONG_X)]);
+
+    sim.tick(Input::default().aiming(POINTING_SOUTH), &[]);
+
+    let view = view_of(&sim.snapshot(), drifting);
+    assert_eq!(view.facing, Facing::SouthEast);
+    assert_eq!(view.locomotion, Locomotion::Forward);
+}
+
+/// Standing still is idle whatever the cursor does. A stride read from the aim
+/// alone would draw him backing away while he holds his ground.
+#[test]
+fn standing_still_while_pointing_somewhere_is_still_idle() {
+    let (mut sim, _) = world_of([player(MIDFIELD)]);
+
+    sim.tick(Input::default().aiming(POINTING_SOUTH), &[]);
+
+    let view = only_entity(&sim.snapshot());
+    assert_eq!(view.locomotion, Locomotion::Idle);
+    assert_eq!(view.facing, Facing::South, "the aim should still turn him");
+}
+
+/// Anything that must be accurate reads `aim`, so the player publishes the
+/// exact direction he was handed and never the snapped one. Everything without
+/// a cursor falls back to its facing, so every entity has a usable aim.
+#[test]
+fn the_player_publishes_the_exact_aim_and_everything_else_its_facing() {
+    let off_axis = Vec2::new(0.6, -0.8);
+    let (mut sim, [survivor, drifting]) = world_of([player(MIDFIELD), moving(MIDFIELD, ALONG_X)]);
+
+    sim.tick(Input::new(HOLDING_W).aiming(off_axis), &[]);
+
+    let snapshot = sim.snapshot();
+    let aiming = view_of(&snapshot, survivor);
+    assert!(aiming.aim.abs_diff_eq(off_axis, 1e-6), "{}", aiming.aim);
+    assert_ne!(
+        aiming.aim,
+        aiming.facing.axis(),
+        "the exact aim was snapped"
+    );
+
+    let drifter = view_of(&snapshot, drifting);
+    assert_eq!(drifter.aim, drifter.facing.axis());
+}
+
+/// Which way he travels against an aim held south, and the stride that is.
+/// `Locomotion` names his own left and right: a person who faces you has his
+/// left hand on your right, so travelling east while pointing south is a step
+/// to his left.
+///
+/// The four diagonals sit exactly 45 degrees from the aim. The comparison is
+/// inclusive, so a tie is forward or backward and never a strafe.
+const STRIDES_POINTING_SOUTH: [(Vec2, Locomotion); 8] = [
+    (Vec2::new(1.0, 1.0), Locomotion::Forward),
+    (Vec2::new(1.0, 0.0), Locomotion::Forward),
+    (Vec2::new(1.0, -1.0), Locomotion::StrafeLeft),
+    (Vec2::new(0.0, -1.0), Locomotion::Backward),
+    (Vec2::new(-1.0, -1.0), Locomotion::Backward),
+    (Vec2::new(-1.0, 0.0), Locomotion::Backward),
+    (Vec2::new(-1.0, 1.0), Locomotion::StrafeRight),
+    (Vec2::new(0.0, 1.0), Locomotion::Forward),
+];
+
+/// The stride he reports after one tick of holding `held` while pointing south.
+fn stride_travelling(held: Vec2) -> Locomotion {
+    let (mut sim, _) = world_of([player(MIDFIELD)]);
+    sim.tick(Input::new(held).aiming(POINTING_SOUTH), &[]);
+    only_entity(&sim.snapshot()).locomotion
+}
+
+#[test]
+fn each_direction_of_travel_publishes_the_stride_it_is_using() {
+    for (held, want) in STRIDES_POINTING_SOUTH {
+        let got = stride_travelling(held);
+        assert_eq!(
+            got, want,
+            "travelling {held} while pointing south is {got:?}"
+        );
+    }
+}
+
+/// The split compares two products and holds no constant, so it sits at exactly
+/// 45 degrees. A hair either side of the diagonal has to change the answer, or
+/// the clip and the travel disagree.
+#[test]
+fn the_stride_changes_at_exactly_the_diagonal() {
+    let cases = [
+        (Vec2::new(1.0, 0.1), Locomotion::Forward),
+        (Vec2::new(1.0, -0.1), Locomotion::StrafeLeft),
+        (Vec2::new(-1.0, 0.1), Locomotion::StrafeRight),
+        (Vec2::new(-1.0, -0.1), Locomotion::Backward),
+    ];
+
+    for (held, want) in cases {
+        let got = stride_travelling(held);
+        assert_eq!(
+            got, want,
+            "travelling {held} while pointing south is {got:?}"
+        );
+    }
+}
+
+/// Retreat is the one stride that costs speed, which is what makes backing away
+/// a choice. A strafe is not a retreat.
+#[test]
+fn only_backing_away_from_the_cursor_costs_speed() {
+    for (held, stride) in STRIDES_POINTING_SOUTH {
+        let (mut sim, _) = world_of([player(MIDFIELD)]);
+        for _ in 0..TICK_HZ {
+            sim.tick(Input::new(held).aiming(POINTING_SOUTH), &[]);
+        }
+
+        let want = if stride == Locomotion::Backward {
+            PLAYER_SPEED * BACKWARD_SPEED
+        } else {
+            PLAYER_SPEED
+        };
+        let travelled = (only_entity(&sim.snapshot()).pos - MIDFIELD).length();
+        assert!(
+            (travelled - want).abs() < 1e-3,
+            "a second of {stride:?} covered {travelled} tiles, not {want}"
         );
     }
 }
@@ -440,7 +591,7 @@ fn releasing_the_keys_stops_the_player_and_leaves_his_facing_alone() {
     }
     let walking = only_entity(&sim.snapshot());
     assert_eq!(walking.facing, Facing::North);
-    assert_eq!(walking.locomotion, Locomotion::Running);
+    assert_eq!(walking.locomotion, Locomotion::Forward);
 
     for _ in 0..TICK_HZ / 2 {
         sim.tick(Input::default(), &[]);
@@ -461,9 +612,8 @@ fn releasing_the_keys_stops_the_player_and_leaves_his_facing_alone() {
 
 #[test]
 fn holding_a_direction_moves_him_and_reads_as_running() {
-    // The interesting half of this, a velocity that asks for motion where none
-    // happens, needs something to walk into. Terrain collision is what brings it
-    // back, and it is where the "running at a wall" case belongs.
+    // The other half, a velocity that asks for motion where none happens, is
+    // the test below.
     let (mut sim, _) = world_of([player(WorldVec::ZERO)]);
 
     for _ in 0..TICK_HZ {
@@ -473,7 +623,24 @@ fn holding_a_direction_moves_him_and_reads_as_running() {
     let view = only_entity(&sim.snapshot());
     assert_ne!(view.pos, WorldVec::ZERO, "held input moved nothing");
     assert_eq!(view.facing, Facing::North);
-    assert_eq!(view.locomotion, Locomotion::Running);
+    assert_eq!(view.locomotion, Locomotion::Forward);
+}
+
+/// The stride comes from the velocity he asked for, never from the motion that
+/// survived, so a refused step cannot turn a retreat into an idle.
+#[test]
+fn a_player_who_cannot_step_still_reports_his_stride() {
+    // No ground at all, so every step is refused: an unloaded tile is not open
+    // ground.
+    let (mut sim, _) = Sim::with_entities(&[player(WorldVec::ZERO)]);
+
+    for _ in 0..TICK_HZ {
+        sim.tick(Input::new(HOLDING_W).aiming(POINTING_SOUTH), &[]);
+    }
+
+    let view = only_entity(&sim.snapshot());
+    assert_eq!(view.pos, WorldVec::ZERO);
+    assert_eq!(view.locomotion, Locomotion::Backward);
 }
 
 #[test]
@@ -492,7 +659,10 @@ fn the_same_seed_and_input_sequence_replay_identically() {
         let mut sim = Sim::new();
         for tick in 0..TICK_HZ as usize {
             let (_, held, _) = KEY_COMBINATIONS[tick % KEY_COMBINATIONS.len()];
-            sim.tick(Input::new(held), &[]);
+            // The aim walks its ring at a different rate from the keys, so the
+            // replay has to reproduce both streams and not one of them.
+            let (aim, _) = FACINGS[tick * 3 % FACINGS.len()];
+            sim.tick(Input::new(held).aiming(aim), &[]);
         }
         sim.snapshot()
     };

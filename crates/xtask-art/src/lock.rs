@@ -268,10 +268,10 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
                 .iter()
                 .filter_map(|name| library.animations.get(name))
                 .filter_map(|animation| match animation.source {
-                    // Authored motion costs nothing and cannot go stale, so it
-                    // has no bearing on whether the paid rig must run again.
+                    // Only Meshy ids decide whether a paid rig has to run
+                    // again. Free motion cannot invalidate a paid stage.
                     MotionSource::Meshy { action_id } => Some(action_id),
-                    MotionSource::Authored => None,
+                    MotionSource::Mixamo { .. } | MotionSource::Authored => None,
                 })
                 .collect();
             ids.sort_unstable();
@@ -311,14 +311,20 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
     }
     // A digest would be shorter, but a readable fingerprint makes lock diffs
     // explain themselves when a stage unexpectedly re-runs.
-    let joined = parts.join("|");
-    format!("{:016x}", fnv1a(joined.as_bytes()))
+    digest(parts.join("|").as_bytes())
+}
+
+/// The hex fingerprint every lock file in this crate records. Shared so the
+/// character lock and the library lock cannot drift apart.
+pub(crate) fn digest(bytes: &[u8]) -> String {
+    format!("{:016x}", fnv1a(bytes))
 }
 
 /// Version of the free half of the pipeline (bake and pack). Bump whenever
 /// its output changes for identical inputs.
 /// 2: shared camera framing and ground line, root-motion travel stripped.
-pub const LOCAL_PIPELINE_VERSION: u32 = 2;
+/// 3: clip translation sized to the character playing it.
+pub const LOCAL_PIPELINE_VERSION: u32 = 3;
 
 /// FNV-1a. Not cryptographic, this only needs to detect edits, and avoiding a
 /// hashing dependency keeps the tool's dependency surface small.

@@ -52,7 +52,7 @@ repos:
       - id: forbid-binary
         # Art is committed on purpose and tracked by Git LFS, and the vendored
         # addons ship their own icons; everywhere else a binary is an accident.
-        exclude: ^(art/animations/|art/brand/|art/characters/|project/assets/|project/addons/)
+        exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|project/assets/|project/addons/)
       - id: script-must-have-extension
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: ad1b27d73581aa16cca06fc4a0761fc563ffe8e8 # v1.5.6

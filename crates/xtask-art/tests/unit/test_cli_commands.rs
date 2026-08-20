@@ -447,6 +447,18 @@ async fn the_entry_point_dispatches_new_and_creates_the_spec() {
 }
 
 #[tokio::test]
+async fn the_entry_point_dispatches_fetch() {
+    let dir = a_repo();
+    a_library().save(dir.path()).unwrap();
+    let mut env = EnvGuard::new();
+    env.set("CARGO_MANIFEST_DIR", dir.path().to_str().unwrap());
+
+    // Every entry in the template library is bought with the rig, so this
+    // reaches the command and finds nothing to do.
+    run_from_args(["art", "fetch"]).await.unwrap();
+}
+
+#[tokio::test]
 async fn the_entry_point_dispatches_check_and_status() {
     let dir = a_repo();
     a_spec("survivor")

@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use xtask_art::library::{Animation, MotionSource};
 use xtask_art::spec::Paths;
 use xtask_art::stages::{self, venv_site_packages};
 
@@ -246,6 +247,42 @@ fn a_missing_animation_glb_says_to_download_first() {
     .to_string();
     assert!(
         error.contains("run the download stage first"),
+        "got: {error}"
+    );
+}
+
+/// Motion nobody bought arrives another way, so the message has to say which.
+#[test]
+fn a_missing_fetched_animation_names_the_command_that_gets_it() {
+    let mut library = a_library();
+    library.animations.insert(
+        "strafe_left".to_owned(),
+        Animation {
+            skeleton: xtask_art::library::HUMANOID.to_owned(),
+            loops: true,
+            fps: 24,
+            source: MotionSource::Mixamo {
+                product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9".to_owned(),
+            },
+        },
+    );
+    let dir = a_baked_repo(true);
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+    let mut spec = a_spec("survivor");
+    spec.animations = vec!["strafe_left".to_owned()];
+
+    let error = stages::bake(
+        &spec,
+        &library,
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("cargo art fetch strafe_left"),
         "got: {error}"
     );
 }

@@ -13,6 +13,11 @@
 /art/staging/
 /art/preview/
 
+# Motion we may use but not redistribute: Adobe's licence allows the animation
+# in the game and forbids publishing the file. `cargo art fetch` puts a copy
+# here on each machine.
+/art/animations/local/
+
 # Python (Blender scripts; uv-managed)
 .venv/
 __pycache__/

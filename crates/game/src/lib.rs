@@ -12,7 +12,7 @@ mod snapshot;
 
 pub use chunks::{Chunks, STEP_LIMIT};
 pub use components::Facing;
-pub use sim::{PLAYER_SPEED, Sim, Spawn, TICK_DT, TICK_HZ};
+pub use sim::{BACKWARD_SPEED, PLAYER_SPEED, Sim, Spawn, TICK_DT, TICK_HZ};
 pub use snapshot::{EntityView, Locomotion, RenderSnapshot};
 
 /// A position or displacement in the world, in tile units.
@@ -33,7 +33,9 @@ pub type WorldVec = glam::DVec2;
 /// frontend must be able to name it without picking its own `glam` version.
 pub use glam::Vec2;
 
-/// Everything a player holds down this tick.
+/// Everything a player holds down this tick: where the keys ask him to move,
+/// and where the cursor asks him to point. Zero in either means nothing asks,
+/// and a zero aim leaves facing following movement.
 ///
 /// Latest-wins across the boundary: written once per frame, read once per tick.
 /// So a skipped tick loses no held state, and speed never tracks frame rate.
@@ -43,6 +45,9 @@ pub use glam::Vec2;
 pub struct Input {
     /// Private so it cannot be built out of range: see [`Input::new`].
     move_dir: Vec2,
+    /// Where the player points. Zero means "no request", and facing then
+    /// follows movement the way it always did.
+    aim: Vec2,
 }
 
 impl Input {
@@ -63,6 +68,23 @@ impl Input {
         }
         Self {
             move_dir: move_dir.clamp_length_max(1.0),
+            aim: Vec2::ZERO,
+        }
+    }
+
+    /// Points this input somewhere, in tile units. Zero, or anything not
+    /// finite, leaves facing following movement.
+    ///
+    /// Separate from [`Input::new`] so a caller that has no cursor, such as a
+    /// test or a gamepad with an idle stick, says nothing rather than guessing.
+    #[must_use]
+    pub fn aiming(self, aim: Vec2) -> Self {
+        if !aim.is_finite() {
+            return self;
+        }
+        Self {
+            aim: aim.normalize_or_zero(),
+            ..self
         }
     }
 
@@ -70,6 +92,12 @@ impl Input {
     #[must_use]
     pub fn move_dir(self) -> Vec2 {
         self.move_dir
+    }
+
+    /// Which way the player points, unit length, or zero when nothing asks.
+    #[must_use]
+    pub fn aim(self) -> Vec2 {
+        self.aim
     }
 }
 

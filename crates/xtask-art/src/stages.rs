@@ -11,7 +11,7 @@ use std::process::Command;
 
 use anyhow::{Context as _, Result, bail};
 
-use crate::library::{AnimationLibrary, MotionSource};
+use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{StageRecord, TaskRef};
 use crate::meshy::{self, Endpoint};
 use crate::openai;
@@ -172,14 +172,14 @@ pub async fn rig(
     for (name, animation) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
         // The library is shared, so a motion another character already bought
         // costs nothing. This is the whole point of storing them centrally.
-        if AnimationLibrary::glb(root, name).exists() {
+        if library.glb(root, name).exists() {
             println!("  {name}: already in the library");
             continue;
         }
-        // Hand-authored motion is committed with the art; there is nothing to
-        // buy and nothing to fetch.
+        // Only Meshy sells motion attached to a rig it billed for. Anything
+        // else is committed or fetched, and neither belongs in a paid stage.
         let MotionSource::Meshy { action_id } = animation.source else {
-            println!("  {name}: authored, nothing to fetch");
+            println!("  {name}: not bought here, nothing to do");
             continue;
         };
         let reusable = already_done.iter().find(|task| {
@@ -220,7 +220,12 @@ pub async fn rig(
 
 /// Fetches the finished GLBs, the checkpoint everything downstream rebuilds
 /// from: the rigged character, plus one file per animation.
-pub async fn download(paths: &Paths, root: &Path, tasks: &[TaskRef]) -> Result<StageRecord> {
+pub async fn download(
+    library: &AnimationLibrary,
+    paths: &Paths,
+    root: &Path,
+    tasks: &[TaskRef],
+) -> Result<StageRecord> {
     let client = meshy::Client::from_env()?;
     let mut downloaded = 0;
     // A rigged character supersedes the bare mesh at the same path, so the
@@ -231,7 +236,7 @@ pub async fn download(paths: &Paths, root: &Path, tasks: &[TaskRef]) -> Result<S
         let dest = match task {
             TaskRef::Model { .. } if rigged => continue,
             TaskRef::Model { .. } | TaskRef::Rig { .. } => paths.character_glb(),
-            TaskRef::Animation { name, .. } => AnimationLibrary::glb(root, name),
+            TaskRef::Animation { name, .. } => library.glb(root, name),
         };
         let status = client.status(task.endpoint(), task.id()).await?;
         let url = status.glb_url().with_context(|| {
@@ -273,6 +278,45 @@ fn strip_animation(glb: &Path, repo_root: &Path) -> Result<()> {
     run_blender(command).with_context(|| format!("stripping {}", glb.display()))
 }
 
+/// Fits a downloaded clip onto the skeleton's canonical rig, writing the
+/// animation GLB the bake reads.
+pub fn retarget(
+    source: &Path,
+    out: &Path,
+    name: &str,
+    animation: &Animation,
+    repo_root: &Path,
+) -> Result<()> {
+    let script = repo_root.join(BLENDER_SRC).join("retarget_animation.py");
+    anyhow::ensure!(
+        script.exists(),
+        "missing retarget script at {}",
+        script.display()
+    );
+    let skeleton = &animation.skeleton;
+    let rig = AnimationLibrary::reference_rig(repo_root, skeleton);
+    anyhow::ensure!(
+        rig.exists(),
+        "no canonical rig for the {skeleton:?} skeleton at {}. \
+         art/skeletons/README.md says where that file comes from",
+        rig.display()
+    );
+
+    let mut command = blender_command_bare(&script, repo_root)?;
+    command
+        .arg("--source")
+        .arg(source)
+        .arg("--rig")
+        .arg(rig)
+        .arg("--convention")
+        .arg(animation.source.bone_convention())
+        .arg("--out")
+        .arg(out)
+        .arg("--name")
+        .arg(name);
+    run_blender(command).with_context(|| format!("retargeting {}", source.display()))
+}
+
 /// Renders sprite frames via headless Blender. One invocation for every
 /// animation, because the camera is sized from the widest pose: framing per
 /// invocation would change the character's size between animations.
@@ -312,11 +356,16 @@ pub fn bake(
     let mut command = blender_command(&script, paths, spec, repo_root)?;
     command.arg("--character").arg(&character);
     for (name, animation) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
-        let glb = AnimationLibrary::glb(repo_root, name);
+        let glb = library.glb(repo_root, name);
         anyhow::ensure!(
             glb.exists(),
-            "missing animation {}, run the download stage first",
-            glb.display()
+            "missing animation {}, {}",
+            glb.display(),
+            match animation.source {
+                MotionSource::Meshy { .. } => "run the download stage first".to_owned(),
+                MotionSource::Mixamo { .. } => format!("get it with `cargo art fetch {name}`"),
+                MotionSource::Authored => "author it and commit it".to_owned(),
+            }
         );
         command
             .arg("--animation")

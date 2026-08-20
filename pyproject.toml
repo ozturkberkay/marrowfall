@@ -51,7 +51,11 @@ extra-paths = ["tools/blender/src"]
 # `bpy.context.scene` and friends are unset and therefore typed `| None`.
 # Inside a running Blender they are always present.
 [[tool.ty.overrides]]
-include = ["tools/blender/src/bake_sprites.py", "tools/blender/src/strip_animation.py"]
+include = [
+    "tools/blender/src/bake_sprites.py",
+    "tools/blender/src/retarget_animation.py",
+    "tools/blender/src/strip_animation.py",
+]
 
 [tool.ty.overrides.rules]
 unresolved-attribute = "ignore"

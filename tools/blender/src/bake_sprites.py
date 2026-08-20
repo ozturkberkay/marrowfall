@@ -45,6 +45,7 @@ import argparse
 import math
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 
 import bpy
@@ -53,6 +54,7 @@ from framing import (
     BakeSettings,
     Bounds,
     Framing,
+    Vec3,
     bind_pose_mismatch,
     bone_from_data_path,
     direction_rotation,
@@ -61,7 +63,9 @@ from framing import (
     is_forearm,
     key_light_rotation,
     missing_bones,
+    rest_height,
     sampled_frames,
+    translation_scale,
 )
 from mathutils import Quaternion, Vector
 from pydantic import BaseModel, ConfigDict
@@ -84,6 +88,8 @@ class Animation(BaseModel):
 
     action: bpy.types.Action
     name: str
+    source_height: float
+    """Rest height of the rig this clip was authored on, sizing its lengths."""
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -353,24 +359,18 @@ def apply_forearm_roll(armature: bpy.types.Object, degrees: float) -> None:
 
     for action in bpy.data.actions:
         for name in matched:
-            # Roll about the bone's own length axis (Y in Blender bone space).
-            sign = forearm_roll_sign(name)
-            roll = Quaternion((0.0, 1.0, 0.0), math.radians(degrees * sign))
-            path = f'pose.bones["{name}"].rotation_quaternion'
-            curves = [fc for fc in action_fcurves(action) if fc.data_path == path]
-            if len(curves) != 4:
-                continue
-            curves.sort(key=lambda fc: fc.array_index)
-            for index in range(len(curves[0].keyframe_points)):
-                current = Quaternion([c.keyframe_points[index].co[1] for c in curves])
-                rolled = current @ roll
-                for channel, value in zip(curves, rolled, strict=True):
-                    channel.keyframe_points[index].co[1] = value
-                    channel.keyframe_points[index].handle_left[1] = value
-                    channel.keyframe_points[index].handle_right[1] = value
-            for channel in curves:
-                channel.update()
+            roll_forearm(action, name, degrees)
     print(f"applied {degrees} deg forearm roll to {matched}")
+
+
+def roll_forearm(action: bpy.types.Action, bone: str, degrees: float) -> None:
+    """Rolls one forearm about its own length axis (Y in Blender bone space).
+
+    Composed after whatever the animation already does to the bone, which is
+    what makes it a correction rather than a replacement.
+    """
+    roll = Quaternion((0.0, 1.0, 0.0), math.radians(degrees * forearm_roll_sign(bone)))
+    edit_rotation_curves(action, bone, lambda current: current @ roll)
 
 
 def assign_action(armature: bpy.types.Object, action: bpy.types.Action) -> None:
@@ -399,20 +399,114 @@ def assign_action(armature: bpy.types.Object, action: bpy.types.Action) -> None:
         data.action_slot = slot
 
 
-def action_fcurves(action: bpy.types.Action) -> list[bpy.types.FCurve]:
-    """Every F-curve in an action, across Blender's two action APIs.
+def fcurve_owners(action: bpy.types.Action) -> list:
+    """Every collection of F-curves in an action, across Blender's two APIs.
 
     Blender 4.4 introduced slotted actions, where curves live under
     layers/strips/channelbags; older files expose `action.fcurves` directly.
+    Removing a curve needs the collection holding it, which is why this is the
+    primitive and `action_fcurves` is built on it.
     """
     if hasattr(action, "fcurves"):
-        return list(action.fcurves)
-    curves: list[bpy.types.FCurve] = []
-    for layer in action.layers:
-        for strip in layer.strips:
-            for channelbag in getattr(strip, "channelbags", ()):
-                curves.extend(channelbag.fcurves)
-    return curves
+        return [action]
+    return [
+        channelbag
+        for layer in action.layers
+        for strip in layer.strips
+        for channelbag in getattr(strip, "channelbags", ())
+    ]
+
+
+def action_fcurves(action: bpy.types.Action) -> list[bpy.types.FCurve]:
+    """Every F-curve in an action."""
+    return [curve for owner in fcurve_owners(action) for curve in owner.fcurves]
+
+
+def rotation_curves(action: bpy.types.Action, bone: str) -> list[bpy.types.FCurve]:
+    """A bone's four rotation curves in w, x, y, z order, or none at all.
+
+    glTF actions drive `rotation_quaternion`, so a bone either has the whole
+    set or is not rotated by this action.
+    """
+    path = f'pose.bones["{bone}"].rotation_quaternion'
+    curves = sorted(
+        (fc for fc in action_fcurves(action) if fc.data_path == path),
+        key=lambda fc: fc.array_index,
+    )
+    return curves if len(curves) == 4 else []
+
+
+def edit_rotation_curves(
+    action: bpy.types.Action,
+    bone: str,
+    combine: Callable[[Quaternion], Quaternion],
+) -> None:
+    """Rewrites every keyframe of a bone's rotation through `combine`.
+
+    The correction is composed into the curve rather than set on the pose bone:
+    an action drives `rotation_quaternion`, so writing the pose would be
+    overwritten by the action at best, and freeze the bone at worst.
+    """
+    curves = rotation_curves(action, bone)
+    if not curves:
+        return
+    for index in range(len(curves[0].keyframe_points)):
+        current = Quaternion([curve.keyframe_points[index].co[1] for curve in curves])
+        for curve, value in zip(curves, combine(current), strict=True):
+            curve.keyframe_points[index].co[1] = value
+            curve.keyframe_points[index].handle_left[1] = value
+            curve.keyframe_points[index].handle_right[1] = value
+    for curve in curves:
+        curve.update()
+
+
+def scale_translation(action: bpy.types.Action, ratio: float) -> None:
+    """Sizes every `location` curve in an action.
+
+    Every curve, not only the three that are non-zero today: a constant offset
+    is a length too, and it is wrong on a differently sized body.
+    """
+    for curve in action_fcurves(action):
+        if not curve.data_path.endswith(".location"):
+            continue
+        for point in curve.keyframe_points:
+            point.co[1] *= ratio
+            point.handle_left[1] *= ratio
+            point.handle_right[1] *= ratio
+        curve.update()
+
+
+def rest_points(armature: bpy.types.Object) -> list[Vec3]:
+    """Rest bone heads, in the armature's own units.
+
+    Not world space, deliberately: a pose bone's `location` sits *under* the
+    armature object's transform, so folding that transform in here would count
+    it twice on a rig whose object scale differs.
+
+    Heads only. glTF stores no bone lengths, so the importer invents tails, and
+    on this project's rigs they land tens of metres from the body.
+    """
+    return [
+        (bone.head_local.x, bone.head_local.y, bone.head_local.z)
+        for bone in armature.data.bones
+    ]
+
+
+def size_to_character(character: Character, animations: list[Animation]) -> None:
+    """Sizes each clip's translation to the body about to play it.
+
+    Rotation is proportion independent; `location` is not, it is a length in
+    the units of the rig the clip was authored against. Both rigs are on disk,
+    so the ratio is measured rather than declared, and cannot go stale.
+    """
+    height = rest_height(rest_points(character.armature))
+    for animation in animations:
+        try:
+            ratio = translation_scale(animation.source_height, height)
+        except ValueError as error:
+            sys.exit(f"error: sizing {animation.name}: {error}")
+        scale_translation(animation.action, ratio)
+        print(f"sized {animation.name} translation by {ratio:.4f}")
 
 
 def strip_root_motion(armature: bpy.types.Object) -> None:
@@ -425,7 +519,8 @@ def strip_root_motion(armature: bpy.types.Object) -> None:
 
     Only the horizontal channels are pinned. Flattening the vertical one too
     would delete the run cycle's bob and leave a jump permanently on the
-    ground, that is animation, not travel.
+    ground, that is animation, not travel. That bob has already been sized to
+    this character by `size_to_character`, which runs first.
 
     Translation is flattened to its first-frame value rather than zeroed, so the
     character keeps whatever offset the rig was authored with.
@@ -469,8 +564,12 @@ def bone_directions(
     return directions
 
 
-def take_action(path: Path, target: bpy.types.Object, name: str) -> bpy.types.Action:
-    """Loads one action out of `path` and hands it to `target`'s armature.
+def take_action(
+    path: Path, target: bpy.types.Object, name: str
+) -> tuple[bpy.types.Action, float]:
+    """Loads one action out of `path`, with the rest height it was built for.
+
+    Hands the action to `target`'s armature.
 
     Animation-only files still carry an armature, because glTF animations target
     nodes inside their own file, the format has no cross-file reference. The
@@ -501,7 +600,8 @@ def take_action(path: Path, target: bpy.types.Object, name: str) -> bpy.types.Ac
             "against the character's. Re-download it."
         )
     source_bind = bone_directions(source_rig)
-    # Discard the imported skeleton; only its motion was wanted.
+    source_height = rest_height(rest_points(source_rig))
+    # Discard the imported skeleton; only its measurements were wanted.
     for obj in imported:
         bpy.data.objects.remove(obj, do_unlink=True)
 
@@ -525,7 +625,7 @@ def take_action(path: Path, target: bpy.types.Object, name: str) -> bpy.types.Ac
             "An action holds rotations relative to its own rest pose, so this "
             "would flail. Re-buy the animation against this character's rig."
         )
-    return action
+    return action, source_height
 
 
 def parent_to_pivot() -> bpy.types.Object:
@@ -610,8 +710,10 @@ def load_animations(entries: list[str], character: Character) -> list[Animation]
         name, _, path = entry.partition("=")
         if not path:
             sys.exit(f"error: --animation needs NAME=PATH, got {entry!r}")
-        action = take_action(Path(path), character.armature, name)
-        animations.append(Animation(action=action, name=name))
+        action, source_height = take_action(Path(path), character.armature, name)
+        animations.append(
+            Animation(action=action, name=name, source_height=source_height)
+        )
     return animations
 
 
@@ -639,8 +741,9 @@ def main() -> None:
     if missing:
         sys.exit(f"error: no --fps given for {', '.join(missing)}")
 
-    # Fix-ups must run after the actions are in, since both edit F-curves.
+    # Fix-ups must run after the actions are in, since they edit F-curves.
     apply_forearm_roll(character.armature, settings.forearm_roll)
+    size_to_character(character, animations)
     if not args.keep_root_motion:
         strip_root_motion(character.armature)
 

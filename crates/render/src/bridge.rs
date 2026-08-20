@@ -7,6 +7,11 @@
 //! what to draw each frame. Both are pure, so this file keeps only property
 //! writes and node lifecycle. That is also why no test reaches it.
 //!
+//! The cursor sample measures against the middle of the viewport, so it is
+//! correct only while the camera stays pinned to the survivor, which is what
+//! `follow_player` below does. A camera offset, deadzone or lead would have to
+//! be subtracted in `sample_cursor` too.
+//!
 //! Each entity gets one `Sprite2D` with `centered = false`. Its `offset` is the
 //! frame's own offset minus the animation's anchor, which puts the node origin
 //! on the feet. The transform point and the y-sort key are then the same point.
@@ -132,6 +137,10 @@ impl INode for GameBridge {
     }
 
     fn process(&mut self, _delta: f64) {
+        // Sampled before the handle is borrowed: `sample_cursor` needs `&self`.
+        let aim = iso::screen_dir_to_tile(self.sample_cursor());
+        let held = iso::screen_dir_to_tile(held_direction(self.focused));
+
         let Some(sim) = self.sim.as_mut() else {
             return;
         };
@@ -146,8 +155,7 @@ impl INode for GameBridge {
 
         // Once per frame, before `read` borrows the handle. The simulation
         // reads it once per tick, so speed never tracks frame rate.
-        let held = iso::screen_dir_to_tile(held_direction(self.focused));
-        sim.set_input(Input::new(held));
+        sim.set_input(Input::new(held).aiming(aim));
 
         // Copy the snapshot out first: the methods below need all of `self`,
         // and a `Frame` keeps the handle borrowed.
@@ -204,6 +212,25 @@ impl INode for GameBridge {
 }
 
 impl GameBridge {
+    /// Where the cursor sits relative to the survivor, in screen pixels, or
+    /// zero when nothing points anywhere.
+    ///
+    /// The camera pins him to the middle of the viewport, so nothing has to be
+    /// passed in. [`draw::cursor_offset`] does the measuring; this only reaches
+    /// into the viewport for it.
+    fn sample_cursor(&self) -> Vector2 {
+        if !self.focused {
+            return Vector2::ZERO;
+        }
+        let Some(viewport) = self.base().get_viewport() else {
+            return Vector2::ZERO;
+        };
+        draw::cursor_offset(
+            viewport.get_mouse_position(),
+            viewport.get_visible_rect().size,
+        )
+    }
+
     /// Reads the tuning tables, or reports why the world cannot start.
     fn load_rules(&self) -> Option<worldgen::WorldRules> {
         let read = |name: &str| {
@@ -295,36 +322,45 @@ impl GameBridge {
 
     /// Loads the manifest and one atlas texture per clip, all or nothing.
     ///
-    /// A missing or invalid file is reported once and then draws nothing. The
-    /// simulation runs on, the same way it does when the sim thread dies.
+    /// An unusable manifest or texture is reported once and then draws nothing.
+    /// The simulation runs on, the same way it does when the sim thread dies.
     fn load_survivor(&mut self) {
-        let manifest = format!("{CHARACTER_DIR}/character.ron");
+        if let Some((assets, textures)) = Self::load_character(CHARACTER_DIR) {
+            self.assets = Some(assets);
+            self.textures = textures;
+        }
+    }
+
+    /// One texture per clip the manifest has. A clip it does not have is only a
+    /// warning, because the bake has not produced every one of them yet.
+    fn load_character(dir: &str) -> Option<(CharacterAssets, HashMap<Clip, Gd<Texture2D>>)> {
+        let manifest = format!("{dir}/character.ron");
         let assets = match sprites::parse(&FileAccess::get_file_as_string(&manifest).to_string()) {
             Ok(assets) => assets,
             Err(error) => {
                 godot_error!("[marrowfall] {manifest}: {error}");
-                return;
+                return None;
             }
         };
 
         let mut textures = HashMap::new();
         for clip in Clip::ALL {
             let Some(atlas) = assets.animations.get(clip.name()) else {
-                godot_error!("[marrowfall] {manifest} has no {} animation", clip.name());
-                return;
+                // A clip the bake has not produced yet, which is where the
+                // strafe pair stands today. `Clip::with_art` finds a stand-in.
+                godot_warn!("[marrowfall] {manifest} has no {} animation", clip.name());
+                continue;
             };
-            let path = format!("{CHARACTER_DIR}/{}", atlas.file);
+            let path = format!("{dir}/{}", atlas.file);
             match try_load::<Texture2D>(&path) {
                 Ok(texture) => textures.insert(clip, texture),
                 Err(error) => {
                     godot_error!("[marrowfall] {path}: {error}");
-                    return;
+                    return None;
                 }
             };
         }
-
-        self.textures = textures;
-        self.assets = Some(assets);
+        Some((assets, textures))
     }
 
     /// Creates, moves and frees one `Sprite2D` per entity in the snapshot.
@@ -332,6 +368,7 @@ impl GameBridge {
         let Some(assets) = self.assets.as_ref() else {
             return;
         };
+        let textures = &self.textures;
 
         let changes = draw::reconcile(&snapshot.entities, self.sprites.keys().copied());
         for id in changes.removed {
@@ -362,17 +399,27 @@ impl GameBridge {
 
             // A missing clip, row or frame leaves the sprite as it is, which is
             // the only sane answer mid-clip.
-            let clip = Clip::for_locomotion(view.locomotion);
+            let wanted = Clip::for_locomotion(view.locomotion);
+            let Some(clip) = wanted.with_art(|clip| textures.contains_key(&clip)) else {
+                continue;
+            };
             let Some(atlas) = assets.animations.get(clip.name()) else {
                 continue;
             };
-            let Some(texture) = self.textures.get(&clip) else {
+            let Some(texture) = textures.get(&clip) else {
                 continue;
             };
-            let Some(row) = sprites::row_for(atlas, view.facing.name()) else {
+            let Some(row) = draw::row_for_aim(atlas, view.aim) else {
                 continue;
             };
-            let Some(rect) = sprites::frame(atlas, row, sprites::frame_at(atlas, seconds)) else {
+            // Every stride shares one cycle, so switching between them does not
+            // hitch the legs. `idle` plays at its own authored rate.
+            let frame = if clip.is_locomotion() {
+                draw::locomotion_frame(atlas, seconds)
+            } else {
+                sprites::frame_at(atlas, seconds)
+            };
+            let Some(rect) = sprites::frame(atlas, row, frame) else {
                 continue;
             };
 

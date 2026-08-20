@@ -115,9 +115,9 @@ fn the_committed_survivor_manifest_is_valid() {
     assert_eq!(assets.name, "survivor");
 
     let expected = [
-        ("idle", 15, 8, (94, 240), (47, 239)),
-        ("run", 20, 24, (238, 260), (119, 241)),
-        ("walk_back", 18, 20, (170, 254), (85, 236)),
+        ("idle", 15, 8, (93, 240), (47, 239)),
+        ("run", 20, 24, (237, 259), (119, 241)),
+        ("walk_back", 18, 20, (169, 254), (85, 236)),
     ];
     assert_eq!(assets.animations.len(), expected.len());
 
@@ -128,32 +128,23 @@ fn the_committed_survivor_manifest_is_valid() {
         assert_eq!((atlas.cell_width, atlas.cell_height), cell);
         assert_eq!((atlas.anchor.x, atlas.anchor.y), anchor);
         assert!(atlas.loops, "{name} should loop");
-        assert_eq!(atlas.rects.len(), 8 * frames as usize);
+        assert_eq!(atlas.rects.len(), 16 * frames as usize);
     }
 }
 
-/// Rows follow the bake's clockwise ring. `Facing`'s variant order no longer
-/// matches row position, so the lookup goes through the name. Pinned against
-/// the shipped manifest: a mirrored ring leaves south and north correct, and
-/// only shows up when a character walks sideways.
+/// Rows follow the bake's clockwise ring, and the renderer quantises a
+/// direction straight onto that order. Pinned against the shipped manifest: a
+/// mirrored ring leaves south and north correct, so it only shows up when a
+/// character walks sideways.
 #[test]
 fn the_survivors_atlas_rows_run_clockwise_from_south() {
-    let atlas = atlas_of(SURVIVOR, "run");
-    for (row, direction) in ["s", "sw", "w", "nw", "n", "ne", "e", "se"]
-        .into_iter()
-        .enumerate()
-    {
-        assert_eq!(sprites::row_for(&atlas, direction), Some(row));
-    }
-}
-
-/// How a four-direction atlas answers "se". The caller then leaves the sprite
-/// on the frame it had, instead of guessing a row.
-#[test]
-fn a_direction_the_atlas_lacks_has_no_row() {
-    let atlas = only_atlas(VALID);
-    assert_eq!(sprites::row_for(&atlas, "se"), None);
-    assert_eq!(sprites::row_for(&atlas, ""), None);
+    assert_eq!(
+        atlas_of(SURVIVOR, "run").directions,
+        [
+            "s", "ssw", "sw", "wsw", "w", "wnw", "nw", "nnw", "n", "nne", "ne", "ene", "e", "ese",
+            "se", "sse",
+        ]
+    );
 }
 
 #[test]

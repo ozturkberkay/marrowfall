@@ -13,9 +13,11 @@ clap.workspace = true
 image.workspace = true
 reqwest.workspace = true
 ron.workspace = true
+rusty-leveldb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sprites.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 
 [lints]
@@ -35,6 +37,5 @@ path = "tests/unit/mod.rs"
 
 [dev-dependencies]
 image.workspace = true
-tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
 wiremock = "0.6.5"

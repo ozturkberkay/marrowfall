@@ -13,10 +13,11 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 - Built as a headless, engine-agnostic, deterministic Rust simulation with
   Godot as a thin rendering/input frontend.
 - The sim runs on a **dedicated thread** owned by `crates/host`.
-- Three transports cross that boundary: a crossbeam channel carries commands in
-  (every message must arrive), and two latest-wins triple buffers carry held
-  input in and snapshots out (only the newest of either is ever wanted). The
-  input buffer is what keeps walking speed independent of frame rate.
+- Four transports cross that boundary. Two latest-wins triple buffers carry
+  held input in and snapshots out, because only the newest of either is ever
+  wanted, and the input buffer is what keeps walking speed independent of frame
+  rate. Two crossbeam channels carry commands in and generated chunks out, where
+  every message must arrive: a dropped chunk is a permanent hole in the map.
 
 ### Monorepo Layout
 
@@ -31,7 +32,7 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 │   ├── xtask-art/            # The character art pipeline
 │   └── xtask-world/          # World preview tool
 ├── project/                  # Godot project, including `data/` tuning tables
-├── art/                      # Concepts, sprites, animations, branding
+├── art/                      # Concepts, sprites, animations, skeletons, branding
 ├── scripts/                  # Shell scripts and git hooks
 ├── docs/                     # Design docs, blog posts etc.
 └── Cargo.toml                # Rust workspace root
@@ -54,8 +55,9 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
     godot --path project
     ```
 
-    WASD moves the survivor. The keys are bound by physical location, so they
-    stay in the same place on a non-QWERTY layout.
+    WASD moves the survivor relative to the screen, and the mouse points him,
+    so he can back away from something while still facing it. The keys are bound
+    by physical location, so they stay in the same place on a non-QWERTY layout.
 
 ### Testing
 

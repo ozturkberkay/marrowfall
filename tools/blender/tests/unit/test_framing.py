@@ -14,10 +14,14 @@ from framing import (
     FRAMING_MARGIN,
     KEY_LIGHT_AZIMUTH_DEG,
     KEY_LIGHT_ELEVATION_DEG,
+    LOOP_TOLERANCE_DEG,
     BakeSettings,
     Bounds,
     Framing,
+    SkeletonRoles,
     Vec3,
+    Vec4,
+    bare_bone_name,
     bind_pose_mismatch,
     bone_direction_angle,
     bone_from_data_path,
@@ -26,8 +30,13 @@ from framing import (
     frame_filename,
     is_forearm,
     key_light_rotation,
+    loop_mismatch,
     missing_bones,
+    rest_height,
+    rotation_angle,
     sampled_frames,
+    translation_scale,
+    unfilled_roles,
 )
 from pydantic import ValidationError
 
@@ -40,14 +49,14 @@ def a_framing(lo_z: float = 0.0, hi_z: float = 1.7, radius: float = 0.5) -> Fram
 # --- BakeSettings ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("directions", [4, 8])
+@pytest.mark.parametrize("directions", [4, 8, 16, 32])
 def test_accepts_the_known_direction_rings(directions: int) -> None:
     settings = BakeSettings(directions=directions)
     assert settings.direction_names == DIRECTION_NAMES[directions]
     assert len(settings.direction_names) == directions
 
 
-@pytest.mark.parametrize("directions", [0, 1, 3, 5, 6, 12, 16])
+@pytest.mark.parametrize("directions", [0, 1, 3, 5, 6, 12, 64])
 def test_rejects_unknown_direction_rings(directions: int) -> None:
     with pytest.raises(ValidationError, match="directions must be one of"):
         BakeSettings(directions=directions)
@@ -89,8 +98,17 @@ def test_settings_are_frozen_and_reject_unknown_fields() -> None:
 
 
 def test_first_direction_faces_the_camera() -> None:
-    for names in DIRECTION_NAMES.values():
-        assert names[0] == "s", "direction 0 must face the camera"
+    """Past sixteen the compass runs out of names, so that ring is numbered from
+    the same stop."""
+    for count, names in DIRECTION_NAMES.items():
+        first = "00" if count > 16 else "s"
+        assert names[0] == first, f"direction 0 of the {count} ring faces the camera"
+
+
+def test_the_numbered_ring_counts_round_from_that_stop() -> None:
+    """Index and name have to agree, because there is no compass left to notice
+    a row landing in the wrong place."""
+    assert DIRECTION_NAMES[32] == [f"{index:02d}" for index in range(32)]
 
 
 # --- Bounds ---------------------------------------------------------------
@@ -200,7 +218,7 @@ def test_key_light_comes_from_screen_upper_left() -> None:
     assert rot_z == pytest.approx(math.radians(KEY_LIGHT_AZIMUTH_DEG))
 
 
-@pytest.mark.parametrize("count", [4, 8])
+@pytest.mark.parametrize("count", [4, 8, 16, 32])
 def test_direction_rotation_walks_a_full_turn_clockwise(count: int) -> None:
     angles = [direction_rotation(i, count) for i in range(count)]
     assert angles[0] == 0.0, "direction 0 is unrotated"
@@ -208,7 +226,28 @@ def test_direction_rotation_walks_a_full_turn_clockwise(count: int) -> None:
     assert angles[-1] == pytest.approx(-2.0 * math.pi * (count - 1) / count)
 
 
-@pytest.mark.parametrize("count", [4, 8])
+# Compass bearing of every name the 4, 8 and 16 rings use, clockwise from north.
+BEARINGS = {
+    "n": 0.0,
+    "nne": 22.5,
+    "ne": 45.0,
+    "ene": 67.5,
+    "e": 90.0,
+    "ese": 112.5,
+    "se": 135.0,
+    "sse": 157.5,
+    "s": 180.0,
+    "ssw": 202.5,
+    "sw": 225.0,
+    "wsw": 247.5,
+    "w": 270.0,
+    "wnw": 292.5,
+    "nw": 315.0,
+    "nnw": 337.5,
+}
+
+
+@pytest.mark.parametrize("count", [4, 8, 16])
 def test_direction_names_follow_the_way_the_model_turns(count: int) -> None:
     """The ring's names must agree with `direction_rotation`'s sign.
 
@@ -218,24 +257,14 @@ def test_direction_names_follow_the_way_the_model_turns(count: int) -> None:
     and north looking correct. So nothing looks wrong until a character walks
     sideways.
     """
-    bearings = {
-        "n": 0.0,
-        "ne": 45.0,
-        "e": 90.0,
-        "se": 135.0,
-        "s": 180.0,
-        "sw": 225.0,
-        "w": 270.0,
-        "nw": 315.0,
-    }
     for index, name in enumerate(DIRECTION_NAMES[count]):
         turned = (180.0 - math.degrees(direction_rotation(index, count))) % 360.0
-        assert bearings[name] == pytest.approx(turned), (
+        assert BEARINGS[name] == pytest.approx(turned), (
             f"index {index} is named {name!r} but the bake turns it to {turned} deg"
         )
 
 
-@pytest.mark.parametrize("count", [4, 8])
+@pytest.mark.parametrize("count", [4, 8, 16, 32])
 def test_direction_zero_is_unrotated(count: int) -> None:
     """Index 0 is the character as exported, which faces the camera. Adding an
     offset here once turned every sprite around."""
@@ -423,3 +452,213 @@ def test_bones_absent_from_either_rig_are_ignored() -> None:
 
 def test_the_tolerance_is_wide_enough_for_noise_and_narrow_enough_for_a_pose() -> None:
     assert 5.0 < BIND_POSE_TOLERANCE_DEG < 60.0
+
+
+# --- Rig proportions ------------------------------------------------------
+
+
+def test_rest_height_is_the_vertical_span_of_the_rest_bones() -> None:
+    points = [(0.0, 0.0, 0.03), (0.5, -0.2, 1.7), (-0.5, 0.2, 0.9)]
+    assert rest_height(points) == pytest.approx(1.67)
+
+
+def test_rest_height_ignores_width_and_depth() -> None:
+    """A wide stance is not a tall character."""
+    assert rest_height([(-9.0, -9.0, 0.0), (9.0, 9.0, 1.0)]) == pytest.approx(1.0)
+
+
+def test_a_single_bone_rig_measures_as_no_height() -> None:
+    """`translation_scale` is what refuses it, with a message that says why."""
+    assert rest_height([(0.0, 0.0, 1.0)]) == 0.0
+
+
+def test_an_armature_with_no_bones_measures_as_no_height() -> None:
+    assert rest_height([]) == 0.0
+
+
+def test_a_clip_authored_on_this_body_is_left_alone() -> None:
+    assert translation_scale(1.7, 1.7) == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "expected"),
+    [(1.7, 0.85, 0.5), (0.85, 1.7, 2.0), (1.7, 2.04, 1.2)],
+)
+def test_a_clip_is_sized_by_the_ratio_of_the_two_rigs(
+    source: float, target: float, expected: float
+) -> None:
+    assert translation_scale(source, target) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("source", [0.0, -1.7, math.nan, math.inf])
+def test_an_unmeasurable_source_rig_is_refused(source: float) -> None:
+    with pytest.raises(ValueError, match="cannot size a clip"):
+        translation_scale(source, 1.7)
+
+
+def test_an_unmeasurable_character_is_refused() -> None:
+    with pytest.raises(ValueError, match="cannot size a clip"):
+        translation_scale(1.7, math.nan)
+
+
+@pytest.mark.parametrize("target", [0.1, 17.0])
+def test_a_ratio_that_could_only_be_the_wrong_rig_is_refused(target: float) -> None:
+    """Half to five times covers a child and a giant; past that is a bad file."""
+    with pytest.raises(ValueError, match="wrong rig"):
+        translation_scale(1.7, target)
+
+
+# --- Foreign bone names ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("mixamorig:LeftArm", "leftarm"),
+        ("Neck", "neck"),
+        ("neck", "neck"),
+        ("Spine02", "spine02"),
+    ],
+)
+def test_a_bone_name_loses_its_namespace_and_its_case(
+    source: str, expected: str
+) -> None:
+    assert bare_bone_name(source) == expected
+
+
+# `art/skeletons/humanoid.toml`, cut to the four roles that disagree.
+ROLES_TOML = """
+canonical = "meshy"
+
+[conventions.meshy]
+hips = "Hips"
+spine_lower = "Spine02"
+spine_upper = "Spine"
+neck = "neck"
+
+[conventions.mixamo]
+hips = "Hips"
+spine_lower = "Spine"
+spine_upper = "Spine2"
+neck = "Neck"
+"""
+
+
+def a_role_map() -> SkeletonRoles:
+    return SkeletonRoles.parse(ROLES_TOML)
+
+
+def test_a_role_map_reads_a_convention_per_provider() -> None:
+    roles = a_role_map()
+    assert roles.canonical == "meshy"
+    assert roles.convention("mixamo")["spine_lower"] == "Spine"
+
+
+def test_a_canonical_convention_that_is_not_declared_is_refused() -> None:
+    with pytest.raises(ValidationError, match="canonical convention 'meshy'"):
+        SkeletonRoles(canonical="meshy", conventions={"mixamo": {"hips": "Hips"}})
+
+
+def test_a_convention_that_leaves_a_role_out_is_refused_by_name() -> None:
+    with pytest.raises(ValidationError, match="mixamo.*neck"):
+        SkeletonRoles(
+            canonical="meshy",
+            conventions={
+                "meshy": {"hips": "Hips", "neck": "neck"},
+                "mixamo": {"hips": "Hips"},
+            },
+        )
+
+
+def test_a_convention_that_invents_a_role_is_refused_by_name() -> None:
+    with pytest.raises(ValidationError, match="mixamo.*tail"):
+        SkeletonRoles(
+            canonical="meshy",
+            conventions={
+                "meshy": {"hips": "Hips"},
+                "mixamo": {"hips": "Hips", "tail": "Tail"},
+            },
+        )
+
+
+def test_an_unknown_convention_names_the_ones_that_exist() -> None:
+    with pytest.raises(ValueError, match="unknown.*'meshy', 'mixamo'"):
+        a_role_map().convention("maya")
+
+
+def test_the_spine_is_matched_by_role_rather_than_by_name() -> None:
+    """Both rigs have a `Spine`, and it is not the same bone."""
+    mapped = a_role_map().bone_map("mixamo")
+    assert mapped["spine"] == "Spine02"
+    assert mapped["spine2"] == "Spine"
+
+
+def test_a_clip_on_the_canonical_rig_maps_every_bone_to_itself() -> None:
+    assert a_role_map().bone_map("meshy") == {
+        "hips": "Hips",
+        "spine02": "Spine02",
+        "spine": "Spine",
+        "neck": "neck",
+    }
+
+
+def test_a_source_that_fills_every_role_leaves_none_unfilled() -> None:
+    roles = a_role_map()
+    source = ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine2", "Neck"]
+    assert unfilled_roles(roles.convention("mixamo"), source) == []
+
+
+def test_a_source_missing_a_bone_names_the_role_it_leaves_undriven() -> None:
+    """What a clip labelled with the wrong convention looks like."""
+    roles = a_role_map()
+    mixamo_bones = ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine2", "Neck"]
+    assert unfilled_roles(roles.convention("meshy"), mixamo_bones) == ["spine_lower"]
+
+
+# --- Loop check -----------------------------------------------------------
+
+IDENTITY = (1.0, 0.0, 0.0, 0.0)
+QUARTER_TURN = (math.cos(math.radians(45.0)), 0.0, 0.0, math.sin(math.radians(45.0)))
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (IDENTITY, IDENTITY, 0.0),
+        (IDENTITY, QUARTER_TURN, 90.0),
+        # q and -q are the same rotation; a naive dot product reports 360.
+        (IDENTITY, (-1.0, 0.0, 0.0, 0.0), 0.0),
+        ((0.0, 0.0, 0.0, 0.0), IDENTITY, 0.0),
+    ],
+)
+def test_rotation_angle(a: Vec4, b: Vec4, expected: float) -> None:
+    assert rotation_angle(a, b) == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_whole_cycle_reports_nothing() -> None:
+    pose = {"Hips": IDENTITY, "LeftArm": QUARTER_TURN}
+    assert loop_mismatch(pose, pose) == []
+
+
+def test_a_clip_that_does_not_return_to_its_start_names_the_worst_bones() -> None:
+    """The fault the current walk_back has: it hitches once a loop."""
+    off = loop_mismatch(
+        {"Hips": IDENTITY, "LeftArm": IDENTITY},
+        {"Hips": QUARTER_TURN, "LeftArm": IDENTITY},
+    )
+    assert [name for name, _ in off] == ["Hips"]
+    assert off[0][1] == pytest.approx(90.0)
+
+
+def test_a_gait_that_drifts_a_degree_is_close_enough_to_loop() -> None:
+    barely = (math.cos(math.radians(0.5)), 0.0, 0.0, math.sin(math.radians(0.5)))
+    assert loop_mismatch({"Hips": IDENTITY}, {"Hips": barely}) == []
+
+
+def test_bones_missing_from_either_pose_are_ignored() -> None:
+    assert loop_mismatch({"Hips": QUARTER_TURN}, {"Spine": IDENTITY}) == []
+
+
+def test_the_loop_tolerance_is_tighter_than_the_bind_pose_one() -> None:
+    """A gait either closes or it does not; a rest pose only has to be close."""
+    assert 0.0 < LOOP_TOLERANCE_DEG < BIND_POSE_TOLERANCE_DEG

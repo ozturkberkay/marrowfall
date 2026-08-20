@@ -24,19 +24,29 @@
 //! full because they are cosmetic. A fact belongs here only if a frontend
 //! could still see it two snapshots later.
 
-use crate::WorldVec;
 use crate::components::Facing;
+use crate::{Vec2, WorldVec};
 
-/// What a character does. Simulation state, not a clip filename, so it is still
-/// correct at a wall: a held key there produces no motion, and a frontend that
-/// reads displacement shows idle.
+/// What a character does, and which way it travels against where it points.
 ///
-/// Two variants, because two exist. Dodge, stagger and airborne extend this.
-/// The first state that a velocity cannot answer turns this into a component.
+/// Simulation state, not a clip filename, so it is still correct at a wall: a
+/// held key there produces no motion, and a frontend that reads displacement
+/// shows idle.
+///
+/// Five variants, because five exist. Dodge, stagger and airborne extend this.
+/// The first state that a velocity and an aim cannot answer between them turns
+/// this into a component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Locomotion {
     Idle,
-    Running,
+    /// Travelling the way it points, give or take 45 degrees.
+    Forward,
+    /// Travelling away from where it points, which costs speed.
+    Backward,
+    /// Travelling sideways, to its own left.
+    StrafeLeft,
+    /// Travelling sideways, to its own right.
+    StrafeRight,
 }
 
 /// One drawable entity.
@@ -54,6 +64,12 @@ pub struct EntityView {
     pub facing: Facing,
     /// What it does. Which clip that picks is the frontend's decision.
     pub locomotion: Locomotion,
+    /// Where it points, unit length and unsnapped.
+    ///
+    /// [`Self::facing`] is this rounded to eight, which is all a sprite row
+    /// needs. Anything that must be accurate, an attack above all, reads this
+    /// instead, so a coarse atlas never costs the player a shot.
+    pub aim: Vec2,
     /// The height of the ground it stands on, in whole steps.
     ///
     /// Here rather than derived by the frontend, because the frontend may not

@@ -1,7 +1,7 @@
 //! ECS components: plain data only. Systems live with the code that runs
 //! them, not here.
 
-use crate::WorldVec;
+use crate::{Vec2, WorldVec};
 
 /// Where an entity is, in tile units (1.0 = one tile edge), and where it was
 /// when the current tick began.
@@ -40,6 +40,11 @@ impl Position {
 /// skipped by integration and drawn where they stand.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Velocity(pub WorldVec);
+
+/// Where an entity points, unit length, or zero when nothing asks. Only the
+/// player has one today.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Aim(pub Vec2);
 
 /// Marks the entity that held input drives.
 ///
@@ -99,9 +104,12 @@ impl Facing {
     /// leaves the caller's existing facing alone.
     ///
     /// Quantised in tile space, where all eight sectors are equal 45 degree
-    /// wedges. On screen they are not, so a frontend must never quantise a
-    /// screen angle. Comparisons only, so the result is bit-identical
-    /// everywhere.
+    /// wedges. On screen the 2:1 diamond squashes them into 23.4 degrees around
+    /// straight left and right and 79.3 around straight up and down, so a
+    /// frontend must never quantise a screen angle. The asymmetry is the
+    /// projection and not a defect: gameplay happens in the world.
+    ///
+    /// Comparisons only, so the result is bit-identical everywhere.
     pub(crate) fn from_direction(direction: WorldVec) -> Option<Self> {
         if direction == WorldVec::ZERO {
             return None;
@@ -111,21 +119,19 @@ impl Facing {
         Some(BY_SIGN[((y + 1) * 3 + (x + 1)) as usize])
     }
 
-    /// The compass name the art pipeline gives this direction's atlas row.
-    ///
-    /// Here and not in a frontend, so these names are not spelled out a third
-    /// time. The pipeline's packer and its Blender bake already hold a copy.
+    /// This direction as a tile-space vector, unit length.
     #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::South => "s",
-            Self::SouthEast => "se",
-            Self::East => "e",
-            Self::NorthEast => "ne",
-            Self::North => "n",
-            Self::NorthWest => "nw",
-            Self::West => "w",
-            Self::SouthWest => "sw",
-        }
+    pub fn axis(self) -> Vec2 {
+        let raw = match self {
+            Self::South => Vec2::new(1.0, 1.0),
+            Self::SouthEast => Vec2::new(1.0, 0.0),
+            Self::East => Vec2::new(1.0, -1.0),
+            Self::NorthEast => Vec2::new(0.0, -1.0),
+            Self::North => Vec2::new(-1.0, -1.0),
+            Self::NorthWest => Vec2::new(-1.0, 0.0),
+            Self::West => Vec2::new(-1.0, 1.0),
+            Self::SouthWest => Vec2::new(0.0, 1.0),
+        };
+        raw.normalize()
     }
 }

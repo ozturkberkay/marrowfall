@@ -6,16 +6,25 @@
 //! free to re-run. That boundary is why tweaking a sprite setting never
 //! re-spends credits.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::library::AnimationLibrary;
+use crate::chrome;
+use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
+use crate::mixamo;
 use crate::spec::{CharacterSpec, CharacterType, Paths};
+
+/// Where a human logs in, and where the terminal points them.
+const MIXAMO_URL: &str = "https://www.mixamo.com/";
+
+/// How long to wait for that login before giving up and saying so.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo art", about = "Marrowfall character art pipeline")]
@@ -48,6 +57,17 @@ pub enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Fetch shared motion the library declares but has no file for.
+    ///
+    /// Separate from `run` because the library is global while a run is one
+    /// character, and because the first fetch needs a human to log in.
+    Fetch {
+        /// Defaults to every entry whose GLB is missing.
+        names: Vec<String>,
+        /// Fetch again even when the file is already there.
+        #[arg(long)]
+        force: bool,
+    },
     /// Show which stages are complete.
     Status {
         name: String,
@@ -74,6 +94,74 @@ pub enum Step {
     Skipped(Stage, &'static str),
     /// Would re-run a completed stage that costs money; needs confirmation.
     ConfirmSpend(Stage),
+}
+
+/// What `cargo art fetch` decided to do with one library entry, before
+/// anything is downloaded. Separate from execution so the decision is
+/// testable with no network and no browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchStep {
+    /// Download it, fit it to the canonical rig, and record it.
+    Fetch { name: String, product_id: String },
+    /// The file on disk is the one the lock recorded.
+    Cached(String),
+    /// Not this command's business: bought with a rig, or hand-authored.
+    Skipped(String, &'static str),
+    /// On disk, but not the file the lock recorded. Reported, never
+    /// overwritten: someone put it there on purpose.
+    Changed(String),
+}
+
+/// Decides what to do with every requested animation. Pure: no IO.
+///
+/// `on_disk` is the fingerprint of each animation GLB that exists, which is
+/// what tells a finished fetch apart from a file edited by hand.
+pub fn fetch_plan(
+    library: &AnimationLibrary,
+    lock: &LibraryLock,
+    names: &[String],
+    on_disk: &BTreeMap<String, String>,
+    force: bool,
+) -> Result<Vec<FetchStep>> {
+    let requested: Vec<&str> = if names.is_empty() {
+        library.animations.keys().map(String::as_str).collect()
+    } else {
+        names.iter().map(String::as_str).collect()
+    };
+
+    requested
+        .into_iter()
+        .map(|name| {
+            let product_id = match &library.get(name)?.source {
+                MotionSource::Meshy { .. } => {
+                    return Ok(FetchStep::Skipped(
+                        name.to_owned(),
+                        "arrives with the rig stage",
+                    ));
+                }
+                MotionSource::Authored => {
+                    return Ok(FetchStep::Skipped(
+                        name.to_owned(),
+                        "authored, committed with the art",
+                    ));
+                }
+                MotionSource::Mixamo { product_id } => product_id.clone(),
+            };
+            let fetch = FetchStep::Fetch {
+                name: name.to_owned(),
+                product_id,
+            };
+            if force {
+                return Ok(fetch);
+            }
+            let recorded = lock.fetched.get(name).map(|fetched| fetched.glb.as_str());
+            Ok(match on_disk.get(name) {
+                None => fetch,
+                Some(hash) if recorded == Some(hash.as_str()) => FetchStep::Cached(name.to_owned()),
+                Some(_) => FetchStep::Changed(name.to_owned()),
+            })
+        })
+        .collect()
 }
 
 /// Options affecting which stages run.
@@ -247,7 +335,9 @@ pub async fn run(
                 }
                 outcome?
             }
-            Stage::Download => crate::stages::download(&paths, root, &lock.tasks()).await?,
+            Stage::Download => {
+                crate::stages::download(&library, &paths, root, &lock.tasks()).await?
+            }
             Stage::Bake => crate::stages::bake(&spec, &library, &paths, root)?,
             Stage::Pack => crate::stages::pack(&spec, &library, &paths)?,
         };
@@ -325,6 +415,99 @@ pub async fn report_balance(provider: Provider) {
     {
         println!("  meshy balance: {balance} credits");
     }
+}
+
+/// Downloads the motion the library declares but does not have, fits each
+/// clip to the canonical rig, and records what it produced.
+pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
+    let library = AnimationLibrary::load(root)?;
+    let mut lock = LibraryLock::load(root)?;
+    let steps = fetch_plan(&library, &lock, names, &glb_digests(&library, root)?, force)?;
+
+    let mut wanted = Vec::new();
+    for step in steps {
+        match step {
+            FetchStep::Fetch { name, product_id } => wanted.push((name, product_id)),
+            FetchStep::Cached(name) => println!("{name}: already fetched"),
+            FetchStep::Skipped(name, why) => println!("{name}: skipped ({why})"),
+            FetchStep::Changed(name) => println!(
+                "{name}: the file on disk is not the one recorded, left alone (--force to replace)"
+            ),
+        }
+    }
+    if wanted.is_empty() {
+        println!("nothing to fetch");
+        return Ok(());
+    }
+
+    // Asked for only once something actually needs fetching, so a no-op run
+    // never opens a browser.
+    let token = mixamo_session()?;
+    let client = mixamo::Client::new()?;
+    // One at a time: Mixamo rate limits, and a clip takes seconds.
+    for (name, product_id) in wanted {
+        println!("{name}: fetching {product_id}…");
+        let animation = library.get(&name)?;
+        let fbx = client.motion_fbx(&product_id, &token).await?;
+
+        let download = AnimationLibrary::staged_download(root, &name);
+        std::fs::create_dir_all(download.parent().unwrap_or(root))
+            .with_context(|| format!("creating {}", download.display()))?;
+        std::fs::write(&download, &fbx)
+            .with_context(|| format!("writing {}", download.display()))?;
+        let glb = library.glb(root, &name);
+        crate::stages::retarget(&download, &glb, &name, animation, root)?;
+
+        let fitted = std::fs::read(&glb).with_context(|| {
+            format!(
+                "the retarget wrote no {}, so nothing was fetched",
+                glb.display()
+            )
+        })?;
+        lock.record(&name, animation.source.clone(), &fbx, &fitted);
+        lock.save(root)?;
+        println!("  → {}", glb.display());
+    }
+    Ok(())
+}
+
+/// Fingerprints of the animation GLBs already on disk.
+fn glb_digests(library: &AnimationLibrary, root: &Path) -> Result<BTreeMap<String, String>> {
+    let mut digests = BTreeMap::new();
+    for name in library.animations.keys() {
+        let glb = library.glb(root, name);
+        if glb.exists() {
+            let bytes =
+                std::fs::read(&glb).with_context(|| format!("reading {}", glb.display()))?;
+            digests.insert(name.clone(), crate::lock::digest(&bytes));
+        }
+    }
+    Ok(digests)
+}
+
+/// The Mixamo credential, asking the user to log in when there is none.
+fn mixamo_session() -> Result<chrome::Token> {
+    if let Some(token) = chrome::mixamo_token()? {
+        return Ok(token);
+    }
+    let profiles = chrome::profiles_dir()?;
+    println!("Mixamo needs a logged-in session, and there is none.");
+    println!("Log in at {MIXAMO_URL} in the Chrome window opening now; this carries on by itself.");
+    open_chrome(MIXAMO_URL)?;
+    chrome::wait_for_token(&profiles, LOGIN_TIMEOUT)
+}
+
+/// Opens a URL in Chrome, which is the browser the token is read from.
+fn open_chrome(url: &str) -> Result<()> {
+    let status = std::process::Command::new("open")
+        .args(["-a", "Google Chrome", url])
+        .status()
+        .context("running `open`, which is macOS only, as this pipeline is")?;
+    anyhow::ensure!(
+        status.success(),
+        "could not open Chrome. Open {url} yourself, log in, and run this again"
+    );
+    Ok(())
 }
 
 pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
@@ -451,6 +634,7 @@ where
             )
             .await
         }
+        Command::Fetch { names, force } => fetch(&root, &names, force).await,
         Command::Status { name, json } => status(&root, &name, json),
         Command::Check { name } => check(&root, name.as_deref()),
     }
