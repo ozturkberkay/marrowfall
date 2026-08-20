@@ -27,9 +27,11 @@ impl Shot {
     /// Pixels along one edge.
     #[must_use]
     pub fn side(self) -> u32 {
-        // At least one pixel, so a nonsense request produces a tiny image rather
-        // than a panic inside the image crate.
-        (2 * self.radius / self.step).max(1).unsigned_abs()
+        // i64 for the doubling: `radius` is user supplied, and `2 * i32::MAX`
+        // overflows. Clamped rather than wrapped, so a huge request is refused by
+        // the image crate's own size limit instead of silently becoming small.
+        let side = 2 * i64::from(self.radius) / i64::from(self.step);
+        side.clamp(1, i64::from(u32::MAX)) as u32
     }
 }
 

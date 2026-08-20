@@ -50,6 +50,18 @@ pub fn ground_to_screen(tile: WorldVec, height: i8, origin: Origin) -> Vector2 {
     )
 }
 
+/// Where a chunk's own layer node sits on screen.
+///
+/// A `TileMapLayer` holds chunk local cell coordinates, so the node itself
+/// carries the chunk's offset. One function for it, because the position is
+/// written twice, once when the chunk is painted and again whenever the origin
+/// rebases, and the two must not be able to disagree.
+#[must_use]
+pub fn chunk_to_screen(coord: worldgen::ChunkCoord, origin: Origin) -> Vector2 {
+    let tile = coord.origin();
+    tile_to_screen(WorldVec::new(f64::from(tile.x), f64::from(tile.y)), origin)
+}
+
 /// Undoes the projection for a *direction*, which is why `W` means up the
 /// screen. Zero in gives zero out.
 ///

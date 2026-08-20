@@ -20,9 +20,10 @@ use game::WorldVec;
 /// How many chunk widths the player may drift from the origin before it moves.
 ///
 /// Rebasing is not free: every node already drawn has to be repositioned, so a
-/// jittery origin would repaint the world constantly. One chunk of slack means
-/// walking a straight line rebases once per chunk crossed, and pacing back and
-/// forth across a border does not thrash.
+/// jittery origin would repaint the world constantly. The player can already sit
+/// a chunk from the origin's own corner, so the allowance is that plus this
+/// slack: at one chunk, drifting past two chunk widths rebases. Pacing back and
+/// forth across a chunk border cannot thrash.
 const SLACK_CHUNKS: f64 = 1.0;
 
 /// Tiles along one chunk edge, as the frontend sees it.

@@ -192,13 +192,29 @@ tier\tinner_tiles\tharder_stray\teasier_stray\tstray_pct
 
 #[test]
 fn tier_bands_must_ascend() {
+    // Band 0 stays at the origin, or the earlier "first band" check fires and
+    // this never reaches the rule it is about.
     let unsorted = "\
 tier\tinner_tiles\tharder_stray\teasier_stray\tstray_pct
-0\t5000\t0\t0\t0
-1\t2000\t1\t0\t8
+0\t0\t0\t0\t0
+1\t5000\t1\t0\t8
+2\t2000\t1\t1\t15
 ";
     let message = error(tables(WORLD, unsorted, MATERIALS, BIOMES));
-    assert!(message.contains("tiers.tsv"), "{message}");
+    assert!(message.contains("inner_tiles must ascend"), "{message}");
+}
+
+#[test]
+fn two_bands_cannot_start_at_the_same_distance() {
+    // Equal is as broken as descending: a distance would land in two bands and
+    // which one wins would depend on the scan order.
+    let tied = "\
+tier\tinner_tiles\tharder_stray\teasier_stray\tstray_pct
+0\t0\t0\t0\t0
+1\t2000\t1\t0\t8
+2\t2000\t1\t1\t15
+";
+    assert!(error(tables(WORLD, tied, MATERIALS, BIOMES)).contains("inner_tiles must ascend"));
 }
 
 #[test]
@@ -419,4 +435,108 @@ fn the_shipped_site_tables_parse() {
             rules.site_class(class).name
         );
     }
+}
+
+#[test]
+fn world_tsv_must_hold_exactly_one_row() {
+    let two = "region_pitch_tiles\tregion_jitter_pct\thome_bubble_tiles\n\
+               700\t60\t1000\n\
+               800\t50\t900\n";
+    assert!(
+        error(tables(two, TIERS, MATERIALS, BIOMES)).contains("exactly one row"),
+        "a second world row was accepted"
+    );
+}
+
+#[test]
+fn a_negative_home_bubble_is_rejected() {
+    let text = "region_pitch_tiles\tregion_jitter_pct\thome_bubble_tiles\n700\t60\t-1\n";
+    assert!(error(tables(text, TIERS, MATERIALS, BIOMES)).contains("home_bubble_tiles"));
+}
+
+#[test]
+fn a_flag_column_that_is_not_zero_or_one_is_rejected() {
+    // The columns are read as booleans, so a 2 is a typo rather than a stronger
+    // wall, and reading it as `true` would hide the mistake.
+    let text = "material\tblocks_walk\tblocks_jump\tblocks_shot\nstone\t0\t2\t0\n";
+    assert!(error(tables(WORLD, TIERS, text, BIOMES)).contains("flag columns are 0 or 1"));
+}
+
+#[test]
+fn two_biomes_cannot_share_a_name() {
+    let text = "\
+biome\ttier\tweight\tground\theight_amp\theight_period
+ashen_lowland\t0\t10\tdead_grass\t3\t140
+ashen_lowland\t1\t10\tdead_grass\t4\t120
+ashen_lowland\t2\t10\tstone\t7\t560
+";
+    assert!(error(tables(WORLD, TIERS, MATERIALS, text)).contains("duplicate biome"));
+}
+
+#[test]
+fn a_biome_cannot_point_at_a_tier_that_does_not_exist() {
+    let text = "\
+biome\ttier\tweight\tground\theight_amp\theight_period
+ashen_lowland\t0\t10\tdead_grass\t3\t140
+blackweald\t1\t10\tdead_grass\t4\t120
+scoured_rock\t9\t10\tstone\t7\t560
+";
+    assert!(
+        error(tables(WORLD, TIERS, MATERIALS, text)).contains("tier 9 has no row in tiers.tsv")
+    );
+}
+
+/// A table with `count` rows, built from `row` formatted with its index.
+fn many(header: &str, row: impl Fn(usize) -> String, count: usize) -> String {
+    let mut out = String::from(header);
+    out.push('\n');
+    for i in 0..count {
+        out.push_str(&row(i));
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn more_materials_than_an_id_can_hold_is_rejected() {
+    // A material id is a byte, so row 256 would be unreachable. Silently
+    // truncating would make a biome resolve its ground to the wrong material.
+    let text = many(
+        "material\tblocks_walk\tblocks_jump\tblocks_shot",
+        |i| format!("m{i}\t0\t0\t0"),
+        256,
+    );
+    assert!(error(tables(WORLD, TIERS, &text, BIOMES)).contains("at most 255 materials"));
+}
+
+#[test]
+fn more_site_classes_than_an_id_can_hold_is_rejected() {
+    let text = many(
+        "class\tspacing\tseparation\tfill_pct\tmin_from_spawn\ttier_lo\ttier_hi",
+        |i| format!("c{i}\t400\t240\t35\t0\t0\t2"),
+        256,
+    );
+    assert!(error(with_site_classes(&text)).contains("at most 255 site classes"));
+}
+
+#[test]
+fn more_biomes_than_an_id_can_hold_is_rejected() {
+    // Two bytes, so this needs a big table. Worth the moment it costs: the guard
+    // is the only thing standing between a wide table and a wrong world.
+    let text = many(
+        "biome\ttier\tweight\tground\theight_amp\theight_period",
+        |i| format!("b{i}\t0\t10\tdead_grass\t3\t240"),
+        65_536,
+    );
+    assert!(error(tables(WORLD, TIERS, MATERIALS, &text)).contains("at most 65535 biomes"));
+}
+
+#[test]
+fn more_sites_than_an_id_can_hold_is_rejected() {
+    let text = many(
+        "site\tclass\tweight\tfootprint",
+        |i| format!("s{i}\tcamp\t1\t3"),
+        65_536,
+    );
+    assert!(error(with_sites(&text)).contains("at most 65535 sites"));
 }

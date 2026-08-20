@@ -4,6 +4,7 @@ use game::{Vec2, WorldVec};
 use godot::builtin::Vector2;
 use render::iso;
 use render::origin::Origin;
+use worldgen::ChunkCoord;
 
 /// An origin on the world origin, so these assertions read as absolute pixels.
 fn home() -> Origin {
@@ -124,4 +125,40 @@ fn an_origin_sits_on_a_chunk_corner() {
         assert_eq!(at.x % chunk, 0.0, "{at} is not on a chunk corner");
         assert_eq!(at.y % chunk, 0.0, "{at} is not on a chunk corner");
     }
+}
+
+#[test]
+fn a_chunk_lands_where_its_own_origin_tile_lands() {
+    // The layer holds chunk local cells, so the node has to sit exactly where
+    // tile (0,0) of that chunk would be drawn.
+    let origin = Origin::default();
+    for coord in [
+        ChunkCoord::new(0, 0),
+        ChunkCoord::new(3, -2),
+        ChunkCoord::new(-7, 11),
+    ] {
+        let tile = coord.origin();
+        let expected =
+            iso::tile_to_screen(WorldVec::new(f64::from(tile.x), f64::from(tile.y)), origin);
+        assert_eq!(iso::chunk_to_screen(coord, origin), expected, "{coord:?}");
+    }
+}
+
+#[test]
+fn rebasing_shifts_every_chunk_by_the_same_amount() {
+    // What the rebase relies on: the origin moving changes all chunk positions by
+    // one common offset, so terrain and entities stay aligned with each other.
+    let before = Origin::default();
+    let mut after = Origin::default();
+    assert!(
+        after.follow(WorldVec::new(500.0, 500.0)),
+        "expected a rebase"
+    );
+
+    let shift = |c| iso::chunk_to_screen(c, after) - iso::chunk_to_screen(c, before);
+    let first = shift(ChunkCoord::new(0, 0));
+    for coord in [ChunkCoord::new(4, 1), ChunkCoord::new(-3, 6)] {
+        assert_eq!(shift(coord), first, "{coord:?} shifted differently");
+    }
+    assert_ne!(first, Vector2::ZERO, "the rebase moved nothing");
 }
