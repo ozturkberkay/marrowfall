@@ -6,6 +6,7 @@
 mod meshes;
 mod rigs;
 mod support;
+mod test_aim;
 mod test_bake_stage;
 mod test_blender;
 mod test_check;

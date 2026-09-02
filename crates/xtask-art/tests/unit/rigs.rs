@@ -168,9 +168,8 @@ impl SyntheticRig {
     }
 
     /// Collapses one bone's own axes, so it has no direction to measure.
-    pub fn without_scale(mut self, bone: &str) -> Self {
-        self.at(bone).local_extra = DMat4::from_scale(DVec3::ZERO);
-        self
+    pub fn without_scale(self, bone: &str) -> Self {
+        self.with_extra(bone, DMat4::from_scale(DVec3::ZERO))
     }
 
     /// Moves one joint, in meters, in glTF Y-up.
@@ -188,8 +187,28 @@ impl SyntheticRig {
 
     /// Moves one joint without letting its parent follow it, which is the
     /// only way a bone's own axis can end up off its child.
-    pub fn nudged(mut self, bone: &str, by: DVec3) -> Self {
-        self.at(bone).local_extra = DMat4::from_translation(by / OBJECT_SCALE);
+    pub fn nudged(self, bone: &str, by: DVec3) -> Self {
+        self.with_extra(bone, DMat4::from_translation(by / OBJECT_SCALE))
+    }
+
+    /// Turns one bone's own axes without moving any joint, which is the only
+    /// way a rest aim can be wrong while every joint position is right.
+    pub fn re_aimed(self, bone: &str, rotation: DQuat) -> Self {
+        self.with_extra(bone, DMat4::from_quat(rotation))
+    }
+
+    /// One bone's extra local transform. Every fixture that breaks a bone
+    /// from the inside goes through here, and one bone takes only one: a
+    /// second would replace the first and the fixture would say nothing
+    /// about the defect its name claims.
+    fn with_extra(mut self, bone: &str, extra: DMat4) -> Self {
+        let joint = self.at(bone);
+        assert_eq!(
+            joint.local_extra,
+            DMat4::IDENTITY,
+            "{bone} already carries a local transform of its own"
+        );
+        joint.local_extra = extra;
         self
     }
 

@@ -306,7 +306,7 @@ The ten requirements from the decisions file are the specification.
 | 7 | Errors are typed values with a code and the offending bone | retarget_bvh returns FINISHED on failure |
 | 8 | Local matrices computed algebraically, no depsgraph update per bone per frame | 1,000 scene evaluations today |
 | 9 | Output keys are LINEAR with CONSTANT extrapolation, and no key at the reference frame | retarget_bvh leaves a T pose at frame 0 |
-| 10 | The bone map is read from `humanoid.toml` only, with `parents`, `optional`, `fingerprint` added | the prototype hardcodes a second copy |
+| 10 | The bone map is read from `humanoid.toml` only, with `retarget_chain`, `optional_roles` and `fingerprints` added | the prototype hardcodes a second copy |
 
 **How the reference pose is applied.** This step is the whole design, and
 getting it wrong makes every offset identity or, per fact 19, quietly wrong on
@@ -405,9 +405,9 @@ Spine = "Hips"
 [profile.tails]                       # the one child `child_axis` measures
 Hips = "Spine"
 
-[aim_table]                           # world direction per role, degrees XYZ
-hips = [ 90, 0, 0 ]
-left_arm = [ 0, 0, -90 ]
+[aim_table]                    # world direction per role, Blender Z-up
+hips = [ 0.0, 0.0, 1.0 ]       # facing -Y, so +X is his left
+left_arm = [ 1.0, 0.0, -1.0 ]  # a direction, so the reader normalizes it
 ```
 
 **Two hierarchy tables, for two different questions.** `parents` says where a
@@ -433,9 +433,14 @@ between the sides, measured against a limit of 1.0.
 
 | Field | What it does | Needed for |
 |---|---|---|
-| `parents` | retargeting hierarchy, decoupled from real parenting | a 3 spine source driving a 4 spine target |
-| `optional` | a role allowed to be missing | a source with no shoulder or no toes |
-| `fingerprint` | a bone that must exist for a convention to match | the **next** skeleton: after the rename our two tables are identical |
+| `[retarget_chain]` | retargeting hierarchy, by role, decoupled from real parenting | a 3 spine source driving a 4 spine target |
+| `optional_roles` | a role a source convention may leave out | a source with no shoulder or no toes |
+| `[fingerprints]` | a bone that must exist for a convention to match | the **next** skeleton: after the rename our two tables are identical |
+
+**`parents` means bones, and only bones.** T2 had already taken that word for
+`[profile.parents]`, our own rig's real hierarchy, so T4 ships the retargeting
+one as `[retarget_chain]`. It is keyed by role rather than by bone, and it is
+the chain the transfer walks, so neither word describes the other's table.
 
 **One height rule, not three.** `rig.world_height` measures the rig against
 `spec.subject.height_meters` with a 5 percent tolerance, so 1.6652 against 1.7
@@ -776,7 +781,8 @@ spec.ron
 
 ```text
 art/
-  skeletons/humanoid.toml   # roles + parents / optional / fingerprint
+  skeletons/humanoid.toml   # roles + [retarget_chain] / optional_roles
+                            #       + [fingerprints]
                             #       + NEW [profile]   every published limit
                             #       + NEW [aim_table] world aim per role
   animations/library.ron    # + NEW source_fps and travels per animation
@@ -792,6 +798,7 @@ crates/xtask-art/src/check/
   mod.rs                    # Finding, Severity, comparison, attempt, runner
   gltf_world.rs             # world transforms from the glTF node graph
   rig.rs                    # rig and object conformance, from [profile]
+  aim.rs                    # NEW  [aim_table], and rig.aim_table
   gltf_mesh.rs              # NEW  the surface: world, then weld
   mesh.rs                   # NEW  the mesh rules, from [profile]
   clip.rs                   # NEW  swing, twist, fps grid, object transform
@@ -818,6 +825,7 @@ tools/gltf_validator/
   validate.mjs              # NEW  drives the npm validator, which has no CLI
 
 tools/blender/src/
+  skeleton.py               # NEW  the skeleton file: roles, chain, aim table
   transfer.py               # NEW  pure maths: matrices in and out, no bpy
   plant.py                  # NEW  pure maths: contact detection, 2 bone IK
   findings.py               # NEW  the shared Finding record and JSON writer
@@ -878,7 +886,8 @@ only by the deliberate operation in `art/skeletons/README.md`.
 ## Interfaces
 
 **One file per skeleton** holds `[profile]`, `[aim_table]` and the role
-tables. `check/rig.rs` reads `[profile]`, `transfer.py` reads `[aim_table]`,
+tables. `check/rig.rs` reads `[profile]`, `transfer.py` and `check/aim.rs`
+both read `[aim_table]`,
 and **every published limit in this design lives in `[profile]`**, including
 the `clip.*` and `bake.*` ones. Adding a skeleton means adding a file.
 
@@ -888,7 +897,18 @@ confidently wrong clip. Three rules: every role in the convention table has a
 row, and a missing row is an error rather than a fallback to the source's rest
 pose. Mirror rows are exact reflections across the mirror plane. Each
 prescribed aim sits within `max_bind_deviation_degrees` of **both** rigs' own
-rest aim, so a table that describes neither rig fails to load.
+rest aim, so a table that describes neither rig cannot pass.
+
+**The first two are load-time refusals and the third is a gate**, because it
+needs a rig in hand. Both readers refuse the table they read: `skeleton.py`
+for the transfer and `check/aim.rs` for the gate. The third is
+`rig.aim_table`, in Rust, per rule four: it reads a rig's rest aim off the
+glTF node graph, which `check/gltf_world.rs` already owns, and it reports one
+finding per role. **A rig's own rest aim is its bone's own `child_axis` in
+world space**, which is the same direction the table prescribes and not the
+joint-to-child direction `rig.child_axis` measures. "Both rigs" is therefore
+one rule run twice: on ours at the rig stage, and on a source rig when its
+motion arrives.
 
 **Every gate returns the same record.** Rust emits it, Python emits it from
 inside Blender, and Rust parses it.
@@ -951,7 +971,7 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `rig.mirror_length`, `rig.mirror_direction` | 1.0 percent, 1.0 deg | le |
 | `rig.humerus_angle` | 15 deg from the target of 40 | le |
 | `rig.world_height` | 5 percent of `spec.subject.height_meters` | le |
-| `rig.bind_deviation` | 75 deg | le |
+| `rig.bind_deviation`, `rig.aim_table` | 75 deg | le |
 | `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
 | `mesh.non_manifold_post` | set by **T10**, the first task that produces `clean.glb` | le |
 | `mesh.cleanup_effective` | the pre-fixer count, over holes, islands and self-intersections only | **lt** |
@@ -1015,7 +1035,10 @@ per fact 15.
 - `mixamo.rs` as a client. Only the export request and the fps source change.
 - `library.rs`, `MotionSource`, `redistributable`, `LibraryLock`, `Fetched`.
 - `chrome.rs`, `strip_animation.py`, and the one-triangle skin carrier.
-- `SkeletonRoles` and role-based matching, which `[profile]` extends in place.
+- Role-based matching itself, which `[profile]` extends in place. **T4 moved
+  the reader**: `framing.SkeletonRoles` is now `skeleton.Skeleton`, in the
+  module that owns the whole skeleton file, and `framing.py` keeps the bake's
+  own geometry. The role tables did not change.
 - `framing.py::sampled_frames`, which already rounds to integers (fact 6).
 - The `sys.exit(1)` wrappers on every Blender script.
 - `scale_translation` and `translation_scale` as operations. Only the metric
@@ -1308,6 +1331,7 @@ it can honestly measure does fail. See the correction below.
 | `rig.facing` | the current rig already faces +Z in glTF, which is minus Y in Blender, 8.1 to 9.0 deg per foot | `[synth]` the rig yawed 180, and `[synth]` a foot pointing along the up axis, where the facing is undefined and reported as one | the bake camera's forward. Per foot, so one foot on backwards cannot average away |
 | `rig.up_axis` | `humanoid.glb`, 3.0 deg off Blender +Z | `[synth]` the same rig pitched 90 deg, which is the shape of an export with no axis conversion | `humanoid.glb`. The root chain end to end, named by the closest of six axes |
 | `rig.object_transform` | `humanoid.glb` and `model.glb`, whose bones carry a bind-pose action while the object carries none | `[synth]` a rig carrying an action on the object | both committed rigs read 0 channels above the skeleton |
+| `rig.aim_table` | `[synth]` a conformant rig, worst 33.7 deg, read in the `mixamo` convention it is named in | `[art]` the current rig, whose `Hips` axis points out of a hip socket. Measured: 97.8 deg against a band of 75, and every other role inside it. `[synth]` one bone's own axes turned 90 deg while every joint stays put, which no other rule can see | per role, both rigs' rest aims against the table: ours worst 34.9 deg (`right_hand`), a Mixamo FBX worst 45.01 (the arms), measured by hand on an uncommitted download, and `Head` 30.06, inside the band |
 | `rig.names_standard` | `[synth]` a conformant rig | `[art]` the current rig, which names `Spine01`, `Spine02` and `neck` | the Mixamo name list. This rule reports the names nothing can map, and `bone_set` reports the roles that are missing |
 | `gltf.validator` | every shipped GLB | `[synth]` a GLB with an injected NaN | the four committed GLBs |
 | `source.posture` | `strafe_left.fbx`, head 34 to 37 | none, `info` only | the three Mixamo clips |
@@ -1441,8 +1465,9 @@ wrong number, which is the failure this whole document exists to stop.
   time-reverses. Scale the source rig by 1.5 and **output bone lengths are
   identical**, the control for rotation-only keys. A consistently wrong
   transform cannot satisfy these, and a round trip can, so there is none here.
-- **Aim table validation:** a missing row, a broken mirror pair, and an aim
-  outside `max_bind_deviation_degrees` of either rig.
+- **Aim table validation:** a missing row, a row no convention maps, and a
+  broken mirror pair. The band check against a rig is Rust's, per rule four,
+  as `rig.aim_table`.
 - **Foot planting** in `plant.py`: a toe path with two known plant runs, a
   path with none, the same path at 8 and 30 fps giving the same runs, and the
   vote width odd and at least 3 at both rates.
@@ -1484,6 +1509,54 @@ error (`research_godot_ci_e2e_testing.md`). Loading only, never pixels.
 **Cross-reference to Out of Scope:** no test asserts color pixels, loads a
 quadruped profile, calls Meshy's paid repair, checks a concept arm angle,
 changes a sprite rate, or asserts a strict T-pose bind.
+
+### Corrections T4 made to this document
+
+1. **`parents` was two tables under one word.** T2 had already taken it for
+   `[profile.parents]`, our rig's real bone hierarchy. The retargeting one
+   ships as `[retarget_chain]`, keyed by role, and `optional` and
+   `fingerprint` ship as `optional_roles` and `[fingerprints]`, which is what
+   TOML lets a list and a per-convention table be.
+2. **An aim row is a direction, not three euler degrees.** The sketch read
+   `hips = [ 90, 0, 0 ]` with the comment "degrees XYZ", while the
+   Terminology calls the table a world direction. A mirror row has to be an
+   **exact** reflection, and mirroring a rotation is not negating one euler
+   component, so an euler triple cannot carry that check. The rows are
+   directions, the two readers normalize them, and every row stays whole
+   numbers: `hips = [0.0, 0.0, 1.0]`, `left_arm = [1.0, 0.0, -1.0]`.
+3. **The band check cannot be a load-time refusal, and it is not Python's.**
+   Loading a table has no rig in hand. Reading a rig's rest aim needs glTF
+   world transforms, which `check/gltf_world.rs` owns, so rule four puts it in
+   Rust as `rig.aim_table`, one finding per role, printed by `--list-rules`.
+   The two structural checks stay on both sides, because each side has to
+   refuse the table it reads: `skeleton.py` for the transfer, `check/aim.rs`
+   for the gate.
+4. **"Both rigs" is one rule run per rig.** Ours is measured at the rig stage.
+   A source rig is measured when its motion arrives, in the convention it is
+   named in, which is why the rule takes that convention as an argument.
+5. **A rest aim is the bone's own axis, not the direction to its child.** The
+   table prescribes where a bone points, and `rig.child_axis` already
+   measures the joint-to-child direction. Reading the same thing twice would
+   have made `rig.aim_table` a second copy of that rule, and it would have
+   left every hand and toe unmeasured, because a leaf has no child to point
+   at. Those are exactly the bones the code this replaces skipped.
+6. **The arms aim 45 degrees below horizontal, and that is measured.** The
+   aim has to sit inside `max_bind_deviation_degrees` of both rigs. A T-pose
+   table puts our hands 76.15 and 78.22 degrees out, past a band the profile
+   says is wide enough for an A-pose, and `test_aim.rs` pins those two numbers
+   so that widening the band for another rule cannot make a T-pose table
+   legal. At 45 degrees our rig is worst at 34.86 and a Mixamo rig at 45.01.
+   The one row left outside is our `Hips`, at 97.80 degrees, which is fact 1's
+   sideways hip axis and decision 11's negative control.
+7. **Every Mixamo figure here is a hand measurement, not a test.** They were
+   read off `art/staging/downloads/strafe_left.fbx` in Blender 5.2.1, and
+   `art/staging/` is gitignored, so no test can open that file and CI cannot
+   re-derive them. Our own rig's figures are all asserted in `test_aim.rs`
+   against the committed GLB. The source rig enters the suite when T6 commits
+   the CMU clip, and `rig.aim_table` is the rule that will measure it.
+8. **A four number row was accepted and its fourth number dropped.** Serde
+   read `[f64; 3]` out of a longer TOML array without a word. Both readers
+   now refuse any row that is not three numbers.
 
 ## Documentation Changes
 
@@ -1566,7 +1639,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T1b | Isolate vendors | 1 d | From the human's review. Move `openai.rs`, `meshy.rs`, `mixamo.rs` and `chrome.rs` under `providers/`, with `chrome.rs` becoming `mixamo/session.rs`. Vendor URLs, ids and keys live only in their own module; `cli.rs` imports them. Generic HTTP helpers (`retry_after`, the env backoff) move to `http.rs`. `stages.rs` and `cli.rs` are the only callers, and no new one is added. No new traits: `MotionSource` in `library.rs` is already the seam. | A unit test greps `src/` and fails on any vendor host, id or key outside `providers/`. Scoped to `src/` because a test keeps its own copy of a literal on purpose: `test_mixamo_session.rs` rebuilds the Local Storage key from the origin, and importing `SITE_URL` there would move both sides together and the test could no longer fail. Every existing test passes unchanged. `cargo doc` links resolve. | T1 |
 | T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`, `[profile.tails]` included. `check/gltf_world.rs`, `check/profile.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. A `Rule` registry in `check/mod.rs` that every finding is built through, so `--list-rules` cannot advertise a limit a rule does not use. `spec.name` refused at load time when it holds a dot. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig, on 22 subjects. Runs in CI with no Blender. `cargo art check` prints the itemized defect list. Every rule reports on good art too, at `info`, because a rule that goes quiet when it passes cannot be told from one that never ran, and `skipped` is added beside it so T10's switched-off rules are not the same word. | T1, T1b |
 | T3  | Mesh measurement in Rust, calibrated on the mesh in hand | 2 d | **First: get the mesh, take it to world, then weld.** `bare.glb` was not downloadable, so the calibration asset is `model.glb` and every limit is provisional. Report a merge histogram and pick the plateau. Then `check/gltf_mesh.rs` for the surface and `check/mesh.rs` for thirteen rules: holes, non-manifold, islands, self-intersections via `parry3d`'s `Bvh`, mirror distance, world size, facing, stray objects, budget, UV bounds, texture, primitive modes, and `print/analyze` mapped into the report. Write every limit into `[profile.mesh]`. | The weld distance is chosen from the histogram, not assumed. Every limit in `[profile.mesh]` is a real number with its headroom published. Every `mesh.*` row except `non_manifold_post` rejects its negative fixture in CI with no Blender. | T1, T2 |
-| T4  | Aim table and role map | 1.5 d | Add `parents`, `optional`, `fingerprint` and `[aim_table]`. Implement the three table validations and the skip-unmapped-ancestor parent walk. Checked against a synthetic fixture, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a broken mirror pair, and an out-of-band aim each fail to load. | T2 |
+| T4  | Aim table and role map | 1.5 d | Add `[retarget_chain]`, `optional_roles`, `[fingerprints]` and `[aim_table]`. `skeleton.py` reads the whole file for the transfer and `check/aim.rs` reads the table for the gate, so each side refuses what it reads. Implement the three table validations, the `rig.aim_table` rule, and the skip-unmapped-ancestor walk over the chain. Checked against a synthetic fixture and against both rigs, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a row no convention maps, and a broken mirror pair each fail to load, on both sides. An out-of-band aim is `rig.aim_table`, which `--list-rules` prints and which reports 22 subjects per rig. | T2 |
 | T5  | The transfer, the rename, and the refit | 3.5 d | `transfer.py` with no `bpy`: quaternion swing-twist aim application projecting the **vector part** per fact 19, `swing_singular` raised at 180 degrees, roleless bones skipped, separate `ref_world_*` dicts, algebraic local matrices, rotation-only keys for non-root bones, typed errors, LINEAR and CONSTANT, no reference-frame key. Delete `rebase_action`, `sole_children`, `align_to_world`, `bind_pose_mismatch`, `bone_directions` and the twelve self-referential tests. **Rename the committed `humanoid.glb` bones and refit `idle.glb` and `run.glb` in this PR**, because the rename invalidates them and this is the first task with the new retarget. | The three numeric known-answer tests pass: 10 deg twist to 10.00 and 0.00, 30 deg swing to 0.00 and 30.00, `Offset(LeftUpLeg)` about 174 and not identity. The 180 degree case raises `swing_singular`. A rig with `head_end` is skipped, not raised on. Requirements 1, 2, 7, 8, 9, 10 each have a passing test and a rejected negative. The 1.5x scale test gives identical output bone lengths. | T1, T4 |
 | T6  | Clip verifier: swing and twist | 1.5 d | `check/clip.rs`: `clip.swing` absolute against the vendor file, `clip.twist` as the change from each rig's own rest twist about its own +Y using the same vector-part split, both over every mapped bone, frames aligned by seconds. `clip.object_transform` as identity object matrices plus byte-matching rest bones. Commit one CMU BVH clip and **measure both limits from it**. Delete `verify_retarget.py` and `LIMB_CHAIN`. | Both limits are written into `[profile]` from a measurement, not assumed. The Rust split passes the same two numeric cases as the Python one. `clip.swing` rejects the shipped `strafe_left.glb` and stays quiet on `run.glb` and the CMU clip. `clip.twist` rejects the post-multiplied 90 deg twist, and `clip.swing` stays under its limit on that same fixture. A 180 degree swing reports an error, never a NaN. | T5 |
 | T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. No sprite rate changes. | T5 |

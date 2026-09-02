@@ -39,16 +39,14 @@ from bake_sprites import (
 )
 from findings import guard
 from framing import (
-    SkeletonRoles,
     Vec4,
-    bare_bone_name,
     bone_from_data_path,
     loop_mismatch,
     rest_height,
     translation_scale,
-    unfilled_roles,
 )
 from mathutils import Matrix, Quaternion
+from skeleton import Skeleton, bare_bone_name, unfilled_roles
 from strip_animation import skin_carrier
 
 
@@ -78,15 +76,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def skeleton_roles(rig: pathlib.Path) -> SkeletonRoles:
-    """The role map beside the rig, `humanoid.glb` -> `humanoid.toml`.
+def read_skeleton(rig: pathlib.Path) -> Skeleton:
+    """The skeleton file beside the rig, `humanoid.glb` -> `humanoid.toml`.
 
     Derived rather than passed, so the pair cannot be mismatched.
     """
     path = rig.with_suffix(".toml")
     if not path.exists():
         sys.exit(f"error: {path} not found, so nothing can be matched to {rig.name}")
-    return SkeletonRoles.parse(path.read_text())
+    return Skeleton.parse(path.read_text())
 
 
 def import_armature(path: pathlib.Path) -> bpy.types.Object:
@@ -280,7 +278,7 @@ def retarget(
     convention: str,
 ) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    roles = skeleton_roles(rig_path)
+    roles = read_skeleton(rig_path)
     canonical = import_armature(rig_path)
     keep_only(canonical)
 

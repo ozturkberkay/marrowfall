@@ -159,15 +159,16 @@ fn a_repo_with_a_rig(name: &str) -> tempfile::TempDir {
     dir
 }
 
-/// The committed rig breaks seven rules on twenty-two subjects, and the
-/// command says so rather than reporting the spec as fine.
+/// The committed rig breaks eight rules on twenty-three subjects, seven of
+/// them `rig.*` and one the aim table's `hips` row, and the command says so
+/// rather than reporting the spec as fine.
 #[test]
 fn check_itemizes_the_defects_of_the_rig_on_disk() {
     let dir = a_repo_with_a_rig("survivor");
 
     let error = check(dir.path(), None, false).unwrap_err().to_string();
 
-    assert!(error.contains("22 defect(s)"), "got: {error}");
+    assert!(error.contains("23 defect(s)"), "got: {error}");
 }
 
 /// The mesh gates run on the bare mesh, which is the mesh before rigging.
@@ -208,7 +209,7 @@ fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
     // measured and only the rig fails.
     let error = check(dir.path(), None, false).unwrap_err().to_string();
 
-    assert!(error.contains("22 defect(s)"), "got: {error}");
+    assert!(error.contains("23 defect(s)"), "got: {error}");
     assert!(
         !dir.path()
             .join("art/staging/reports/mesh.survivor.1.json")
