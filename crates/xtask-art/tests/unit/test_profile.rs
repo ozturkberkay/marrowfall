@@ -27,6 +27,15 @@ mirror_tolerance_degrees = 1.0
 max_bind_deviation_degrees = 75.0
 humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 
+[profile.mesh]
+holes = 200
+non_manifold_edges = 10
+islands = 8
+self_intersections = 1000
+mirror_percent = 3.5
+triangles = 300000
+printability_edges = 200
+
 [profile.parents]
 Tip = "Root"
 LeftFin = "Root"
@@ -78,6 +87,16 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.max_bind_deviation_degrees, 75.0);
     assert_eq!(profile.humerus_below_horizontal.target, 40.0);
     assert_eq!(profile.humerus_below_horizontal.tolerance, 15.0);
+    // Provisional, calibrated on the rigged `model.glb`, because `bare.glb`
+    // has never been downloaded. The measurement beside each is in the
+    // design's limits table and in `test_mesh.rs`.
+    assert_eq!(profile.mesh.holes, 200.0);
+    assert_eq!(profile.mesh.non_manifold_edges, 10.0);
+    assert_eq!(profile.mesh.islands, 8.0);
+    assert_eq!(profile.mesh.self_intersections, 1000.0);
+    assert_eq!(profile.mesh.mirror_percent, 3.5);
+    assert_eq!(profile.mesh.triangles, 300_000.0);
+    assert_eq!(profile.mesh.printability_edges, 200.0);
 }
 
 /// The names are Mixamo's and HumanIK's, spine numbered from the bottom, so
@@ -400,4 +419,37 @@ fn a_limit_that_is_not_a_positive_number_is_refused() {
         let error = refused(&[(band, &format!("humerus_below_horizontal = {broken}"))]);
         assert!(error.contains(field), "{field}: {error}");
     }
+}
+
+/// The mesh ceilings go the same way. Zero islands or zero triangles
+/// describes no mesh that can exist, so a zero is refused rather than left
+/// to make every mesh rule fail on every asset.
+#[test]
+fn a_mesh_ceiling_that_is_not_a_positive_number_is_refused() {
+    for (field, declared) in [
+        ("holes", "200"),
+        ("non_manifold_edges", "10"),
+        ("islands", "8"),
+        ("self_intersections", "1000"),
+        ("mirror_percent", "3.5"),
+        ("triangles", "300000"),
+        ("printability_edges", "200"),
+    ] {
+        for value in ["0.0", "-1.0", "nan"] {
+            let error = refused(&[(
+                &format!("{field} = {declared}"),
+                &format!("{field} = {value}"),
+            )]);
+            assert!(error.contains(field), "mesh.{field} = {value}: {error}");
+        }
+    }
+}
+
+/// The mesh gates run on the character while the profile is per skeleton, so
+/// a profile with no mesh table would leave thirteen rules with no limits.
+#[test]
+fn a_profile_with_no_mesh_table_is_refused() {
+    let error = refused(&[("[profile.mesh]", "[profile.unread]")]);
+
+    assert!(error.contains("mesh"), "got: {error}");
 }
