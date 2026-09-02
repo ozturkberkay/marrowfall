@@ -6,6 +6,11 @@
 
 canonical = "meshy"
 
+# Roles a source rig is allowed to leave out. Every other role must be in
+# every convention, or a clip arrives with nothing to drive that bone. Both
+# conventions below fill all 22, so nothing is optional yet.
+optional_roles = []
+
 [conventions.meshy]
 hips = "Hips"
 spine_lower = "Spine02"
@@ -53,6 +58,90 @@ right_upper_leg = "RightUpLeg"
 right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
+
+# The retargeting hierarchy, by role. This is not the rig's own bone
+# hierarchy, which is `[profile.parents]`: a source with three spine bones
+# drives a target with four, so the chain is keyed by role and the transfer
+# walks it, stepping over any role a convention leaves out. `hips` is the top
+# and has no row.
+[retarget_chain]
+spine_lower = "hips"
+spine_middle = "spine_lower"
+spine_upper = "spine_middle"
+neck = "spine_upper"
+head = "neck"
+left_shoulder = "spine_upper"
+left_arm = "left_shoulder"
+left_forearm = "left_arm"
+left_hand = "left_forearm"
+left_upper_leg = "hips"
+left_leg = "left_upper_leg"
+left_foot = "left_leg"
+left_toe = "left_foot"
+right_shoulder = "spine_upper"
+right_arm = "right_shoulder"
+right_forearm = "right_arm"
+right_hand = "right_forearm"
+right_upper_leg = "hips"
+right_leg = "right_upper_leg"
+right_foot = "right_leg"
+right_toe = "right_foot"
+
+# One bone per convention that no other convention has, so two identical role
+# tables can still be told apart. Both are measured, not guessed: the
+# committed `humanoid.glb` carries `headfront`, and a downloaded Mixamo FBX
+# carries `HeadTop_End`. Matched with the namespace and the case stripped, so
+# `mixamorig:HeadTop_End` counts.
+[fingerprints]
+meshy = ["headfront"]
+mixamo = ["HeadTop_End"]
+
+# The absolute world direction each role's bone must point in, which is the
+# reference pose the retarget aims both rigs to before it measures the offset
+# between them. One row per role, torso included: the code this replaces
+# corrected only bones with exactly one mapped child, so it silently skipped
+# `Hips`, the spine, `Head`, both hands and both toes.
+#
+# Blender Z-up world space, the character facing -Y, so +X is his left. Each
+# row is a direction and not a unit vector, so the reader normalizes it. Left
+# and right rows are exact reflections across X = 0, which is why every row is
+# whole numbers.
+#
+# The arms sit 45 degrees below horizontal because the aim has to describe
+# both rigs: measured against this table, our A-posed rig is worst at 34.86
+# degrees (`right_hand`) and a T-posed Mixamo rig is worst at 45.01 (the
+# arms), both inside `max_bind_deviation_degrees`. A T-pose table would put
+# our hands at 76.15 and 78.22, outside it. Our `Hips` is 97.80 degrees out,
+# which is the sideways hip axis the audit found, and `rig.aim_table` reports
+# it until the rig is regenerated.
+#
+# Every figure for our own rig is asserted in `test_aim.rs` against the
+# committed `humanoid.glb`. The Mixamo one is a HAND MEASUREMENT, read off
+# `art/staging/downloads/strafe_left.fbx` in Blender 5.2.1: that directory is
+# gitignored, so no test can open the file and CI cannot re-derive the number.
+[aim_table]
+hips = [0.0, 0.0, 1.0]
+spine_lower = [0.0, 0.0, 1.0]
+spine_middle = [0.0, 0.0, 1.0]
+spine_upper = [0.0, 0.0, 1.0]
+neck = [0.0, 0.0, 1.0]
+head = [0.0, 0.0, 1.0]
+left_shoulder = [1.0, 0.0, 0.0]
+right_shoulder = [-1.0, 0.0, 0.0]
+left_arm = [1.0, 0.0, -1.0]
+right_arm = [-1.0, 0.0, -1.0]
+left_forearm = [1.0, 0.0, -1.0]
+right_forearm = [-1.0, 0.0, -1.0]
+left_hand = [1.0, 0.0, -1.0]
+right_hand = [-1.0, 0.0, -1.0]
+left_upper_leg = [0.0, 0.0, -1.0]
+right_upper_leg = [0.0, 0.0, -1.0]
+left_leg = [0.0, 0.0, -1.0]
+right_leg = [0.0, 0.0, -1.0]
+left_foot = [0.0, -1.0, -1.0]
+right_foot = [0.0, -1.0, -1.0]
+left_toe = [0.0, -1.0, 0.0]
+right_toe = [0.0, -1.0, 0.0]
 
 # Every published rig limit, as data. `crates/xtask-art/src/check/rig.rs` is
 # the only reader, and `cargo art check --list-rules` prints it.

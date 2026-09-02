@@ -232,6 +232,13 @@ fn local(node: &gltf::Node<'_>) -> DMat4 {
     DMat4::from_cols_array_2d(&columns.map(|column| column.map(f64::from)))
 }
 
+/// The angle between two unit directions, in degrees. Clamped, so numeric
+/// drift past 1.0 cannot come back as a NaN.
+pub fn degrees_between(a: DVec3, b: DVec3) -> f64 {
+    debug_assert!(a.is_normalized() && b.is_normalized(), "unit directions");
+    a.dot(b).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
 /// A node with no name of its own is named by its index, so a finding can
 /// still point at it.
 pub fn node_name(node: &gltf::Node<'_>) -> String {

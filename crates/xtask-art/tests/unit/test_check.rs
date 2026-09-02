@@ -6,7 +6,13 @@
 
 use std::path::Path;
 
-use xtask_art::check::{Artifacts, Comparison, Finding, Report, Severity};
+use xtask_art::check::aim::{self, AimTable};
+use xtask_art::check::profile::Profile;
+use xtask_art::check::{Artifacts, Comparison, Finding, Report, Severity, every_rule, mesh, rig};
+use xtask_art::library::HUMANOID;
+
+use crate::rigs::HEIGHT_METERS;
+use crate::support::{committed_glb, repo_root};
 
 fn a_finding() -> Finding {
     Finding {
@@ -25,6 +31,60 @@ fn a_finding() -> Finding {
 
 fn added(finding: Finding) -> anyhow::Result<()> {
     Report::new("clip", "run", 1).add(finding)
+}
+
+// --- the rule list --------------------------------------------------------
+
+/// `--list-rules` prints this list, so a family missing from it is a family
+/// whose limits nobody can read.
+#[test]
+fn every_family_reaches_the_printed_rule_list() {
+    let ids: Vec<&str> = every_rule().map(|rule| rule.id).collect();
+
+    assert_eq!(
+        ids.len(),
+        27,
+        "13 rig rules, the aim table, and 13 mesh rules"
+    );
+    assert_eq!(
+        ids.iter()
+            .collect::<std::collections::BTreeSet<&&str>>()
+            .len(),
+        ids.len(),
+        "a rule id is listed twice"
+    );
+    for expected in ["rig.child_axis", "rig.aim_table", "mesh.holes"] {
+        assert!(ids.contains(&expected), "{expected} is not in the list");
+    }
+}
+
+/// Every rule in that list has to report something on real art, or a rule
+/// that measures nothing at all cannot be told from one that never ran. The
+/// list is the whole registry, so this covers the next family too.
+#[test]
+fn every_rule_in_the_list_reports_on_the_committed_art() {
+    let root = repo_root();
+    let profile = Profile::of(&root, HUMANOID).unwrap();
+    let table = AimTable::of(&root, HUMANOID).unwrap();
+    let rig_glb = committed_glb("art/skeletons/humanoid.glb");
+    // The mesh gates run on the bare mesh, and the rigged file stands in
+    // until that one can be downloaded.
+    let mesh_glb = committed_glb("art/characters/survivor/model.glb");
+
+    let findings = [
+        rig::check_file(&rig_glb, &root, &profile, HEIGHT_METERS, 1).unwrap(),
+        aim::check_file(&rig_glb, &root, &profile, &table, table.canonical(), 1).unwrap(),
+        mesh::check_file(&mesh_glb, &root, &profile, HEIGHT_METERS, None, 1).unwrap(),
+    ]
+    .concat();
+
+    for rule in every_rule() {
+        assert!(
+            findings.iter().any(|finding| finding.rule == rule.id),
+            "{} reported nothing at all",
+            rule.id
+        );
+    }
 }
 
 // --- the record -----------------------------------------------------------

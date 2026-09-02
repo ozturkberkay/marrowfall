@@ -33,6 +33,44 @@ continues the body.
 The committed rig still carries the auto-rigger's own names and breaks seven
 of these rules. It is regenerated in one deliberate operation, below.
 
+## `[aim_table]`, where every bone must point
+
+The retarget aims both rigs at the same absolute directions, records the pose
+each one reaches, and takes the rotation between them as that bone's constant
+offset. `[aim_table]` is those directions: one row per role, in Blender Z-up
+world space, with the character facing -Y, so +X is his left. Each row is a
+direction rather than a unit vector, so the two readers normalize it and the
+rows stay whole numbers.
+
+**Every role has a row, torso included.** The code this replaces corrected
+only bones with exactly one mapped child, so it silently skipped `Hips`, the
+spine, `Head`, both hands and both toes, and shipped their rest twist into
+every clip.
+
+Two readers, one file. `tools/blender/src/skeleton.py` reads it for the
+transfer and refuses a table with a missing row, a row no convention maps, or
+a mirror pair that is not an exact reflection. `rig.aim_table`, in
+`crates/xtask-art/src/check/aim.rs`, is the check that needs a rig: it
+measures each aim against the rest pose the rig itself carries and reports
+anything further out than `max_bind_deviation_degrees`. Measured against the
+committed table, our A-posed rig is worst at 34.86 degrees and a T-posed
+Mixamo rig at 45.01, while the committed `Hips` reads 97.80 because its own
+axis points out of a hip socket. Our own figures are asserted against the
+committed GLB. The Mixamo one was measured by hand on a downloaded FBX under
+`../staging/`, which is gitignored, so no test can re-derive it.
+
+## Three more tables the retarget reads
+
+- `optional_roles` names the roles a source convention may leave out. The
+  canonical convention has to fill them all, because it is what defines the
+  role set.
+- `[retarget_chain]` is the hierarchy the transfer walks, by role. It is not
+  the rig's own bone hierarchy in `[profile.parents]`: a source with three
+  spine bones drives a target with four, so the walk steps over any role the
+  source leaves out. `hips` is the top and has no row.
+- `[fingerprints]` names one bone per convention that no other convention
+  has, so two identical role tables can still be told apart.
+
 ## What it is for
 
 An action stores each bone's rotation relative to its rest pose, so a clip only

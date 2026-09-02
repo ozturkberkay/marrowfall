@@ -18,10 +18,8 @@ from framing import (
     BakeSettings,
     Bounds,
     Framing,
-    SkeletonRoles,
     Vec3,
     Vec4,
-    bare_bone_name,
     bind_pose_mismatch,
     bone_direction_angle,
     bone_from_data_path,
@@ -36,7 +34,6 @@ from framing import (
     rotation_angle,
     sampled_frames,
     translation_scale,
-    unfilled_roles,
 )
 from pydantic import ValidationError
 
@@ -506,137 +503,6 @@ def test_a_ratio_that_could_only_be_the_wrong_rig_is_refused(target: float) -> N
     """Half to five times covers a child and a giant; past that is a bad file."""
     with pytest.raises(ValueError, match="wrong rig"):
         translation_scale(1.7, target)
-
-
-# --- Foreign bone names ---------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("source", "expected"),
-    [
-        ("mixamorig:LeftArm", "leftarm"),
-        ("Neck", "neck"),
-        ("neck", "neck"),
-        ("Spine02", "spine02"),
-    ],
-)
-def test_a_bone_name_loses_its_namespace_and_its_case(
-    source: str, expected: str
-) -> None:
-    assert bare_bone_name(source) == expected
-
-
-# `art/skeletons/humanoid.toml`, cut to the four roles that disagree.
-ROLES_TOML = """
-canonical = "meshy"
-
-[conventions.meshy]
-hips = "Hips"
-spine_lower = "Spine02"
-spine_upper = "Spine"
-neck = "neck"
-
-[conventions.mixamo]
-hips = "Hips"
-spine_lower = "Spine"
-spine_upper = "Spine2"
-neck = "Neck"
-"""
-
-
-def a_role_map() -> SkeletonRoles:
-    return SkeletonRoles.parse(ROLES_TOML)
-
-
-def test_a_role_map_reads_a_convention_per_provider() -> None:
-    roles = a_role_map()
-    assert roles.canonical == "meshy"
-    assert roles.convention("mixamo")["spine_lower"] == "Spine"
-
-
-def test_a_role_map_ignores_the_tables_another_reader_owns() -> None:
-    """`[profile]` belongs to the Rust rig gates and `[aim_table]` to the
-    transfer, and both live in the same file as the roles."""
-    roles = SkeletonRoles.parse(
-        ROLES_TOML + '\n[profile]\nbones = ["Hips"]\n\n[aim_table]\nhips = [90, 0, 0]\n'
-    )
-
-    assert sorted(roles.conventions) == ["meshy", "mixamo"]
-
-
-def test_a_role_map_with_no_conventions_at_all_is_refused() -> None:
-    with pytest.raises(ValidationError, match="conventions"):
-        SkeletonRoles.parse('canonical = "meshy"\n')
-
-
-def test_a_misspelled_table_is_refused_rather_than_dropped() -> None:
-    """Only the tables another reader owns are ignored, so a typo still
-    fails instead of silently changing nothing."""
-    with pytest.raises(ValidationError, match="conventionz"):
-        SkeletonRoles.parse(
-            ROLES_TOML.replace("[conventions.meshy]", "[conventionz.meshy]")
-        )
-
-
-def test_a_canonical_convention_that_is_not_declared_is_refused() -> None:
-    with pytest.raises(ValidationError, match="canonical convention 'meshy'"):
-        SkeletonRoles(canonical="meshy", conventions={"mixamo": {"hips": "Hips"}})
-
-
-def test_a_convention_that_leaves_a_role_out_is_refused_by_name() -> None:
-    with pytest.raises(ValidationError, match="mixamo.*neck"):
-        SkeletonRoles(
-            canonical="meshy",
-            conventions={
-                "meshy": {"hips": "Hips", "neck": "neck"},
-                "mixamo": {"hips": "Hips"},
-            },
-        )
-
-
-def test_a_convention_that_invents_a_role_is_refused_by_name() -> None:
-    with pytest.raises(ValidationError, match="mixamo.*tail"):
-        SkeletonRoles(
-            canonical="meshy",
-            conventions={
-                "meshy": {"hips": "Hips"},
-                "mixamo": {"hips": "Hips", "tail": "Tail"},
-            },
-        )
-
-
-def test_an_unknown_convention_names_the_ones_that_exist() -> None:
-    with pytest.raises(ValueError, match="unknown.*'meshy', 'mixamo'"):
-        a_role_map().convention("maya")
-
-
-def test_the_spine_is_matched_by_role_rather_than_by_name() -> None:
-    """Both rigs have a `Spine`, and it is not the same bone."""
-    mapped = a_role_map().bone_map("mixamo")
-    assert mapped["spine"] == "Spine02"
-    assert mapped["spine2"] == "Spine"
-
-
-def test_a_clip_on_the_canonical_rig_maps_every_bone_to_itself() -> None:
-    assert a_role_map().bone_map("meshy") == {
-        "hips": "Hips",
-        "spine02": "Spine02",
-        "spine": "Spine",
-        "neck": "neck",
-    }
-
-
-def test_a_source_that_fills_every_role_leaves_none_unfilled() -> None:
-    roles = a_role_map()
-    source = ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine2", "Neck"]
-    assert unfilled_roles(roles.convention("mixamo"), source) == []
-
-
-def test_a_source_missing_a_bone_names_the_role_it_leaves_undriven() -> None:
-    """What a clip labeled with the wrong convention looks like."""
-    roles = a_role_map()
-    mixamo_bones = ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine2", "Neck"]
-    assert unfilled_roles(roles.convention("meshy"), mixamo_bones) == ["spine_lower"]
 
 
 # --- Loop check -----------------------------------------------------------

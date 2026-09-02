@@ -34,7 +34,7 @@ testpaths = ["tools/blender/tests"]
 # The bake is run by Blender as a loose script, not installed as a package, so
 # its directory goes on the path the same way Blender puts it there.
 pythonpath = ["tools/blender/src"]
-addopts = "--cov=framing --cov=findings --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=framing --cov=findings --cov=skeleton --cov-report=term-missing --cov-fail-under=100"
 
 [tool.ty.src]
 include = ["tools/blender"]

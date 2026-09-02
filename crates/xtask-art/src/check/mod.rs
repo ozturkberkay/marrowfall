@@ -9,6 +9,7 @@
 //! records the space it measured in, and states the limit it was read
 //! against. The runner only counts errors.
 
+pub mod aim;
 pub mod gltf_mesh;
 pub mod gltf_world;
 pub mod mesh;
@@ -214,6 +215,12 @@ impl Rule {
             message,
         }
     }
+}
+
+/// Every rule the pipeline publishes, in the order `--list-rules` prints
+/// them. One list, so a family cannot ship with its rules unprintable.
+pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
+    rig::RULES.into_iter().chain(aim::RULES).chain(mesh::RULES)
 }
 
 /// Every finding one stage attempt produced, for one item.

@@ -22,7 +22,9 @@ use std::path::Path;
 use anyhow::Result;
 use glam::DVec3;
 
-use super::gltf_world::{SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, gltf_to_blender};
+use super::gltf_world::{
+    SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, degrees_between, gltf_to_blender,
+};
 use super::profile::{Axis, LEFT, Profile, RIGHT};
 use super::{Comparison, Finding, Rule, relative_to};
 
@@ -648,11 +650,4 @@ impl<'a> Measured<'a> {
             (self.has(&bone) && self.has(&tail)).then_some((bone, tail))
         })
     }
-}
-
-/// The angle between two unit directions, in degrees. Clamped, so numeric
-/// drift past 1.0 cannot come back as a NaN.
-fn degrees_between(a: DVec3, b: DVec3) -> f64 {
-    debug_assert!(a.is_normalized() && b.is_normalized(), "unit directions");
-    a.dot(b).clamp(-1.0, 1.0).acos().to_degrees()
 }

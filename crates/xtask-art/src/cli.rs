@@ -14,8 +14,9 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
+use crate::check::aim::{self, AimTable};
 use crate::check::profile::Profile;
-use crate::check::{Finding, Report, Severity, mesh, rig};
+use crate::check::{self, Finding, Report, Severity, mesh, rig};
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
 use crate::providers::mixamo::{self, session};
@@ -637,13 +638,28 @@ fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
         return Ok(None);
     }
     let profile = Profile::of(root, &spec.subject.skeleton)?;
-    let findings = rig::check_file(
-        &glb,
-        root,
-        &profile,
-        f64::from(spec.subject.height_meters),
-        FIRST_ATTEMPT,
-    )?;
+    let table = AimTable::of(root, &spec.subject.skeleton)?;
+    let findings = [
+        rig::check_file(
+            &glb,
+            root,
+            &profile,
+            f64::from(spec.subject.height_meters),
+            FIRST_ATTEMPT,
+        )?,
+        // The rig stage writes our own rig, so it is named in the canonical
+        // convention. A source rig is measured against the same table under
+        // its own one.
+        aim::check_file(
+            &glb,
+            root,
+            &profile,
+            &table,
+            table.canonical(),
+            FIRST_ATTEMPT,
+        )?,
+    ]
+    .concat();
     report_on(root, &paths, rig::STAGE, findings).map(Some)
 }
 
@@ -730,7 +746,7 @@ fn print_rule_list(root: &Path) -> Result<()> {
     for skeleton in skeletons {
         let profile = Profile::of(root, &skeleton)?;
         println!("rules for the {skeleton:?} skeleton, from its [profile]\n");
-        for rule in rig::RULES.iter().chain(mesh::RULES.iter()) {
+        for rule in check::every_rule() {
             println!(
                 "{:<20} {} {:<8} {:<16} {}",
                 rule.id,
