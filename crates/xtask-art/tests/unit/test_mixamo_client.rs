@@ -32,7 +32,7 @@ async fn client(server: &MockServer) -> Client {
     Client::new().expect("client")
 }
 
-/// The catalogue and product calls, which need no credential at all.
+/// The catalog and product calls, which need no credential at all.
 async fn mount_product(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path("/products/c9ccc468"))

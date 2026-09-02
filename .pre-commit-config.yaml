@@ -122,7 +122,7 @@ repos:
       # GITHUB ACTIONS
       - id: zizmor
         name: Zizmor
-        entry: uvx zizmor --persona=regular --format=plain
+        entry: uvx zizmor@1.30.0 --persona=regular --format=plain
         language: system
         files: ^\.github/(workflows|actions)/.*\.ya?ml$
         pass_filenames: false

@@ -35,7 +35,7 @@ pub const TILE_HEIGHT: f32 = 96.0;
 /// fact, and that crate is the one with no pixels in it.
 pub const HEIGHT_STEP: f32 = TILE_HEIGHT / 4.0;
 
-/// Where the centre of `tile` sits on screen, relative to `origin`.
+/// Where the center of `tile` sits on screen, relative to `origin`.
 ///
 /// The subtraction happens in `f64` and the narrowing to `Vector2` is the last
 /// operation. That order is the whole point: doing it the other way round would
@@ -82,7 +82,7 @@ pub fn chunk_to_screen(coord: worldgen::ChunkCoord, origin: Origin) -> Vector2 {
 /// the cursor. Two of them drift: the keys were once converted by two different
 /// sums, so fixing one left the other wrong.
 ///
-/// Do not remove the normalising. It is what makes movement isotropic: the raw
+/// Do not remove the normalizing. It is what makes movement isotropic: the raw
 /// inverse is anisotropic by exactly 2x, because `W` maps to magnitude
 /// `sqrt(2)/96` and `D` to `sqrt(2)/192`.
 #[must_use]

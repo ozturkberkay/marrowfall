@@ -210,7 +210,7 @@ Taking the minimum of the tile and region distances would split a region's tier
 at the bubble boundary.
 
 **Requirement that falls out of this decision.** A surprise is unfair only when
-it is invisible, so **biome boundaries must be unmistakable**, which is colour,
+it is invisible, so **biome boundaries must be unmistakable**, which is color,
 light and ambient sound work in the art design. Until that lands the dial is met
 the cheap way, by the shape of the table itself: tier 0 never strays, so a new
 character cannot be ambushed, and the easier direction is the generous one, since
@@ -331,7 +331,7 @@ pub enum ChunkMessage { Ready(Arc<ChunkView>), Dropped(ChunkCoord) }
 
 // Workers take requests and hand finished chunks back. Nothing is shared but an
 // `Arc<World>`, which is immutable, so there is no lock on the hot path.
-for coord in residency.entered(centre) {
+for coord in residency.entered(center) {
     requests.send(Request { coord, generation })?;
 }
 // Drained before each tick. `generation` is what makes a chunk that finished
@@ -379,7 +379,7 @@ count as uncovered against the 96 percent gate.
 #### ❌ Option 2: Generate on the simulation thread under a per tick budget
 
 ```rust
-for coord in residency.entered(centre).take(MAX_CHUNKS_PER_TICK) {
+for coord in residency.entered(center).take(MAX_CHUNKS_PER_TICK) {
     let view = Arc::new(worldgen::generate_chunk(&world, coord));
     sim.insert_chunk(Arc::clone(&view));
     let _ = chunks.send(ChunkMessage::Ready(view));
@@ -477,7 +477,7 @@ blackweald      1    10     dark_soil   4          120
 
 **Pros:** editable in any spreadsheet, one row per line makes diffs exact, and
 Godot's resource pack override lets a mod shadow a shipped table cheaply.
-Nesting dissolves by normalising into related tables, which is how `Levels.txt`
+Nesting dissolves by normalizing into related tables, which is how `Levels.txt`
 references `LvlMaze.txt` in Diablo 2, and why that modding scene is still alive.
 
 **Cons:** a typo in a key is a load error rather than a compile error, so
@@ -509,7 +509,7 @@ first genuinely nested data, which is authored prefab layouts.
 
 ```rust
 // crates/xtask-world: worldgen, clap and image. Nothing else.
-fn main() { render_region(seed, centre, radius).save("target/preview.png") }
+fn main() { render_region(seed, center, radius).save("target/preview.png") }
 ```
 
 **Pros:** hash, noise and lattice code does not belong inside the ECS crate, and
@@ -661,7 +661,7 @@ project/data/
   alternative tile carry horizontal flip, vertical flip and transpose. Verified
   by reading that function: it clears the layer and rewrites every cell, which is
   what makes it right for an arriving chunk and wrong for one tile.
-- **Godot tile coordinate range** (same file). Coordinates serialise as 16 bit
+- **Godot tile coordinate range** (same file). Coordinates serialize as 16 bit
   signed integers and are truncated. Community documentation disagrees on whether
   the effect is a wrap or a clamp; the conclusion is the same either way, so chunk
   local coordinates are mandatory rather than tidy.
@@ -719,7 +719,7 @@ pub struct Site { pub kind: SiteId, pub class: SiteClassId, pub at: IVec2 }
 /// it can be asked in any order and on any thread.
 pub fn site_at(world: &World, class: SiteClassId, cell: IVec2) -> Option<Site>;
 
-/// Every site of every class whose centre is within `radius` tiles. A bounded
+/// Every site of every class whose center is within `radius` tiles. A bounded
 /// walk over a window of cells per class, never a search.
 pub fn sites_near(world: &World, tile: IVec2, radius: i32) -> Vec<Site>;
 ```
@@ -851,7 +851,7 @@ pub fn tile_to_screen(tile: WorldVec, height: i8, origin: WorldVec) -> Vector2 {
 ```
 
 Cliff tiles then carry a per tile `y_sort_origin` so they sort by their base
-rather than their visual centre. That is the mechanism; the art that needs it is
+rather than their visual center. That is the mechanism; the art that needs it is
 the next design.
 
 ## Edge Cases & Constraints
@@ -872,7 +872,7 @@ the next design.
   search provably enough: the own cell point is at most 1.06 pitches away and a
   cell two out is at least 1.25.
 - **Godot coordinate range and y sorted quadrants.** Chunk local coordinates keep
-  every value inside 0 to 31, so the 16 bit serialisation limit never binds. With
+  every value inside 0 to 31, so the 16 bit serialization limit never binds. With
   y sorting on, Godot keys a quadrant per distinct y baseline, so changing one
   cell rebuilds every tile on its diagonal; one layer per chunk bounds that to 32.
 - **Bulk paint versus deltas.** The bulk call clears and rewrites the layer, so
@@ -931,7 +931,7 @@ keeping screen coordinates bounded across a simulated 100 km walk.
 Integration, in `crates/host/tests/integration`, the tier's first target, which
 needs a `[[test]] name = "integration"` stanza in the manifest and a line in the
 workflow: a residency radius produces exactly the expected chunk set once each;
-moving the centre produces the correct evictions with no leaks; a chunk evicted
+moving the center produces the correct evictions with no leaks; a chunk evicted
 while in flight is not forwarded; and **chunks generated on the pool are byte
 identical to the same chunks generated on one thread**, which is the test that
 the pool inherits position purity rather than assuming it.
@@ -970,7 +970,7 @@ CI:
   the comparison matrix, reading "Hybrid (fixed + proc)"; and the settlement
   claims in **Alone in the Dark** and **Normal Mode**. The file uses em-dashes
   throughout, against the current style rule; only the rewritten sections are
-  normalised.
+  normalized.
 
 ## Development Environment Changes
 

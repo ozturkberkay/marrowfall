@@ -47,9 +47,9 @@ struct Done {
 
 /// Owns residency, the pool, and the queues between them.
 pub struct Streamer {
-    /// Chunks within this many chunks of the centre, on each axis, are wanted.
+    /// Chunks within this many chunks of the center, on each axis, are wanted.
     radius: i32,
-    centre: ChunkCoord,
+    center: ChunkCoord,
     /// Wanted and already delivered.
     loaded: BTreeSet<ChunkCoord>,
     /// Wanted and asked for, with the issue number of the newest request. A
@@ -69,7 +69,7 @@ impl Streamer {
     pub fn new(
         world: Arc<World>,
         radius: u8,
-        centre: ChunkCoord,
+        center: ChunkCoord,
         out: Sender<ChunkMessage>,
     ) -> Self {
         let (requests, request_rx) = crossbeam_channel::unbounded::<Request>();
@@ -100,7 +100,7 @@ impl Streamer {
 
         let mut streamer = Self {
             radius: i32::from(radius),
-            centre,
+            center,
             loaded: BTreeSet::new(),
             in_flight: BTreeMap::new(),
             next_issue: 0,
@@ -113,15 +113,15 @@ impl Streamer {
         streamer
     }
 
-    /// Moves the resident window if the centre has changed, then delivers
+    /// Moves the resident window if the center has changed, then delivers
     /// whatever the pool has finished.
     ///
     /// Called once per tick from the simulation thread, which is where the
     /// player position already lives. Deciding residency anywhere else would let
     /// the simulation's own passability disagree with what the frontend paints.
-    pub fn update(&mut self, centre: ChunkCoord, sim: &mut Sim) {
-        if centre != self.centre {
-            self.centre = centre;
+    pub fn update(&mut self, center: ChunkCoord, sim: &mut Sim) {
+        if center != self.center {
+            self.center = center;
             self.evict_outside_window(sim);
             self.request_window();
         }
@@ -202,9 +202,9 @@ impl Streamer {
 
     /// Every chunk the window covers, in a fixed order.
     fn window(&self) -> impl Iterator<Item = ChunkCoord> + '_ {
-        let (r, centre) = (self.radius, self.centre);
+        let (r, center) = (self.radius, self.center);
         (-r..=r).flat_map(move |dy| {
-            (-r..=r).map(move |dx| ChunkCoord::new(centre.x + dx, centre.y + dy))
+            (-r..=r).map(move |dx| ChunkCoord::new(center.x + dx, center.y + dy))
         })
     }
 }

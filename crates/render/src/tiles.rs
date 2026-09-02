@@ -34,7 +34,7 @@ pub const PLACEHOLDER_VARIANTS: u16 = 3;
 /// The whole chunk as one `tile_map_data` array.
 ///
 /// Local coordinates, `0..CHUNK_TILES`, because each chunk gets its own layer.
-/// That is not tidiness: `TileMapLayer` serialises a coordinate as an `i16`, so
+/// That is not tidiness: `TileMapLayer` serializes a coordinate as an `i16`, so
 /// world coordinates would silently wrap past 32767.
 #[must_use]
 pub fn tile_map_data(view: &ChunkView) -> Vec<u8> {

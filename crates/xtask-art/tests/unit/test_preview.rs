@@ -3,8 +3,8 @@ use xtask_art::preview::*;
 
 use image::Rgba;
 
-fn solid(w: u32, h: u32, colour: [u8; 4]) -> RgbaImage {
-    RgbaImage::from_pixel(w, h, Rgba(colour))
+fn solid(w: u32, h: u32, color: [u8; 4]) -> RgbaImage {
+    RgbaImage::from_pixel(w, h, Rgba(color))
 }
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {

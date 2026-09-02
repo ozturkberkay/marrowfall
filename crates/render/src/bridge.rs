@@ -1,41 +1,15 @@
-//! `GameBridge`: the single node through which the simulation reaches the
-//! scene tree. It boots the sim, paints the ground the sim generated, and
-//! consumes one snapshot per rendered frame. All Godot access stays on the
-//! main thread.
+//! `GameBridge`: the one node through which the simulation reaches the scene
+//! tree. It boots the sim, paints the generated ground, and consumes one
+//! snapshot per frame, all on the main thread. [`crate::iso`] and
+//! [`crate::draw`] hold the pure parts, so no test reaches this file.
 //!
-//! [`crate::iso`] holds the tile-to-screen mapping, and [`crate::draw`] picks
-//! what to draw each frame. Both are pure, so this file keeps only property
-//! writes and node lifecycle. That is also why no test reaches it.
-//!
-//! The cursor sample measures against the middle of the viewport, so it is
-//! correct only while the camera stays pinned to the survivor, which is what
-//! `follow_player` below does. A camera offset, deadzone or lead would have to
-//! be subtracted in `sample_cursor` too.
-//!
-//! Each entity gets one `Sprite2D` with `centered = false`. Its `offset` is the
-//! frame's own offset minus the animation's anchor, which puts the node origin
-//! on the feet. The transform point and the y-sort key are then the same point.
-//! With the default `centered = true` the sort key is the sprite centre, which
-//! is head height and differs per animation.
-//!
-//! `z_index` stays 0 everywhere. Inside a y-sorted parent Godot does not ignore
-//! `z_index`, it *overrides* the sort: items sort by y, then split into
-//! `z_index` buckets, and the buckets draw in z order. One stray `z_index`
-//! therefore defeats the sort.
-//!
-//! `Ground` is unsorted, and `Entities` is a y-sorted sibling listed after it.
-//! So entities draw on top of flat ground, which occludes nothing. To
-//! interleave a character with terrain, the tileset needs a `y_sort_origin` per
-//! tile. That waits for the first wall.
-//!
-//! Three things stop atlas bleeding. The pack stage writes a two-pixel gutter
-//! between frames, with mipmaps off. `TileSetAtlasSource.use_texture_padding`
-//! covers the ground layer. `region_filter_clip_enabled` clips sampling to the
-//! region.
-//!
-//! A `host::Frame` borrows the handle for as long as it lives, so no method on
-//! `GameBridge` can be called while one is alive. Copy out what is needed
-//! first.
+//! Not obvious from the code:
+//! - The cursor is measured from the viewport center, so it is only right
+//!   while the camera stays pinned to the survivor.
+//! - Sprites use `centered = false` with the origin on the feet, so the y-sort
+//!   key is the transform point. `z_index` stays 0: inside a y-sorted parent
+//!   it overrides the sort instead of being ignored.
+//! - A `host::Frame` borrows the handle while it lives. Copy out first.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -95,7 +69,7 @@ pub struct GameBridge {
     assets: Option<CharacterAssets>,
     textures: HashMap<Clip, Gd<Texture2D>>,
     sprites: HashMap<u64, Gd<Sprite2D>>,
-    /// One layer per chunk. Per chunk because `TileMapLayer` serialises a cell
+    /// One layer per chunk. Per chunk because `TileMapLayer` serializes a cell
     /// coordinate as an `i16`, so one layer for an endless world would wrap; and
     /// because freeing a chunk is then freeing one node.
     chunk_layers: HashMap<worldgen::ChunkCoord, Gd<TileMapLayer>>,

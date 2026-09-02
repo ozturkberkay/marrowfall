@@ -202,7 +202,7 @@ impl Lock {
 
     /// Marks a stage complete and invalidates every stage after it. A new
     /// mesh makes old sprites wrong even when their fingerprints still match,
-    /// since a fingerprint covers spec fields, not upstream artefacts.
+    /// since a fingerprint covers spec fields, not upstream artifacts.
     pub fn record(
         &mut self,
         stage: Stage,

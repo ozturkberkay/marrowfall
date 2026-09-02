@@ -112,7 +112,7 @@ fn warped(world: &World, tile: IVec2) -> I64Vec2 {
     I64Vec2::new(x.round() as i64, y.round() as i64)
 }
 
-/// Where one cell's point sits: its centre, displaced by a hashed offset.
+/// Where one cell's point sits: its center, displaced by a hashed offset.
 fn point_of(world: &World, cell: IVec2) -> RegionPoint {
     let rules = world.rules();
     let pitch = i64::from(rules.region_pitch());
@@ -120,16 +120,16 @@ fn point_of(world: &World, cell: IVec2) -> RegionPoint {
     // Jitter is a percentage of half the pitch, so 100 puts a point anywhere in
     // its own cell and no further. `parse` caps it there.
     let span = half * i64::from(rules.region_jitter_pct()) / 100;
-    let centre = I64Vec2::new(
+    let center = I64Vec2::new(
         i64::from(cell.x) * pitch + half,
         i64::from(cell.y) * pitch + half,
     );
     let at = if span == 0 {
-        centre
+        center
     } else {
         let h = derive(world.seed(), Domain::RegionJitter, cell.x, cell.y);
         let width = (2 * span + 1) as u64;
-        centre + I64Vec2::new((h % width) as i64 - span, ((h >> 32) % width) as i64 - span)
+        center + I64Vec2::new((h % width) as i64 - span, ((h >> 32) % width) as i64 - span)
     };
     RegionPoint { cell, at }
 }

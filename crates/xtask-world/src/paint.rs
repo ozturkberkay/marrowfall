@@ -13,8 +13,8 @@ use worldgen::{IVec2, World, height_at, region_at, sites_near};
 /// What to draw.
 #[derive(Debug, Clone, Copy)]
 pub struct Shot {
-    /// Tile at the centre of the image.
-    pub centre: IVec2,
+    /// Tile at the center of the image.
+    pub center: IVec2,
     /// Half-width in tiles. The image is `2 * radius / step` pixels square.
     pub radius: i32,
     /// Tiles per pixel. Above 1 the view covers more ground and samples it.
@@ -47,7 +47,7 @@ const TIER_HUES: [(u8, u8, u8); 6] = [
     (120, 116, 112),
 ];
 
-/// One colour per site class, in table order. Bright and unnatural on purpose:
+/// One color per site class, in table order. Bright and unnatural on purpose:
 /// a marker is an overlay, and it has to survive being drawn over any terrain.
 const CLASS_MARKS: [(u8, u8, u8); 6] = [
     (255, 238, 120),
@@ -83,29 +83,29 @@ fn ground(world: &World, shot: Shot) -> RgbImage {
 /// The tile one pixel samples.
 fn tile_of(shot: Shot, px: i32, py: i32) -> IVec2 {
     IVec2::new(
-        shot.centre.x - shot.radius + px * shot.step,
-        shot.centre.y - shot.radius + py * shot.step,
+        shot.center.x - shot.radius + px * shot.step,
+        shot.center.y - shot.radius + py * shot.step,
     )
 }
 
 /// Stamps a cross on every site inside the view.
 fn mark_sites(world: &World, shot: Shot, image: &mut RgbImage) {
-    for site in sites_near(world, shot.centre, shot.radius) {
-        let colour = CLASS_MARKS[usize::from(site.class.0) % CLASS_MARKS.len()];
+    for site in sites_near(world, shot.center, shot.radius) {
+        let color = CLASS_MARKS[usize::from(site.class.0) % CLASS_MARKS.len()];
         // The inverse of `tile_of`.
-        let px = (site.at.x - shot.centre.x + shot.radius).div_euclid(shot.step);
-        let py = (site.at.y - shot.centre.y + shot.radius).div_euclid(shot.step);
+        let px = (site.at.x - shot.center.x + shot.radius).div_euclid(shot.step);
+        let py = (site.at.y - shot.center.y + shot.radius).div_euclid(shot.step);
         // A cross rather than a dot, so one pixel of terrain showing through does
         // not hide the marker.
         for arm in -MARK_ARM..=MARK_ARM {
-            plot(image, px + arm, py, colour);
-            plot(image, px, py + arm, colour);
+            plot(image, px + arm, py, color);
+            plot(image, px, py + arm, color);
         }
     }
 }
 
 /// Sets one pixel, ignoring anything off the edge.
-fn plot(image: &mut RgbImage, x: i32, y: i32, colour: (u8, u8, u8)) {
+fn plot(image: &mut RgbImage, x: i32, y: i32, color: (u8, u8, u8)) {
     if x < 0 || y < 0 {
         return;
     }
@@ -113,10 +113,10 @@ fn plot(image: &mut RgbImage, x: i32, y: i32, colour: (u8, u8, u8)) {
     if x >= image.width() || y >= image.height() {
         return;
     }
-    image.put_pixel(x, y, Rgb([colour.0, colour.1, colour.2]));
+    image.put_pixel(x, y, Rgb([color.0, color.1, color.2]));
 }
 
-/// The colour of one tile: hue from its tier, a nudge from its biome so two
+/// The color of one tile: hue from its tier, a nudge from its biome so two
 /// biomes in one tier are still distinguishable, and brightness from its height
 /// so terraces read as relief.
 fn colour_of(world: &World, tile: IVec2) -> [u8; 3] {

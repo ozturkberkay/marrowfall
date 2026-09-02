@@ -49,7 +49,7 @@ fn drain_until(
     arrivals
 }
 
-/// Every chunk a radius covers, centred on the origin chunk.
+/// Every chunk a radius covers, centered on the origin chunk.
 fn window(radius: i32) -> Vec<ChunkCoord> {
     (-radius..=radius)
         .flat_map(|y| (-radius..=radius).map(move |x| ChunkCoord::new(x, y)))
@@ -139,7 +139,7 @@ fn shutting_down_joins_every_worker() {
     drop(handle);
 }
 
-/// Drives a streamer with explicit centres, which is how eviction and re-entry
+/// Drives a streamer with explicit centers, which is how eviction and re-entry
 /// get tested without walking a player 32 tiles at four tiles a second.
 fn streamer_and_inbox() -> (Streamer, Sim, crossbeam_channel::Receiver<ChunkMessage>) {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -148,16 +148,16 @@ fn streamer_and_inbox() -> (Streamer, Sim, crossbeam_channel::Receiver<ChunkMess
 }
 
 /// Pumps until every requested chunk has been delivered.
-fn settle(streamer: &mut Streamer, sim: &mut Sim, centre: ChunkCoord) {
+fn settle(streamer: &mut Streamer, sim: &mut Sim, center: ChunkCoord) {
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
-        streamer.update(centre, sim);
+        streamer.update(center, sim);
         if streamer.is_settled() {
             return;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    panic!("the pool never settled at {centre:?}");
+    panic!("the pool never settled at {center:?}");
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn a_chunk_that_leaves_and_returns_is_delivered_again_and_only_once() {
 fn a_still_centre_asks_for_nothing_twice() {
     let (mut streamer, mut sim, rx) = streamer_and_inbox();
     settle(&mut streamer, &mut sim, ChunkCoord::new(0, 0));
-    // Many more updates at the same centre. A window that re-requested on every
+    // Many more updates at the same center. A window that re-requested on every
     // tick would flood the pool and repaint the world constantly.
     for _ in 0..50 {
         streamer.update(ChunkCoord::new(0, 0), &mut sim);
@@ -233,5 +233,5 @@ fn a_still_centre_asks_for_nothing_twice() {
         .try_iter()
         .filter(|m| matches!(m, ChunkMessage::Ready(_)))
         .count();
-    assert_eq!(ready, 9, "a still centre delivered {ready} chunks");
+    assert_eq!(ready, 9, "a still center delivered {ready} chunks");
 }

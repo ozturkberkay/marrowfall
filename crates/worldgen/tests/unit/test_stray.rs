@@ -141,7 +141,7 @@ fn no_jitter_puts_every_region_point_on_a_cell_centre() {
         assert_eq!(
             (point.at.x - pitch / 2).rem_euclid(pitch),
             0,
-            "point {point:?} is not on a cell centre"
+            "point {point:?} is not on a cell center"
         );
     }
 }

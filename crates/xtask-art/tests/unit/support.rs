@@ -2,7 +2,7 @@
 //!
 //! The pipeline reads its API keys and hosts from the environment, so pointing
 //! it at a local server means setting process-global state. [`EnvGuard`]
-//! serialises that and restores it, so tests in this binary cannot leak
+//! serializes that and restores it, so tests in this binary cannot leak
 //! settings into each other.
 
 use std::sync::{Mutex, MutexGuard};

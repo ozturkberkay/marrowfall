@@ -115,9 +115,9 @@ fn a_region_holds_together_across_its_middle() {
     // Contiguity is what stops biome soup. Walking away from a point should stay
     // in its region for a while rather than flickering between neighbours.
     let w = world(3);
-    let centre = region_at(&w, IVec2::ZERO);
+    let center = region_at(&w, IVec2::ZERO);
     let same = (0..16)
-        .filter(|&i| region_at(&w, IVec2::new(i, 0)).point == centre.point)
+        .filter(|&i| region_at(&w, IVec2::new(i, 0)).point == center.point)
         .count();
     assert!(
         same >= 8,

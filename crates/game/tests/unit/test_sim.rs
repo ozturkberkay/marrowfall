@@ -288,7 +288,7 @@ fn facing_follows_the_direction_travelled() {
         assert_eq!(
             only_entity(&sim.snapshot()).facing,
             want,
-            "travelling {velocity} should look {want:?}"
+            "traveling {velocity} should look {want:?}"
         );
     }
 }
@@ -309,7 +309,7 @@ fn facing_switches_sector_at_the_diagonal_boundary() {
         assert_eq!(
             only_entity(&sim.snapshot()).facing,
             want,
-            "travelling {velocity} should look {want:?}"
+            "traveling {velocity} should look {want:?}"
         );
     }
 }
@@ -359,7 +359,7 @@ const KEY_COMBINATIONS: [(&str, Vec2, Facing); 8] = [
 const HOLDING_W: Vec2 = KEY_COMBINATIONS[0].1;
 
 /// One aim, for the tests about travel. South is tile `(1, 1)`, straight down
-/// the screen, so travelling east is a step to his own left.
+/// the screen, so traveling east is a step to his own left.
 const POINTING_SOUTH: Vec2 = Vec2::new(1.0, 1.0);
 
 #[test]
@@ -455,7 +455,7 @@ fn the_player_publishes_the_exact_aim_and_everything_else_its_facing() {
 
 /// Which way he travels against an aim held south, and the stride that is.
 /// `Locomotion` names his own left and right: a person who faces you has his
-/// left hand on your right, so travelling east while pointing south is a step
+/// left hand on your right, so traveling east while pointing south is a step
 /// to his left.
 ///
 /// The four diagonals sit exactly 45 degrees from the aim. The comparison is
@@ -484,7 +484,7 @@ fn each_direction_of_travel_publishes_the_stride_it_is_using() {
         let got = stride_travelling(held);
         assert_eq!(
             got, want,
-            "travelling {held} while pointing south is {got:?}"
+            "traveling {held} while pointing south is {got:?}"
         );
     }
 }
@@ -505,7 +505,7 @@ fn the_stride_changes_at_exactly_the_diagonal() {
         let got = stride_travelling(held);
         assert_eq!(
             got, want,
-            "travelling {held} while pointing south is {got:?}"
+            "traveling {held} while pointing south is {got:?}"
         );
     }
 }
@@ -645,7 +645,7 @@ fn a_player_who_cannot_step_still_reports_his_stride() {
 
 #[test]
 fn the_survivor_spawns_at_the_world_origin() {
-    // Not a field centre: every difficulty band and the home bubble measure from
+    // Not a field center: every difficulty band and the home bubble measure from
     // the origin, so spawning elsewhere would drop the player at an arbitrary
     // distance into the world.
     let sim = Sim::new();

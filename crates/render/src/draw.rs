@@ -67,13 +67,9 @@ impl Clip {
         }
     }
 
-    /// This clip if the bake has produced it, otherwise the closest one that
-    /// has, or `None` when even the stand-in is missing.
-    ///
-    /// The run stands in for any other stride, because `strafe_left` and
-    /// `strafe_right` do not exist yet. His feet then push the wrong way, which
-    /// reads far better than a body frozen mid stride. Nothing stands in for
-    /// `idle`, which is not a stride, or for the run itself.
+    /// This clip if baked, else the run as a stand-in, else `None`. Feet
+    /// pushing the wrong way read better than a body frozen mid step. Nothing
+    /// stands in for `idle` or for the run itself.
     #[must_use]
     pub fn with_art(self, has_art: impl Fn(Self) -> bool) -> Option<Self> {
         if has_art(self) {

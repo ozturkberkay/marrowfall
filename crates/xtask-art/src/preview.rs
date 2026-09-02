@@ -1,4 +1,4 @@
-//! Reviewable artefacts, one per stage.
+//! Reviewable artifacts, one per stage.
 //!
 //! Every stage that produces something judgeable writes a preview here. This
 //! is the only thing standing between a bad generation and a character built

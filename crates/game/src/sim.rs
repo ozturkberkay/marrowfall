@@ -12,14 +12,9 @@ pub const TICK_DT: f64 = 1.0 / TICK_HZ as f64;
 
 /// How fast held input walks the player, in tile units per second.
 ///
-/// A playtest starting point, not a derived figure. The bake's camera elevation
-/// does not match the tile projection, so sprite height is foreshortened and
-/// ground travel is not. No arithmetic turns one into the other, so tune this
-/// by eye against the run cycle's foot slide.
-///
-/// This is a *ceiling*, not the speed in every direction. A frontend drawing a
-/// 2:1 diamond may hand in a shortened direction, to even out how fast travel
-/// reads on screen, and backing away is slower still.
+/// Tiles per second at full stride, tuned by eye against the run cycle's foot
+/// slide. A ceiling: a frontend may hand in a shorter direction, and backing
+/// away is slower still.
 pub const PLAYER_SPEED: f64 = 4.0;
 
 /// How fast he backs away, as a fraction of [`PLAYER_SPEED`].
@@ -60,7 +55,7 @@ impl Default for Sim {
 impl Sim {
     /// The survivor, at the world origin.
     ///
-    /// The origin and not a field centre: every difficulty band and the home
+    /// The origin and not a field center: every difficulty band and the home
     /// bubble measure from there, so spawning anywhere else would put the player
     /// at an arbitrary distance into the world.
     #[must_use]

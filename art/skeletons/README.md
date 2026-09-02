@@ -21,13 +21,9 @@ The fit pairs bones by role and never by name, out of `humanoid.toml`: this
 rig's `Spine` is the highest of its three and Mixamo's is the lowest, so a name
 match would drive the wrong bone.
 
-## Where it came from, and when to regenerate it
+## Regenerating it
 
-`humanoid.glb` was exported from the survivor's rigged model,
-`../characters/survivor/model.glb`: his armature alone, plus the one-triangle
-skin carrier glTF needs to keep an armature at all.
-
-**Do not regenerate it as a side effect.** Re-running a character's model stage
-produces a new rig, and moving this file to match would leave every committed
-clip authored against a body no file describes. Regenerating means refitting
-every clip in `../animations/`, deliberately, in one go.
+`humanoid.glb` is the survivor's armature plus the one-triangle skin carrier
+glTF needs to keep an armature at all. Every clip in `../animations/` is
+authored against it, so regenerating it means refitting every clip in the same
+change.

@@ -130,7 +130,7 @@ pub struct SiteRow {
     pub class: SiteClassId,
     /// Relative chance among its class's kinds.
     pub weight: u16,
-    /// Side length in tiles. Odd, so it has a centre tile to be placed on.
+    /// Side length in tiles. Odd, so it has a center tile to be placed on.
     pub footprint: i32,
 }
 
@@ -172,7 +172,7 @@ impl WorldRules {
         self.region_pitch
     }
 
-    /// How far a region point may sit from its cell centre, as a percentage of
+    /// How far a region point may sit from its cell center, as a percentage of
     /// half the pitch. At most 100, or the nearest point could fall outside the
     /// searched 3 by 3 block.
     #[must_use]
@@ -474,7 +474,7 @@ fn site_rows(text: &str, classes: &[SiteClassRow]) -> Result<Vec<SiteRow>, Error
             return Err(Error::row(
                 TABLE,
                 line,
-                "footprint must be odd, so the site has a centre tile to sit on",
+                "footprint must be odd, so the site has a center tile to sit on",
             ));
         }
         let position = classes
