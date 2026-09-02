@@ -10,6 +10,7 @@
 //! against. The runner only counts errors.
 
 pub mod aim;
+pub mod clip;
 pub mod gltf_mesh;
 pub mod gltf_world;
 pub mod mesh;
@@ -220,7 +221,11 @@ impl Rule {
 /// Every rule the pipeline publishes, in the order `--list-rules` prints
 /// them. One list, so a family cannot ship with its rules unprintable.
 pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
-    rig::RULES.into_iter().chain(aim::RULES).chain(mesh::RULES)
+    rig::RULES
+        .into_iter()
+        .chain(aim::RULES)
+        .chain(mesh::RULES)
+        .chain(clip::RULES)
 }
 
 /// Every finding one stage attempt produced, for one item.
@@ -281,6 +286,84 @@ impl Report {
 
     pub fn has_errors(&self) -> bool {
         self.findings.iter().any(|f| f.severity == Severity::Error)
+    }
+
+    /// Every way this report disagrees with the rule list `--list-rules`
+    /// prints, one complaint per finding.
+    ///
+    /// The Blender scripts build their Findings by hand, so this is what
+    /// holds them to the registry. A rule with no entry has no published
+    /// limit for anyone to read it against, and a finding that keeps the
+    /// id and changes the comparison is worse than a missing one: it is
+    /// `mesh.cleanup_effective` passing a fixer that changed nothing, at
+    /// 8 le 8.
+    ///
+    /// The severity is checked the same way, because the comparison decides
+    /// it and never the script that measured. Without that, four channels
+    /// left on Bezier filed as `info` reads 4 eq 0 and still exits 0, and
+    /// the only gate the retarget has is one word in a JSON file.
+    pub fn off_registry(&self, profile: &Profile) -> Vec<String> {
+        self.findings
+            .iter()
+            .filter_map(
+                |finding| match every_rule().find(|r| r.id == finding.rule) {
+                    None => Some(format!(
+                        "{} is not a rule `--list-rules` prints",
+                        finding.rule
+                    )),
+                    Some(rule) => Self::disagreement(finding, rule, profile),
+                },
+            )
+            .collect()
+    }
+
+    fn disagreement(finding: &Finding, rule: &Rule, profile: &Profile) -> Option<String> {
+        let limit = (rule.limit)(profile);
+        let wrong = [
+            ("comparison", finding.comparison != rule.comparison),
+            ("unit", finding.unit != rule.unit),
+            ("limit", finding.limit != limit),
+            ("measured_on", finding.measured_on != rule.space),
+            ("severity", !Self::severity_follows(finding)),
+        ]
+        .into_iter()
+        .filter_map(|(field, differs)| differs.then_some(field))
+        .collect::<Vec<&str>>();
+        (!wrong.is_empty()).then(|| {
+            format!(
+                "{} on {} reports a {} the rule list does not carry: \
+                 {:?} at {} {} {} {} {:?} against {} {} {} {:?}",
+                finding.rule,
+                finding.subject,
+                wrong.join(" and a "),
+                finding.severity,
+                finding.measured,
+                finding.comparison.as_str(),
+                finding.limit,
+                finding.unit,
+                finding.measured_on,
+                rule.comparison.as_str(),
+                limit,
+                rule.unit,
+                rule.space,
+            )
+        })
+    }
+
+    /// Whether a finding's severity is the one its own comparison gives.
+    ///
+    /// A warning says a measurement could not be taken and a skip says a
+    /// spec field switched the rule off, so neither one follows from a
+    /// number. The other two do, and exactly.
+    fn severity_follows(finding: &Finding) -> bool {
+        match finding.severity {
+            // An error exactly when the measurement is outside its limit,
+            // and information exactly when it is inside.
+            Severity::Info | Severity::Error => {
+                (finding.severity == Severity::Error) != finding.holds()
+            }
+            Severity::Warning | Severity::Skipped => true,
+        }
     }
 
     /// Non-zero if and only if at least one error is present.

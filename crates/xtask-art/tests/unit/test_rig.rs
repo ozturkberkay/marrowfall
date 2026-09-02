@@ -5,8 +5,12 @@
 //! it stays quiet on art it should accept.
 //!
 //! The negative is the **committed rig** wherever real broken art exists,
-//! because that is the failure this pipeline shipped. Seven rules reject it
-//! today. The gates become required CI checks when the survivor is
+//! because that is the failure this pipeline shipped. Seven rules rejected
+//! it, and the rename fixed three of them: `names_standard`, `bone_set` and
+//! `parents` now pass on the art on disk. Their negative is therefore the rig
+//! as it stood before the rename, committed as a fixture for exactly that.
+//! Four rules still reject the live rig, and they are geometry a rename
+//! cannot move. The gates become required CI checks when the survivor is
 //! regenerated, so these tests assert the failure rather than fixing it.
 
 use std::collections::BTreeSet;
@@ -21,9 +25,22 @@ use xtask_art::library::HUMANOID;
 use crate::rigs::{HEIGHT_METERS, HUMERUS_BELOW_HORIZONTAL, SyntheticRig};
 use crate::support::{committed_glb, repo_root};
 
-/// The seven rules the committed rig breaks. Every other rule must stay
-/// quiet on it, or the gates could never be made required.
-const BROKEN_TODAY: [&str; 7] = [
+/// The four rules the committed rig still breaks after the rename. Every
+/// other rule must stay quiet on it, or the gates could never be made
+/// required. All four are geometry, and T15's regeneration is what moves
+/// them.
+const BROKEN_TODAY: [&str; 4] = [
+    "rig.child_axis",
+    "rig.humerus_angle",
+    "rig.mirror_direction",
+    "rig.mirror_length",
+];
+
+/// The three the rename fixed, and the fixture that still fails them. The
+/// file is `humanoid.glb` as it stood at the commit before the rename, kept
+/// because decision 11 wants real broken art as the negative and this is the
+/// art we shipped.
+const BROKEN_BEFORE_THE_RENAME: [&str; 7] = [
     "rig.bone_set",
     "rig.child_axis",
     "rig.humerus_angle",
@@ -33,8 +50,10 @@ const BROKEN_TODAY: [&str; 7] = [
     "rig.parents",
 ];
 
+const PRE_RENAME: &str = "crates/xtask-art/tests/fixtures/humanoid_before_rename.glb";
+
 /// The shared skeleton, and the survivor rigged onto it. The same 24 bones,
-/// so both fail the same seven rules.
+/// so both fail the same four rules.
 const COMMITTED: [&str; 2] = [
     "art/skeletons/humanoid.glb",
     "art/characters/survivor/model.glb",
@@ -158,20 +177,20 @@ fn a_conformant_rig_measures_zero_on_every_rule() {
 ///
 /// The count is the rest of the family: without it a rule that quietly stops
 /// measuring one *passing* subject changes nothing any other test reads.
-/// `parents` skips the 3 bones the rig does not have, and `child_axis` and
-/// `bind_deviation` skip the chain steps that need them.
+/// Every bone the profile names is present after the rename, so every row of
+/// `parents` and `tails` resolves and the counts are the whole set.
 const SUBJECTS: [(&str, usize); 13] = [
     ("rig.names_standard", 24),
     ("rig.bone_set", 24),
     ("rig.single_root", 24),
-    ("rig.parents", 20),
-    ("rig.child_axis", 14),
+    ("rig.parents", 23),
+    ("rig.child_axis", 18),
     ("rig.mirror_length", 6),
     ("rig.mirror_direction", 6),
     ("rig.humerus_angle", 2),
     ("rig.facing", 2),
     ("rig.up_axis", 1),
-    ("rig.bind_deviation", 2),
+    ("rig.bind_deviation", 6),
     ("rig.world_height", 1),
     ("rig.object_transform", 1),
 ];
@@ -187,24 +206,37 @@ fn every_rule_measures_every_subject_it_should() {
     assert_eq!(
         findings.len(),
         SUBJECTS.iter().map(|(_, count)| count).sum::<usize>(),
-        "127 measurements, and no rule reports outside the list"
+        "138 measurements, and no rule reports outside the list"
     );
 }
 
-/// The same for the conformant rig, which resolves every subject there is.
+/// The conformant rig resolves the same subjects, which is what the rename
+/// bought: before it, three bones were missing and 11 measurements with them.
 #[test]
-fn a_conformant_rig_leaves_no_subject_unmeasured() {
+fn a_conformant_rig_and_the_renamed_rig_measure_the_same_subjects() {
     let findings = findings_of(&SyntheticRig::conformant());
 
-    for (rule, subjects) in [
-        ("rig.parents", 23),
-        ("rig.child_axis", 18),
-        ("rig.bind_deviation", 6),
-    ] {
+    for (rule, subjects) in SUBJECTS {
         let measured = findings.iter().filter(|f| f.rule == rule).count();
         assert_eq!(measured, subjects, "{rule} measured {measured} subjects");
     }
     assert_eq!(findings.len(), 138);
+}
+
+/// And the fixture is the rig before the rename, three bones short.
+#[test]
+fn the_rig_before_the_rename_left_eleven_measurements_unresolved() {
+    let findings = findings_for(&committed_glb(PRE_RENAME));
+
+    for (rule, subjects) in [
+        ("rig.parents", 20),
+        ("rig.child_axis", 14),
+        ("rig.bind_deviation", 2),
+    ] {
+        let measured = findings.iter().filter(|f| f.rule == rule).count();
+        assert_eq!(measured, subjects, "{rule} measured {measured} subjects");
+    }
+    assert_eq!(findings.len(), 127);
 }
 
 /// A rule that goes quiet when it passes is indistinguishable from a rule
@@ -228,7 +260,7 @@ fn every_rule_reports_on_good_art_and_on_bad() {
 // --- the committed rig, which seven rules reject --------------------------
 
 #[test]
-fn the_committed_rig_breaks_exactly_the_seven_rules_the_design_names() {
+fn the_committed_rig_breaks_exactly_the_four_rules_the_rename_cannot_fix() {
     for file in COMMITTED {
         assert_eq!(
             broken(&findings_for(&committed_glb(file))),
@@ -238,19 +270,38 @@ fn the_committed_rig_breaks_exactly_the_seven_rules_the_design_names() {
     }
 }
 
+/// The rename is what closed these three, so the art that fails them is the
+/// rig as it was. Without this fixture the three rules would have no negative
+/// control at all, and a rule with no negative proves nothing.
 #[test]
-fn the_committed_rig_is_named_by_no_convention() {
-    let findings = findings_for(&committed_glb(COMMITTED[0]));
+fn the_rig_before_the_rename_breaks_exactly_the_seven_rules_the_design_names() {
+    assert_eq!(
+        broken(&findings_for(&committed_glb(PRE_RENAME))),
+        BROKEN_BEFORE_THE_RENAME
+    );
+}
+
+#[test]
+fn the_rig_before_the_rename_is_named_by_no_convention() {
+    let findings = findings_for(&committed_glb(PRE_RENAME));
 
     assert_eq!(
         rejected(&findings, "rig.names_standard"),
         ["Spine02", "Spine01", "neck"]
     );
+    // And the rig on disk now carries none of those names.
+    assert_eq!(
+        rejected(
+            &findings_for(&committed_glb(COMMITTED[0])),
+            "rig.names_standard"
+        ),
+        Vec::<String>::new()
+    );
 }
 
 #[test]
-fn the_committed_rig_is_missing_three_of_the_bones_the_profile_requires() {
-    let findings = findings_for(&committed_glb(COMMITTED[0]));
+fn the_rig_before_the_rename_is_missing_three_of_the_bones_the_profile_requires() {
+    let findings = findings_for(&committed_glb(PRE_RENAME));
 
     // In the order the profile lists them.
     assert_eq!(
@@ -259,13 +310,17 @@ fn the_committed_rig_is_missing_three_of_the_bones_the_profile_requires() {
     );
     assert_eq!(measured(&findings, "rig.bone_set", "Neck"), 0.0);
     assert_eq!(measured(&findings, "rig.bone_set", "Hips"), 1.0);
+    // The renamed rig carries each of the 24 exactly once.
+    let renamed = findings_for(&committed_glb(COMMITTED[0]));
+    assert_eq!(rejected(&renamed, "rig.bone_set"), Vec::<String>::new());
+    assert_eq!(measured(&renamed, "rig.bone_set", "Neck"), 1.0);
 }
 
-/// This rig's `Spine` is its highest and the profile's is its lowest, which
-/// is the rename the whole convention decision turns on.
+/// Before the rename this rig's `Spine` was its highest and the profile's is
+/// its lowest, which is the rename the whole convention decision turns on.
 #[test]
-fn the_committed_rig_hangs_four_bones_from_the_wrong_parent() {
-    let findings = findings_for(&committed_glb(COMMITTED[0]));
+fn the_rig_before_the_rename_hung_four_bones_from_the_wrong_parent() {
+    let findings = findings_for(&committed_glb(PRE_RENAME));
 
     assert_eq!(
         rejected(&findings, "rig.parents"),
@@ -280,15 +335,26 @@ fn the_committed_rig_hangs_four_bones_from_the_wrong_parent() {
         message.contains("Spine01") && message.contains("Hips"),
         "a defect names what it found and what it wanted: {message}"
     );
+    // And every bone hangs where the profile says on the rig on disk.
+    assert_eq!(
+        rejected(&findings_for(&committed_glb(COMMITTED[0])), "rig.parents"),
+        Vec::<String>::new()
+    );
 }
 
 /// The audit's sideways `Hips`, whose own +Y points out of a hip socket
-/// instead of up the spine, and the head pitched off its own child.
+/// instead of up the spine, and the head pitched off its own child. `Spine2`
+/// joins them: its own tail row could not resolve before the rename, so this
+/// is the first time anything has measured it.
 #[test]
 fn the_committed_rigs_hips_and_head_axes_point_the_wrong_way() {
     let findings = findings_for(&committed_glb(COMMITTED[0]));
 
-    assert_eq!(rejected(&findings, "rig.child_axis"), ["Head", "Hips"]);
+    assert_eq!(
+        rejected(&findings, "rig.child_axis"),
+        ["Head", "Hips", "Spine2"]
+    );
+    assert!((measured(&findings, "rig.child_axis", "Spine2") - 10.157).abs() < 0.01);
     assert!(
         (measured(&findings, "rig.child_axis", "Hips") - 97.617).abs() < 0.01,
         "measured {}, and 97.617 degrees was measured by hand",

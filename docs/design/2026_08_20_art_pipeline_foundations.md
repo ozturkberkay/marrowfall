@@ -782,7 +782,7 @@ spec.ron
 ```text
 art/
   skeletons/humanoid.toml   # roles + [retarget_chain] / optional_roles
-                            #       + [fingerprints]
+                            #       + [fingerprints] + stride_segment
                             #       + NEW [profile]   every published limit
                             #       + NEW [aim_table] world aim per role
   animations/library.ron    # + NEW source_fps and travels per animation
@@ -827,6 +827,7 @@ tools/gltf_validator/
 tools/blender/src/
   skeleton.py               # NEW  the skeleton file: roles, chain, aim table
   transfer.py               # NEW  pure maths: matrices in and out, no bpy
+  clip.py                   # NEW  pure counts: what the retarget reports
   plant.py                  # NEW  pure maths: contact detection, 2 bone IK
   findings.py               # NEW  the shared Finding record and JSON writer
   retarget_animation.py     # bpy glue only: import, map, transfer, export
@@ -1250,6 +1251,24 @@ skinned file needs fact 20's path instead.
   lower edge is what proves 1e-5 is not sitting next to a cliff.
 - **Two tools agreeing is not evidence.** Our `bmesh` scan and Meshy's
   extension matched to the integer and both were wrong, sharing the input.
+- **Named blind spot: joint-chain posture on a rig that is not conformant.**
+  Every gate this design publishes for a clip measures a bone's own frame.
+  `clip.swing` is the quantity the transfer drives to zero **by
+  construction**, because aiming both rigs at one table makes every offset a
+  pure twist about the bone's own axis, so it reads about 0 on a correct fit
+  and cannot be evidence of anything else. `clip.twist` compares each rig
+  against its own rest, so a difference that is in the rest is exactly what
+  it subtracts out. `bake.landmark_golden` is a golden against our own
+  output, so it pins a regression and never an error. Nothing in that set
+  sees a **joint** chain: with `rig.child_axis` failing on `Hips` by 97.6
+  degrees, the survivor's spine lean comes out 22 degrees from the source's
+  and every gate stays quiet. T5 found it by hand, from four angles measured
+  on the vendor file, and the pipeline would not have. Mitigation, in two
+  parts, because the fault has two owners: **T15** regenerates our rig so its
+  own axes point at its own children, and **`source.child_axis`** in T7
+  reports the vendor's half at fetch time, since that skeleton is not ours to
+  fix. Until T15 the number is a known, measured, recorded difference rather
+  than a silent one.
 - **An empty set has no maximum worth trusting.** Zero plant runs is an error,
   not a skate of 0.0. An even majority window is the same shape of nothing,
   which is why the vote width is forced odd and at least 3.
@@ -1320,10 +1339,10 @@ it can honestly measure does fail. See the correction below.
 | `mesh.uv` | `model.glb`, one tile in [0,1] | `[synth]` a UV at 1.4, at -0.2, and a NaN | 0 out-of-bounds on `model.glb`, counted **as delivered**, before the weld: a seam is one position carrying two coordinates |
 | `mesh.texture` | `model.glb`, 0 primitives with no base color image | `[synth]` the same GLB with its material's base color stripped | rigging's own precondition |
 | `mesh.cleanup_effective` | a real run, holes 171 to 27 | `[synth]` a fixer stub that changes nothing, 8 lt 8 fails | the before and after pair. Non-manifold is excluded and owned by `non_manifold_post` |
-| `rig.bone_set` | `[synth]` a conformant rig, because the rename lands in T5 | `[art]` the current rig, which is missing `Spine1`, `Spine2` and `Neck`. Measured: 3 of 24 names absent | the 24 committed names, each present exactly once |
-| `rig.parents` | `[synth]` a conformant rig | `[art]` the current rig, `Spine` above `Spine02`. Measured: 4 bones hang wrong, `Spine`, `Head`, and both shoulders | the committed parent map |
+| `rig.bone_set` | `[art]` the committed rig, which carries all 24 after T5's rename | `[art]` `crates/xtask-art/tests/fixtures/humanoid_before_rename.glb`, the same file before it. Measured: 3 of 24 names absent | the 24 committed names, each present exactly once |
+| `rig.parents` | `[art]` the committed rig, where all 23 hang as the profile says | `[art]` the pre-rename fixture, `Spine` above `Spine02`. Measured: 4 bones hang wrong, `Spine`, `Head`, and both shoulders | the committed parent map |
 | `rig.single_root` | `humanoid.glb`, where every joint descends from `Hips` | `[synth]` `LeftUpLeg` parented outside `Hips`, which takes its whole branch with it, 4 bones | `humanoid.glb` |
-| `rig.child_axis` | synthetic conformant rig | `[art]` the current rig, whose `Hips` +Y points out of the left hip. Measured: `Hips` 97.6 deg and `Head` 26.0 deg, every other bone under 0.01 | per bone, from joint positions. `[synth]` a joint moved without its parent, for the metric itself |
+| `rig.child_axis` | synthetic conformant rig | `[art]` the current rig, whose `Hips` +Y points out of the left hip. Measured: `Hips` 97.618 deg, `Head` 26.002 deg and `Spine2` 10.157 deg, every other bone under 0.01. **`Spine2` is T5's**: before the rename four `[profile.tails]` rows named bones the rig did not have, so nothing had ever measured the spine chain | per bone, from joint positions. `[synth]` a joint moved without its parent, for the metric itself |
 | `rig.mirror_length`, `rig.mirror_direction` | `[synth]` an exact mirror | `[art]` the current rig, worst 3.68 percent and 2.16 deg, both on the `Foot` segment. The 1.45 deg the audit gave is the `ForeArm` pair | measured now: length 0.95 to 3.68 percent over six segments a side, direction 0.08 to 2.16 deg |
 | `rig.world_height` | `humanoid.glb`, 2.05 percent out, confirmed at 2.049 | `[synth]` a rig scaled by 100 at the object node, which reads 9900 percent and trips nothing else | 5 percent tolerance, against `spec.subject.height_meters` |
 | `rig.humerus_angle` | a conformant rig at 40 | `[art]` the current rig at 59.1 left and 59.3 right, 19.1 and 19.4 out | target 40, tolerance 15 |
@@ -1332,12 +1351,12 @@ it can honestly measure does fail. See the correction below.
 | `rig.up_axis` | `humanoid.glb`, 3.0 deg off Blender +Z | `[synth]` the same rig pitched 90 deg, which is the shape of an export with no axis conversion | `humanoid.glb`. The root chain end to end, named by the closest of six axes |
 | `rig.object_transform` | `humanoid.glb` and `model.glb`, whose bones carry a bind-pose action while the object carries none | `[synth]` a rig carrying an action on the object | both committed rigs read 0 channels above the skeleton |
 | `rig.aim_table` | `[synth]` a conformant rig, worst 33.7 deg, read in the `mixamo` convention it is named in | `[art]` the current rig, whose `Hips` axis points out of a hip socket. Measured: 97.8 deg against a band of 75, and every other role inside it. `[synth]` one bone's own axes turned 90 deg while every joint stays put, which no other rule can see | per role, both rigs' rest aims against the table: ours worst 34.9 deg (`right_hand`), a Mixamo FBX worst 45.01 (the arms), measured by hand on an uncommitted download, and `Head` 30.06, inside the band |
-| `rig.names_standard` | `[synth]` a conformant rig | `[art]` the current rig, which names `Spine01`, `Spine02` and `neck` | the Mixamo name list. This rule reports the names nothing can map, and `bone_set` reports the roles that are missing |
+| `rig.names_standard` | `[art]` the committed rig, renamed in T5 | `[art]` the pre-rename fixture, which names `Spine01`, `Spine02` and `neck` | the Mixamo name list. This rule reports the names nothing can map, and `bone_set` reports the roles that are missing |
 | `gltf.validator` | every shipped GLB | `[synth]` a GLB with an injected NaN | the four committed GLBs |
 | `source.posture` | `strafe_left.fbx`, head 34 to 37 | none, `info` only | the three Mixamo clips |
 | `source.fps_declared` | `source_fps` equals the file's rate | `[synth]` a `library.ron` with `source_fps` 24 against a 30 fps FBX | the three clips, read from the FBX |
 | `source.traveling` | `strafe_left.fbx` at `travels: true`, 2.31 m of hip travel, and `idle` at `travels: false`, under 2 cm | `[synth]` **both directions**: an in-place export declared `travels: true`, and a traveling export declared `travels: false` | symmetric on 0.02 m, so a mistyped flag fails either way. `travels` is declared per clip in T7 |
-| `clip.swing` | the new output | `[art]` the shipped `strafe_left.glb`, whose wrists are 52.9 and 66.5 deg out of their own rest. The absolute cross-rig figure is measured in T6 | the CMU cross-rig clip, T6 |
+| `clip.swing` | the new output, worst 0.000182 deg over 22 roles on `strafe_left` | `[art]` the shipped `strafe_left.glb`: measured absolutely against the vendor file its worst role is 97.797 deg and its wrists are 76.154 and 78.217. **It cannot be committed**, see the correction below, so T6's committed negative is the CMU clip plus a `[synth]` injection | the CMU cross-rig clip, T6 |
 | `clip.twist` | the new output | `[synth]` the new output with a 90 deg twist **post-multiplied in the bone's local frame**, `q @ Quaternion((0, 1, 0), radians(90))`, on `LeftUpLeg`. The same test asserts `clip.swing` stays under its limit, which is what proves the injection is a twist and not a yaw. Pre-multiplying by a world +Y rotation would yaw a downward thigh and fire `clip.swing` instead. The shipped clips cannot serve: `rotation_difference` is pure swing, so they carry our rest twist unchanged (fact 2) | the CMU cross-rig clip, T6 |
 | `clip.fps_grid` | a clip at its own `source_fps` | `[art]` the shipped `strafe_left.glb` in a 24 fps scene, range 0.8 to 16.8 | `run.glb` |
 | `clip.object_transform` | the new transfer | `[mut]` a variant calling `transform_apply(scale=True)` | object matrices identity on `run.glb` |
@@ -1347,7 +1366,7 @@ it can honestly measure does fail. See the correction below.
 | `clip.foot_contact.skate` | the new output | `[synth]` a clip whose planted foot is translated 5 cm during stance | real mocap 0.10 cm per frame |
 | `clip.foot_contact.penetration` | the new output | `[synth]` the root lowered 2 cm | 5 mm |
 | `clip.loop` | `run.glb` | `[synth]` a clip cut one frame short | `idle.glb` and `run.glb`, 2.0 deg today |
-| `clip.interpolation`, `clip.reference_pose_key` | all LINEAR, no frame 0 key | `[synth]` an action left on Bezier with a reference-pose key | `run.glb` |
+| `clip.interpolation`, `clip.reference_pose_key` | the recorded report of the `run.glb` refit, committed as `crates/xtask-art/tests/fixtures/retarget.run.1.json`: 44 findings, no error | `[synth]` in CI, on `clip.py`: a Bezier key, a pose not held at the ends, and a key off either end of the range. Plus `[mut]` two Blender runs, one with the LINEAR and CONSTANT pass removed and one with a pose keyed outside the source's range, each firing its own rule on all 22 bones and leaving the other at `info`. Plus `[synth]` three reports the runner refuses: an unpublished rule id, a limit of its own, and a defect filed as `info` | `run.glb`. **The reference pose is never keyed at any frame**, so the rule measures keys outside the source's frame range rather than at frame 0. See the correction below |
 | `bake.frame_count`, `bake.non_empty` | the rendered set | `[synth]` one frame deleted, and one fully transparent | directions x sampled frames, alpha coverage |
 | `bake.in_frame`, `bake.pivot` | the rendered set | `[synth]` a pose clipped at the border, and a frame offset 20 px | 1 px inset, and the ground line across directions |
 | `bake.forearm_roll` | spec field 0.0 | `[synth]` the field set to 30 | `eq 0` |
@@ -1558,6 +1577,183 @@ changes a sprite rate, or asserts a strict T-pose bind.
    read `[f64; 3]` out of a longer TOML array without a word. Both readers
    now refuse any row that is not three numbers.
 
+### Corrections T5 made to this document
+
+1. **`transfer.py` cannot import `mathutils`.** The Logic sketch is written in
+   `Vector` and `Quaternion`, which only exist inside Blender: `mathutils` is
+   not a dependency of this repository and the venv carries stubs alone. A
+   `transfer.py` that imported it could not be unit tested, which is the
+   module's whole reason for existing, so it carries about 90 lines of its own
+   vector, quaternion and 4x4 affine maths over plain tuples. The alternatives
+   were weighed and are on the record. **The PyPI `mathutils`** is a third
+   party extraction of Blender's C module, so the maths would be pinned to a
+   package nobody in this project maintains. **numpy** ships inside Blender
+   and covers the affine half, but it is not a dependency of the venv either
+   and it carries no quaternion type, so the swing-twist split would still be
+   ours. **scipy**, whose `Rotation` does carry one, does not ship with
+   Blender at all. Owning about 90 lines beats owning a dependency that
+   answers half the question, and it keeps the "no new dependency in a
+   headless build" the retargeter decision claimed.
+2. **The reference pose occupies no frame, so `clip.reference_pose_key`
+   measures something better.** "No key at the reference frame" and the Test
+   Plan's "no frame 0 key" both assume the reference pose is posed and keyed.
+   It is not: it is computed algebraically from the two rigs' rest matrices,
+   and the target rig is never posed at all. Frame 0 is also not free. The
+   three Mixamo clips run frames 1 to 21 and the committed Meshy clips start
+   at 0, so a fixed reference frame of 0 would delete a real frame from a
+   refit. The rule therefore counts keys **outside the source's frame
+   range**, which still catches retarget_bvh's frame-0 T pose and catches a
+   key past either end. It is a range and not the source's own key set: the
+   transfer resamples every frame between the two ends on purpose, so a key
+   the source does not have is the output working as intended. For the same
+   reason **requirement 9 removes no key**: the output's frame set is exactly
+   the source's, and the sentence in the two-rule decision saying the ranges
+   "can differ by one" is wrong.
+3. **A swing metric cannot see a wrong aim table.** Aiming both rigs at the
+   same table makes every offset a pure twist about the bone's own axis, which
+   cannot move where the bone points, so `clip.swing` reads 0 whatever the
+   table says. Measured: feeding the table where a reference pose belongs
+   leaves the worst swing at 1.2e-14 degrees while moving the offsets by up to
+   160.970, and a sign error on one mirror row re-rolls that arm by 64.923
+   degrees and reads 2e-14 on swing. This is the strongest argument for the
+   two-rule verifier there is, and it is why two of the three known-answer
+   assertions are on the **offset** rather than on the output.
+4. **`Offset(LeftUpLeg)` is 176.47 degrees on the real pair, not 174.** 174 is
+   the rest roll difference between the two legs (fact 3). The offset is
+   measured after the whole chain is aimed, and our `Hips` needs a 97.8 degree
+   correction that every child's reference frame carries. The design's own
+   number is kept as a known-answer test on an isolated two-bone pair, where
+   174.00 is provably the answer and nothing else can contribute.
+5. **The absolute accuracy is 0.000181 degrees, not "about 0.1".** Worst
+   absolute per-bone swing against the vendor file, over all 22 roles: 0.000181
+   on `strafe_left`, 0.000184 on `strafe_right`, 0.000196 on `walk_back`. The
+   figure is glTF's f32 storage, not the maths. The prototype's 0.1 came from
+   reading poses back through a dependency graph. **Every one of these three
+   is a hand measurement, not a test**, read in Blender 5.2.1 against
+   `art/staging/downloads/*.fbx`: that directory is gitignored, so no test can
+   open those files and CI cannot re-derive the numbers. The same is true of
+   the `clip.swing` positive column in the Test Plan. What CI does hold is the
+   same invariant on a synthetic pair, at 1e-9 degrees, in
+   `test_transfer.py`.
+6. **Two of T5's four acceptance postures cannot be reproduced, the cause is
+   measured on both rigs, and only our half of it is ours to fix.** A
+   joint-chain lean is the bone's own direction only on a rig that passes
+   `rig.child_axis`, and neither rig does. The transfer preserves each bone's
+   own axis exactly, so those two leans come out shifted by the rest-geometry
+   difference: neck lean 17.3 to 20.3 against the source's 34.0 to 37.0,
+   spine lean 26.9 to 31.6 against 4.5 to 8.5. The two elbow ranges, whose
+   bones do point at their children on both rigs, are reproduced to 0.002
+   degrees. **The refit is the control:** the same clip on the same body
+   reproduces every one of the four to 0.001 degrees, which places the
+   difference in the rigs and not in the transfer.
+
+   The residual splits by rig, and the two halves have different owners.
+
+   | Whose | Measured | Who closes it |
+   |---|---|---|
+   | ours | `Hips` 97.615 deg off the direction to `Spine`, `Spine2` 10.157, `Head` 26.002 | **T15**, which regenerates the rig. `rig.aim_table` already reports the `Hips` row as an error at 97.801 against a band of 75 |
+   | the vendor's | Mixamo's `Neck` axis 16.933 deg off the direction to its own `Head`, its `Hips` 7.051 off the direction to `Spine` | **nobody.** It is not our skeleton to regenerate |
+
+   So T15 does **not** close the neck. After it, our conformant `Neck` will
+   point exactly where their non-conformant `Neck` points, which is 16.933
+   degrees off the direction to their own `Head`, so our head joint will
+   still lean about 17 degrees differently from theirs on every Mixamo clip.
+   That is the correct output of a correct transfer between a conformant rig
+   and one that is not, and the only honest thing to do with it is report it:
+   T7 adds **`source.child_axis`**, an `info` rule beside `source.posture`,
+   measuring each source bone's own axis against the direction to its mapped
+   child at fetch time. It carries no negative, per the Terminology
+   exemption, and it goes in the audition artifact so a clip's own rest
+   geometry is on record before the pipeline spends anything on it.
+7. **The rename closed three rules, and the seven-rule negative moved to a
+   fixture.** `rig.names_standard`, `rig.bone_set` and `rig.parents` pass on
+   the committed rig now, so their `[art]` negative is
+   `crates/xtask-art/tests/fixtures/humanoid_before_rename.glb`, the same file
+   before the rename. **Five** rules still reject the live rig and all five
+   are geometry: `rig.child_axis`, `rig.humerus_angle`, `rig.mirror_length`
+   and `rig.mirror_direction` from `check/rig.rs`, plus `rig.aim_table` from
+   `check/aim.rs`, which shares the prefix and is easy to miss when counting
+   one file. `cargo art check` prints 14 defects across the five. The rig now
+   resolves 138 measurements against 127, because 11 of them named bones it
+   did not have.
+8. **A rename is a JSON-chunk edit, which is why the mesh limits survive it.**
+   glTF addresses a joint by node index, so a bone's name is one string in one
+   place. Rewriting the JSON chunk and leaving the BIN chunk byte identical
+   keeps every vertex, accessor and inverse bind matrix, and every provisional
+   `[profile.mesh]` calibration still reads what T3 measured. The sequence is
+   in `art/skeletons/README.md`.
+9. **The three committed atlases are now older than the clips.**
+   `project/assets/characters/survivor/` holds `idle.png`, `run.png` and
+   `walk_back.png`, baked before the rename from the clips as they were.
+   Refitting the clips does not rebake them, and T5 does not: the sprites are
+   unchanged art from a source that has moved, and every one of them is
+   regenerated in T15 along with the rig. Nothing between here and there
+   reads an atlas against its clip, which is `bake.landmark_golden`'s job in
+   T14.
+10. **There are three committed Meshy clips, not two.** `walk_back.glb` is
+   `Meshy(action_id: 544)` in `library.ron`, authored on this rig like `idle`
+   and `run`, so the rename invalidates it too and it is refit in the same
+   change. Every clip in `art/animations/` must be refit, not two of them.
+11. **The `[art]` negative for `clip.swing` cannot be committed.**
+    `art/animations/local/` is gitignored because Adobe's licence allows the
+    motion in the game and forbids publishing the file, and the shipped
+    Mixamo outputs live only there. Their numbers are recorded in the Test
+    Plan instead, measured before the old code was deleted.
+12. **The two `clip.*` rules T5 owns are measured in Python, and only the
+    reading needs `bpy`.** Rule four sends CI-side measurement to Rust, and
+    these two cannot go: the glTF exporter resamples every channel and writes
+    its own interpolation, so a Bezier action exports as LINEAR and the
+    defect is invisible in the file. What can go, and did, is the counting.
+    `clip.py` takes a `Channel` record and returns two counts per bone with
+    no `bpy` anywhere, so both rules have a pytest negative that runs in CI:
+    a Bezier key, a pose not held at the ends, and a key off either end of
+    the source's range. The shell only reads F-curves into `Channel`. The
+    rules themselves stay in `check/clip.rs` so `--list-rules` prints them,
+    and the runner refuses a report that disagrees with what it printed, down
+    to the severity: the comparison decides that, so a defect filed as
+    `info` is refused rather than counted as quiet.
+13. **`test_framing.py` lost 14 tests, and none of them asserted a function
+    against itself.** The deleted-functions table says twelve, "each asserts a
+    function against itself". The 14 that go are the tests of
+    `bind_pose_mismatch`, `bone_direction_angle`, `loop_mismatch` and
+    `rotation_angle`, and every one carries a literal expected value. The
+    genuinely self-referential tests in that file recompute
+    `Framing.ortho_scale`, which "Kept untouched" keeps, so rewriting them is
+    not this task's.
+14. **The stray `Icosphere` is Blender's glTF importer, not the art.** Fact 8
+    records it as an object in `model.glb` and T3's correction says the file
+    holds none. Both are right: an empty scene plus one import gives a
+    42-vertex unparented `Icosphere` beside the real mesh, for `humanoid.glb`
+    and for `model.glb`, neither of which names one anywhere in its JSON. That
+    is where the audit's island count of 8 came from against T3's 7.
+15. **The femur ratio landed here, not in T8, and the two roles are data.**
+    T5's acceptance measures root travel, and travel is only right once the
+    metric is right, so requirement 4's first half ships with the transfer:
+    2.3117 m of source travel times a femur ratio of 0.8815 gives 2.0378 m,
+    measured on the output. Which two roles those are is skeleton data and
+    not glue, so the skeleton file gains `stride_segment`, refused at load
+    time if it names something that is not a role or one joint twice. A
+    quadruped's stride is not a human femur. T8 keeps the floor snap and the
+    2 percent travel band.
+16. **An undriven bone had to be put back at rest, and a fractional frame
+    range had to be refused.** Two things the transfer's docstring claimed
+    and nothing enforced. "Held at its rest transform" is only true if
+    something clears the pose: `humanoid.glb` arrives carrying its own
+    bind-pose action, and replacing an action does not undo the pose it left
+    behind, so `write_keys` now sets `matrix_basis` to identity on every bone
+    first. Measured: a bone left 30.00 degrees off rest comes out at 0.00.
+    Today only two roleless leaves are undriven, and the first
+    `optional_roles` gap would have made it a silently wrong arm. And the
+    frame range was rounded, which is fact 6 hiding: the output of a 30 fps
+    clip read back in a 24 fps scene spans 0.8 to 16.8, and rounding it to 1
+    to 17 drops four frames without a word. The retarget refuses a range that
+    is not whole within 1e-4 of a frame and names T7, which sets the scene
+    rate from `source_fps` and reports `clip.fps_grid`.
+17. **`findings.attempt()` is new.** A script builds its own Findings and every
+    Finding carries an attempt, and T1 exposed no way to read it: the header
+    parser was private. It is three lines, and it keeps the attempt coming off
+    the one path the runner set.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -1642,8 +1838,8 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T4  | Aim table and role map | 1.5 d | Add `[retarget_chain]`, `optional_roles`, `[fingerprints]` and `[aim_table]`. `skeleton.py` reads the whole file for the transfer and `check/aim.rs` reads the table for the gate, so each side refuses what it reads. Implement the three table validations, the `rig.aim_table` rule, and the skip-unmapped-ancestor walk over the chain. Checked against a synthetic fixture and against both rigs, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a row no convention maps, and a broken mirror pair each fail to load, on both sides. An out-of-band aim is `rig.aim_table`, which `--list-rules` prints and which reports 22 subjects per rig. | T2 |
 | T5  | The transfer, the rename, and the refit | 3.5 d | `transfer.py` with no `bpy`: quaternion swing-twist aim application projecting the **vector part** per fact 19, `swing_singular` raised at 180 degrees, roleless bones skipped, separate `ref_world_*` dicts, algebraic local matrices, rotation-only keys for non-root bones, typed errors, LINEAR and CONSTANT, no reference-frame key. Delete `rebase_action`, `sole_children`, `align_to_world`, `bind_pose_mismatch`, `bone_directions` and the twelve self-referential tests. **Rename the committed `humanoid.glb` bones and refit `idle.glb` and `run.glb` in this PR**, because the rename invalidates them and this is the first task with the new retarget. | The three numeric known-answer tests pass: 10 deg twist to 10.00 and 0.00, 30 deg swing to 0.00 and 30.00, `Offset(LeftUpLeg)` about 174 and not identity. The 180 degree case raises `swing_singular`. A rig with `head_end` is skipped, not raised on. Requirements 1, 2, 7, 8, 9, 10 each have a passing test and a rejected negative. The 1.5x scale test gives identical output bone lengths. | T1, T4 |
 | T6  | Clip verifier: swing and twist | 1.5 d | `check/clip.rs`: `clip.swing` absolute against the vendor file, `clip.twist` as the change from each rig's own rest twist about its own +Y using the same vector-part split, both over every mapped bone, frames aligned by seconds. `clip.object_transform` as identity object matrices plus byte-matching rest bones. Commit one CMU BVH clip and **measure both limits from it**. Delete `verify_retarget.py` and `LIMB_CHAIN`. | Both limits are written into `[profile]` from a measurement, not assumed. The Rust split passes the same two numeric cases as the Python one. `clip.swing` rejects the shipped `strafe_left.glb` and stays quiet on `run.glb` and the CMU clip. `clip.twist` rejects the post-multiplied 90 deg twist, and `clip.swing` stays under its limit on that same fixture. A 180 degree swing reports an error, never a NaN. | T5 |
-| T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. No sprite rate changes. | T5 |
-| T8  | Femur scale and floor snap | 1.5 d | Femur ratio replaces total height, with every location key scaled in the same operation. Snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`. | Requirement 4 holds. Travel matches the source within 2 percent. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
+| T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Add `source.child_axis`, `info` only, measuring each source bone's own axis against the direction to its mapped child, because a vendor skeleton is not ours to fix and correction 6 is the reason it has to be on record. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. `source.child_axis` records Mixamo's `Neck` at 16.933 degrees and its `Hips` at 7.051. No sprite rate changes. | T5 |
+| T8  | Floor snap, and the femur band | 1.5 d | **T5 already moved the metric**: `stride_segment` in the skeleton file names the two roles, and every location key is scaled by that ratio in one operation. What is left here is the floor: snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`, and hold travel to a band rather than to a printed line. | Requirement 4 holds. Travel matches the source within 2 percent, which T5 measures by hand at 2.3117 m times 0.8815 giving 2.0378 m and does not yet gate. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
 | T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **Recalibrate every `[profile.mesh]` row on `bare.glb`, which T3 could not download, and measure the first real `clean.glb` for `mesh.non_manifold_post`.** | **A real 5-credit rigging call with a data URI succeeds**, or the short-lived upload fallback ships instead. `cleanup_effective` shows holes, islands and self-intersections strictly decreasing. `non_manifold_post`'s ceiling is a measured number and every later run stays inside it. No `[profile.mesh]` row still says provisional. Texture and UVs survive. The no-op stub is rejected at 8 lt 8. With `symmetry: false` the fixer skips it, the mirror rules report `skipped`, and their negative controls still run. | T3 |
 | T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, `force = true`, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two called `concept` with `force = true`. `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |

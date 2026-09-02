@@ -61,8 +61,6 @@ KEY_LIGHT_ELEVATION_DEG = 60.0
 FRAMING_MARGIN = 1.08
 
 Vec3 = tuple[float, float, float]
-Vec4 = tuple[float, float, float, float]
-"""A quaternion, in Blender's w, x, y, z order."""
 
 
 class Frozen(BaseModel):
@@ -290,41 +288,6 @@ def missing_bones(animated: set[str], available: set[str]) -> list[str]:
     return sorted(animated - available)
 
 
-# How far two rigs' bind poses may differ before an animation is refused.
-# Meshy reconstructs each character separately, so identical rigs still land a
-# degree or two apart; 64 degrees apart is a T-pose against an A-pose.
-BIND_POSE_TOLERANCE_DEG = 15.0
-
-
-def bone_direction_angle(a: Vec3, b: Vec3) -> float:
-    """Angle in degrees between two bone directions."""
-    dot = sum(x * y for x, y in zip(a, b, strict=True))
-    length = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
-    if length == 0.0:
-        return 0.0
-    return math.degrees(math.acos(max(-1.0, min(1.0, dot / length))))
-
-
-def bind_pose_mismatch(
-    character: dict[str, Vec3],
-    animation: dict[str, Vec3],
-    tolerance_deg: float = BIND_POSE_TOLERANCE_DEG,
-) -> list[tuple[str, float]]:
-    """Bones whose rest direction differs too much between two rigs.
-
-    An action holds each bone's rotation *relative to its rest pose*, so
-    applying it to a rig in a different rest pose adds that difference to every
-    joint. Worst case the character flails.
-    """
-    off = []
-    for name in sorted(set(character) & set(animation)):
-        angle = bone_direction_angle(character[name], animation[name])
-        if angle > tolerance_deg:
-            off.append((name, angle))
-    off.sort(key=lambda pair: pair[1], reverse=True)
-    return off
-
-
 def rest_height(points: Iterable[Vec3]) -> float:
     """Vertical span of an armature's rest bones, in world units.
 
@@ -349,41 +312,3 @@ def translation_scale(source: float, target: float) -> float:
     if not 0.2 <= ratio <= 5.0:
         raise ValueError(f"ratio {ratio:.2f} outside 0.2..5.0, wrong rig?")
     return ratio
-
-
-# How far a clip's first and last pose may differ before it is worth a look.
-# Tighter than the bind pose tolerance: a gait either closes or it hitches.
-LOOP_TOLERANCE_DEG = 2.0
-
-
-def rotation_angle(a: Vec4, b: Vec4) -> float:
-    """Angle in degrees between two rotations.
-
-    A quaternion and its negation are the same rotation, hence the absolute
-    value: without it, half the comparisons read as a full turn apart.
-    """
-    dot = abs(sum(x * y for x, y in zip(a, b, strict=True)))
-    length = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
-    if length == 0.0:
-        return 0.0
-    return math.degrees(2.0 * math.acos(min(1.0, dot / length)))
-
-
-def loop_mismatch(
-    first: dict[str, Vec4],
-    last: dict[str, Vec4],
-    tolerance_deg: float = LOOP_TOLERANCE_DEG,
-) -> list[tuple[str, float]]:
-    """Bones whose first and last pose differ, worst first.
-
-    A looping clip has to be one whole cycle, or playback jumps back to the
-    start pose once a loop. Advisory: whether a clip is a cycle is a judgement
-    call, so this reports and never refuses.
-    """
-    off = [
-        (name, angle)
-        for name in sorted(set(first) & set(last))
-        if (angle := rotation_angle(first[name], last[name])) > tolerance_deg
-    ]
-    off.sort(key=lambda pair: pair[1], reverse=True)
-    return off

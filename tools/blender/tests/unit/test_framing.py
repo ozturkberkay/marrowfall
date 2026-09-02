@@ -8,30 +8,22 @@ import math
 
 import pytest
 from framing import (
-    BIND_POSE_TOLERANCE_DEG,
     CAMERA_ELEVATION_DEG,
     DIRECTION_NAMES,
     FRAMING_MARGIN,
     KEY_LIGHT_AZIMUTH_DEG,
     KEY_LIGHT_ELEVATION_DEG,
-    LOOP_TOLERANCE_DEG,
     BakeSettings,
     Bounds,
     Framing,
-    Vec3,
-    Vec4,
-    bind_pose_mismatch,
-    bone_direction_angle,
     bone_from_data_path,
     direction_rotation,
     forearm_roll_sign,
     frame_filename,
     is_forearm,
     key_light_rotation,
-    loop_mismatch,
     missing_bones,
     rest_height,
-    rotation_angle,
     sampled_frames,
     translation_scale,
 )
@@ -394,63 +386,6 @@ def test_reports_bones_the_character_does_not_have() -> None:
     assert missing == ["Tail", "Wing"], "sorted, so the error message is stable"
 
 
-# --- Bind pose ------------------------------------------------------------
-
-T_POSE = {"LeftArm": (1.0, 0.0, 0.0), "Hips": (0.0, 0.0, 1.0)}
-A_POSE = {"LeftArm": (0.38, 0.07, -0.92), "Hips": (0.0, 0.0, 1.0)}
-
-
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [
-        ((1.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.0),
-        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 90.0),
-        ((1.0, 0.0, 0.0), (-1.0, 0.0, 0.0), 180.0),
-        ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), 0.0),
-    ],
-)
-def test_bone_direction_angle(a: Vec3, b: Vec3, expected: float) -> None:
-    assert bone_direction_angle(a, b) == pytest.approx(expected, abs=1e-6)
-
-
-def test_scale_does_not_affect_the_angle() -> None:
-    assert bone_direction_angle((2.0, 0.0, 0.0), (0.5, 0.0, 0.0)) == pytest.approx(0.0)
-
-
-def test_matching_bind_poses_report_nothing() -> None:
-    assert bind_pose_mismatch(T_POSE, T_POSE) == []
-
-
-def test_a_tpose_animation_on_an_apose_rig_is_caught() -> None:
-    """The failure that made the survivor flail: 64 degrees of arm offset."""
-    off = bind_pose_mismatch(T_POSE, A_POSE)
-    assert [name for name, _ in off] == ["LeftArm"], "Hips match, so only the arm"
-    assert off[0][1] == pytest.approx(67.0, abs=1.5)
-
-
-def test_small_differences_are_tolerated() -> None:
-    """Two rigs reconstructed separately land a degree or two apart."""
-    nearly = {"LeftArm": (1.0, 0.0, -0.05), "Hips": (0.0, 0.0, 1.0)}
-    assert bind_pose_mismatch(T_POSE, nearly) == []
-
-
-def test_worst_offender_is_reported_first() -> None:
-    off = bind_pose_mismatch(
-        {"a": (1.0, 0.0, 0.0), "b": (1.0, 0.0, 0.0)},
-        {"a": (0.0, 1.0, 0.0), "b": (0.7, 0.7, 0.0)},
-    )
-    assert [name for name, _ in off] == ["a", "b"]
-
-
-def test_bones_absent_from_either_rig_are_ignored() -> None:
-    # missing_bones already reports those, with a better message.
-    assert bind_pose_mismatch({"only_here": (1.0, 0.0, 0.0)}, A_POSE) == []
-
-
-def test_the_tolerance_is_wide_enough_for_noise_and_narrow_enough_for_a_pose() -> None:
-    assert 5.0 < BIND_POSE_TOLERANCE_DEG < 60.0
-
-
 # --- Rig proportions ------------------------------------------------------
 
 
@@ -503,52 +438,3 @@ def test_a_ratio_that_could_only_be_the_wrong_rig_is_refused(target: float) -> N
     """Half to five times covers a child and a giant; past that is a bad file."""
     with pytest.raises(ValueError, match="wrong rig"):
         translation_scale(1.7, target)
-
-
-# --- Loop check -----------------------------------------------------------
-
-IDENTITY = (1.0, 0.0, 0.0, 0.0)
-QUARTER_TURN = (math.cos(math.radians(45.0)), 0.0, 0.0, math.sin(math.radians(45.0)))
-
-
-@pytest.mark.parametrize(
-    ("a", "b", "expected"),
-    [
-        (IDENTITY, IDENTITY, 0.0),
-        (IDENTITY, QUARTER_TURN, 90.0),
-        # q and -q are the same rotation; a naive dot product reports 360.
-        (IDENTITY, (-1.0, 0.0, 0.0, 0.0), 0.0),
-        ((0.0, 0.0, 0.0, 0.0), IDENTITY, 0.0),
-    ],
-)
-def test_rotation_angle(a: Vec4, b: Vec4, expected: float) -> None:
-    assert rotation_angle(a, b) == pytest.approx(expected, abs=1e-6)
-
-
-def test_a_whole_cycle_reports_nothing() -> None:
-    pose = {"Hips": IDENTITY, "LeftArm": QUARTER_TURN}
-    assert loop_mismatch(pose, pose) == []
-
-
-def test_a_clip_that_does_not_return_to_its_start_names_the_worst_bones() -> None:
-    """The fault the current walk_back has: it hitches once a loop."""
-    off = loop_mismatch(
-        {"Hips": IDENTITY, "LeftArm": IDENTITY},
-        {"Hips": QUARTER_TURN, "LeftArm": IDENTITY},
-    )
-    assert [name for name, _ in off] == ["Hips"]
-    assert off[0][1] == pytest.approx(90.0)
-
-
-def test_a_gait_that_drifts_a_degree_is_close_enough_to_loop() -> None:
-    barely = (math.cos(math.radians(0.5)), 0.0, 0.0, math.sin(math.radians(0.5)))
-    assert loop_mismatch({"Hips": IDENTITY}, {"Hips": barely}) == []
-
-
-def test_bones_missing_from_either_pose_are_ignored() -> None:
-    assert loop_mismatch({"Hips": QUARTER_TURN}, {"Spine": IDENTITY}) == []
-
-
-def test_the_loop_tolerance_is_tighter_than_the_bind_pose_one() -> None:
-    """A gait either closes or it does not; a rest pose only has to be close."""
-    assert 0.0 < LOOP_TOLERANCE_DEG < BIND_POSE_TOLERANCE_DEG

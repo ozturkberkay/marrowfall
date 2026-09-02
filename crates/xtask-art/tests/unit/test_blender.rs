@@ -8,7 +8,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use xtask_art::blender::{self, venv_site_packages};
+use xtask_art::blender::{self, BLENDER_SRC, venv_site_packages};
 use xtask_art::check::Artifacts;
 
 use crate::support::EnvGuard;
@@ -451,4 +451,103 @@ fn a_virtualenv_with_no_site_packages_also_says_to_run_uv_sync() {
     std::fs::create_dir_all(dir.path().join(".venv/lib/python3.13")).unwrap();
     let error = venv_site_packages(dir.path()).unwrap_err().to_string();
     assert!(error.contains("uv sync"), "got: {error}");
+}
+
+// --- the one thing a script may never do ---------------------------------
+
+/// `transform_apply` on a rig that owns an action rescales the rest geometry
+/// and leaves every location key byte identical, so their meaning changes by
+/// the object's scale and 2.316 m of travel reads as 231.599 m. World
+/// matrices are composed instead, so no script needs it and none may have it.
+///
+/// A lint rather than a review note: the call was in `align_to_world` until
+/// the new transfer deleted the last caller, and nothing else would notice it
+/// coming back.
+const FORBIDDEN: &str = "transform_apply";
+
+/// Every line of a Python file that is code, with comments and docstrings
+/// dropped so the rule can still be explained in prose where it is enforced.
+fn code_lines(source: &str) -> Vec<&str> {
+    let mut inside = false;
+    let mut code = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let comment = !inside && trimmed.starts_with('#');
+        let quoted = comment || (!inside && trimmed.starts_with("\"\"\""));
+        if !inside && !quoted {
+            code.push(line);
+        }
+        // A stray triple quote inside a comment must not open a docstring.
+        if !comment && line.matches("\"\"\"").count() % 2 == 1 {
+            inside = !inside;
+        }
+    }
+    code
+}
+
+#[test]
+fn a_stray_triple_quote_in_a_comment_hides_nothing() {
+    let source = "# prose with a stray \"\"\" in it\nbpy.ops.object.transform_apply()\n";
+    assert_eq!(code_lines(source), vec!["bpy.ops.object.transform_apply()"]);
+}
+
+/// Every `.py` under the scripts directory, by name.
+fn blender_scripts() -> Vec<(String, String)> {
+    let dir = crate::support::repo_root().join(BLENDER_SRC);
+    let mut scripts: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .expect("the Blender scripts directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|kind| kind == "py"))
+        .map(|path| {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            (
+                name,
+                std::fs::read_to_string(&path).expect("a readable script"),
+            )
+        })
+        .collect();
+    scripts.sort();
+    scripts
+}
+
+#[test]
+fn no_blender_script_applies_an_object_transform() {
+    let scripts = blender_scripts();
+
+    assert!(scripts.len() >= 7, "found {} scripts", scripts.len());
+    for (name, source) in &scripts {
+        for line in code_lines(source) {
+            assert!(
+                !line.contains(FORBIDDEN),
+                "{name} calls {FORBIDDEN}: {}",
+                line.trim()
+            );
+        }
+    }
+}
+
+/// The lint's own negative: the same scan over a script that has it back.
+#[test]
+fn the_lint_catches_the_call_coming_back() {
+    let reinserted = "\
+def align_to_world(rig):
+    \"\"\"Forbidden: transform_apply, in prose, is not a call.\"\"\"
+    # transform_apply in a comment is not a call either.
+    bpy.ops.object.transform_apply(rotation=True)
+";
+
+    let code: Vec<&str> = code_lines(reinserted);
+
+    let caught: Vec<&str> = code
+        .iter()
+        .copied()
+        .filter(|line| line.contains(FORBIDDEN))
+        .collect();
+
+    assert_eq!(
+        caught,
+        ["    bpy.ops.object.transform_apply(rotation=True)"],
+        "prose and comments are not calls, and the call is: {code:#?}"
+    );
 }

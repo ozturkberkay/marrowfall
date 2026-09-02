@@ -743,12 +743,17 @@ fn print_rule_list(root: &Path) -> Result<()> {
         "no skeleton profile in {}",
         Profile::dir(root).display()
     );
+    // Widest id, so a new rule cannot push the columns out of line.
+    let width = check::every_rule()
+        .map(|rule| rule.id.len())
+        .max()
+        .unwrap_or_default();
     for skeleton in skeletons {
         let profile = Profile::of(root, &skeleton)?;
         println!("rules for the {skeleton:?} skeleton, from its [profile]\n");
         for rule in check::every_rule() {
             println!(
-                "{:<20} {} {:<8} {:<16} {}",
+                "{:<width$} {} {:<8} {:<16} {}",
                 rule.id,
                 rule.comparison.as_str(),
                 (rule.limit)(&profile),

@@ -50,9 +50,12 @@ repos:
     rev: 38980559e3a605691d6579f96222c30778e5a69e # 3.0.0
     hooks:
       - id: forbid-binary
-        # Art is committed on purpose and tracked by Git LFS, and the vendored
-        # addons ship their own icons; everywhere else a binary is an accident.
-        exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|project/assets/|project/addons/)
+        # Art is committed on purpose and tracked by Git LFS, the vendored
+        # addons ship their own icons, and one test fixture is a rig: the
+        # committed `humanoid.glb` as it stood before the bones were renamed,
+        # which is the only negative control three rig rules have. Everywhere
+        # else a binary is an accident.
+        exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|crates/xtask-art/tests/fixtures/humanoid_before_rename\.glb$|project/assets/|project/addons/)
       - id: script-must-have-extension
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: ad1b27d73581aa16cca06fc4a0761fc563ffe8e8 # v1.5.6

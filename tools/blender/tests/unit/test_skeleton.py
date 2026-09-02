@@ -27,6 +27,7 @@ from skeleton import (
 SKELETON_TOML = """
 canonical = "meshy"
 optional_roles = []
+stride_segment = ["spine_lower", "spine_upper"]
 
 [conventions.meshy]
 hips = "Hips"
@@ -153,24 +154,6 @@ def test_an_unknown_convention_names_the_ones_that_exist() -> None:
         a_skeleton().convention("maya")
 
 
-def test_the_spine_is_matched_by_role_rather_than_by_name() -> None:
-    """Both rigs have a `Spine`, and it is not the same bone."""
-    mapped = a_skeleton().bone_map("mixamo")
-    assert mapped["spine"] == "Spine02"
-    assert mapped["spine2"] == "Spine"
-
-
-def test_a_clip_on_the_canonical_rig_maps_every_bone_to_itself() -> None:
-    assert a_skeleton().bone_map("meshy") == {
-        "hips": "Hips",
-        "spine02": "Spine02",
-        "spine": "Spine",
-        "neck": "neck",
-        "leftarm": "LeftArm",
-        "rightarm": "RightArm",
-    }
-
-
 MIXAMO_BONES = [
     "mixamorig:Hips",
     "mixamorig:Spine",
@@ -217,13 +200,42 @@ def test_the_top_of_the_chain_cannot_be_optional() -> None:
         edited(("optional_roles = []", 'optional_roles = ["hips"]'))
 
 
+# --- The stride segment ---------------------------------------------------
+
+
+def test_the_stride_segment_is_the_pair_root_travel_is_sized_by() -> None:
+    assert a_skeleton().stride_segment == ("spine_lower", "spine_upper")
+
+
+def test_a_stride_segment_naming_something_that_is_not_a_role_is_refused() -> None:
+    with pytest.raises(ValidationError, match="stride_segment names"):
+        edited(
+            (
+                'stride_segment = ["spine_lower", "spine_upper"]',
+                'stride_segment = ["left_arm", "tail"]',
+            )
+        )
+
+
+def test_a_stride_segment_of_one_joint_twice_is_refused() -> None:
+    """It would measure a length of zero, and `translation_scale` would then
+    refuse the clip with a message about the wrong rig."""
+    with pytest.raises(ValidationError, match="one joint twice"):
+        edited(
+            (
+                'stride_segment = ["spine_lower", "spine_upper"]',
+                'stride_segment = ["left_arm", "left_arm"]',
+            )
+        )
+
+
 # --- The retargeting chain ------------------------------------------------
 
 
 def test_the_chain_has_one_top_and_it_is_the_hips() -> None:
     roles = a_skeleton()
 
-    assert roles.top == "hips"
+    assert set(roles.roles) - set(roles.retarget_chain) == {"hips"}
     assert roles.retarget_chain["neck"] == "spine_upper"
 
 
@@ -388,7 +400,8 @@ def test_the_committed_skeleton_file_loads() -> None:
     assert roles.canonical == "meshy"
     assert len(roles.roles) == 22, "22 roles, no fingers"
     assert len(roles.aim_table) == 22, "one aim per role, torso included"
-    assert roles.top == "hips"
+    assert set(roles.roles) - set(roles.retarget_chain) == {"hips"}
+    assert roles.stride_segment == ("left_upper_leg", "left_leg")
     assert roles.optional_roles == (), "both conventions fill every role"
 
 

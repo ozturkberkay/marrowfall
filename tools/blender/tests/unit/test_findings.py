@@ -20,6 +20,7 @@ from findings import (
     Progress,
     Report,
     Severity,
+    attempt,
     guard,
     report_path,
     write_report,
@@ -222,6 +223,16 @@ def test_the_header_comes_off_the_path_the_runner_set(
 
     assert (report.stage, report.item, report.attempt) == ("download", "strafe_left", 2)
     assert json.loads(path.read_text())["item"] == "strafe_left"
+
+
+def test_the_attempt_comes_off_that_same_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A script builds its findings with it, and `write_report` refuses any
+    finding that claims another attempt, so there is one source."""
+    monkeypatch.setenv(REPORT_ENV, str(tmp_path / "retarget.walk_back.3.json"))
+
+    assert attempt() == 3
 
 
 def test_a_script_cannot_label_its_report_as_another_run(

@@ -6,9 +6,9 @@
 //
 // `skeleton` is what makes sharing safe. Animations address bones by name, so
 // a motion only fits a character rigged onto the same skeleton. "humanoid"
-// here means this project's standard biped: 24 bones, no fingers, named by
-// Meshy's auto-rigger, which a hand-built rig must match to be interchangeable.
-// Those names are in `art/skeletons/humanoid.toml`.
+// here means this project's standard biped: 24 bones, no fingers, under the
+// Mixamo and HumanIK names, which a hand-built rig must match to be
+// interchangeable. Those names are in `art/skeletons/humanoid.toml`.
 AnimationLibrary(
     animations: {
         "idle": Animation(

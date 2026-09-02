@@ -30,8 +30,14 @@ hangs. `[profile.tails]` is the one child a bone's own axis must point at,
 which a branch bone needs: `Hips` has three children and only `Spine`
 continues the body.
 
-The committed rig still carries the auto-rigger's own names and breaks seven
-of these rules. It is regenerated in one deliberate operation, below.
+The committed rig was renamed to these names, so `rig.names_standard`,
+`rig.bone_set` and `rig.parents` now pass on it. Five rules still break, and
+all five are geometry a rename cannot move: `rig.child_axis` on `Hips`,
+`Spine2` and `Head`, `rig.mirror_length` and `rig.mirror_direction` on the
+limb segments, `rig.humerus_angle` on both arms, and `rig.aim_table` on
+`Hips`, which lives in `check/aim.rs` rather than `check/rig.rs` and shares
+the prefix. `cargo art check` prints 14 defects across the five.
+Regenerating the rig is what closes them, in one deliberate operation, below.
 
 ## `[aim_table]`, where every bone must point
 
@@ -79,9 +85,10 @@ bought elsewhere is fitted to this file once, when it is fetched, by
 `tools/blender/src/retarget_animation.py`. After that every file in
 `../animations/` drives the same skeleton.
 
-The fit pairs bones by role and never by name, out of `humanoid.toml`: this
-rig's `Spine` is the highest of its three and Mixamo's is the lowest, so a name
-match would drive the wrong bone.
+The fit pairs bones by role and never by name, out of `humanoid.toml`. Both
+convention tables name the same bones today, and they stay two tables: this
+rig's `Spine` was the highest of its three until the rename, and the next
+bought rig need not agree with either.
 
 ## Regenerating it
 
@@ -89,3 +96,27 @@ match would drive the wrong bone.
 glTF needs to keep an armature at all. Every clip in `../animations/` is
 authored against it, so regenerating it means refitting every clip in the same
 change.
+
+## Renaming its bones
+
+A rename is a JSON edit and a refit, in that order, and both belong to one
+change. glTF addresses a joint by node index, so a bone's name is one string
+in one place: rewriting the JSON chunk and leaving the BIN chunk alone keeps
+every vertex, accessor and inverse bind matrix byte identical, which is what
+lets the mesh calibrations in `[profile.mesh]` survive it.
+
+1. Rewrite `nodes[].name` in `humanoid.glb`, in every character's
+   `model.glb`, and in every clip under `../animations/`. All of them, or the
+   bake stops: it refuses a clip that drives a bone the character does not
+   have.
+2. Update the canonical convention table in `humanoid.toml` to the new names.
+3. Refit every clip under `../animations/` through
+   `tools/blender/src/retarget_animation.py`, with the clip as `--source` and
+   `--convention meshy`. Same body, so every offset is identity to about
+   0.03 degrees and the posture does not move. That number is the check: a
+   larger one means the rig and the clips disagree about the rest pose.
+
+`../../crates/xtask-art/tests/fixtures/humanoid_before_rename.glb` is this
+file as it stood before the last rename. It is the only negative control
+`rig.names_standard`, `rig.bone_set` and `rig.parents` have, so it is
+committed and not regenerated.

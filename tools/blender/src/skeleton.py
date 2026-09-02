@@ -80,6 +80,9 @@ class Skeleton(Frozen):
     still be told apart."""
     optional_roles: tuple[str, ...] = ()
     """Roles a convention other than the canonical one may leave out."""
+    stride_segment: tuple[str, str]
+    """The two roles whose joints root travel is sized by. A femur, because
+    total height carries the head and the feet and neither takes a step."""
 
     @classmethod
     def parse(cls, text: str) -> "Skeleton":
@@ -92,11 +95,6 @@ class Skeleton(Frozen):
         """Every role this skeleton has, which the canonical convention
         defines because it is the one rig that must fill them all."""
         return set(self.conventions[self.canonical])
-
-    @property
-    def top(self) -> str:
-        """The role at the top of the retargeting chain."""
-        return next(iter(self.roles - set(self.retarget_chain)))
 
     @model_validator(mode="after")
     def the_canonical_convention_must_be_declared(self) -> "Skeleton":
@@ -119,6 +117,17 @@ class Skeleton(Frozen):
                     f"{sorted(absent | invented)}, and only "
                     f"{sorted(self.optional_roles)} may be left out"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def the_stride_segment_must_be_two_of_this_skeletons_roles(self) -> "Skeleton":
+        if unknown := sorted(set(self.stride_segment) - self.roles):
+            raise ValueError(f"stride_segment names {unknown}, which are not roles")
+        if self.stride_segment[0] == self.stride_segment[1]:
+            raise ValueError(
+                f"stride_segment is {list(self.stride_segment)}, which is one "
+                f"joint twice and so has no length"
+            )
         return self
 
     @model_validator(mode="after")
@@ -209,14 +218,6 @@ class Skeleton(Frozen):
             known = sorted(self.conventions)
             raise ValueError(f"unknown bone naming convention {name!r}, known: {known}")
         return convention
-
-    def bone_map(self, convention: str) -> dict[str, str]:
-        """Bare source bone name to canonical bone name, paired by role."""
-        canonical = self.conventions[self.canonical]
-        return {
-            bare_bone_name(bone): canonical[role]
-            for role, bone in self.convention(convention).items()
-        }
 
     def aim(self, role: str) -> Vec3:
         """Where one role's bone must point, as a unit direction."""

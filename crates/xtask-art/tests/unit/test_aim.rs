@@ -197,7 +197,10 @@ fn the_committed_table_maps_every_role_in_every_convention() {
             "{convention}"
         );
     }
-    assert_eq!(table.bones("meshy").unwrap()["spine_lower"], "Spine02");
+    // The rename made the two tables identical, and they stay two tables:
+    // the next bought rig need not name its bones this way. `[fingerprints]`
+    // is what tells them apart.
+    assert_eq!(table.bones("meshy").unwrap()["spine_lower"], "Spine");
     assert_eq!(table.bones("mixamo").unwrap()["spine_lower"], "Spine");
 }
 
@@ -447,18 +450,19 @@ fn a_conformant_rig_breaks_no_row() {
     assert!((measured(&findings, "left_toe") - 33.690).abs() < 0.01);
 }
 
-/// The same rig read in the other convention, where three roles name bones
-/// this rig does not have. Those roles are `rig.bone_set`'s business, so
-/// there is no rest aim here to measure.
+/// A rig that names three of its bones something no convention uses. Those
+/// roles are `rig.bone_set`'s business, so there is no rest aim here to
+/// measure.
 #[test]
 fn a_role_whose_bone_the_rig_lacks_is_left_to_the_bone_set_rule() {
-    let findings = findings_of(&SyntheticRig::conformant(), "meshy");
+    let odd = SyntheticRig::conformant()
+        .renamed("Spine1", "spine1")
+        .renamed("Spine2", "spine2")
+        .renamed("Neck", "neck");
 
-    assert_eq!(
-        findings.len(),
-        19,
-        "22 roles less Spine02, Spine01 and neck"
-    );
+    let findings = findings_of(&odd, "meshy");
+
+    assert_eq!(findings.len(), 19, "22 roles less Spine1, Spine2 and Neck");
     assert_eq!(rejected(&findings), Vec::<String>::new());
 }
 
