@@ -19,10 +19,18 @@ fn base64url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// A JWT of the shape Adobe issues: three base64url segments, `exp` in the
-/// payload. Unsigned, because nothing here verifies a signature.
+/// A JWT carrying the standard `exp`, which Adobe does not send but other
+/// providers do. Unsigned, because nothing here verifies a signature.
 fn a_jwt(expires_at: i64) -> String {
     a_jwt_payload(&format!(r#"{{"sub":"someone","exp":{expires_at}}}"#))
+}
+
+/// A JWT of the shape Adobe IMS really issues: no `exp` at all, and
+/// `created_at` plus `expires_in` in milliseconds, both as strings.
+fn an_adobe_jwt(created_at_ms: i64, expires_in_ms: i64) -> String {
+    a_jwt_payload(&format!(
+        r#"{{"user_id":"someone","created_at":"{created_at_ms}","expires_in":"{expires_in_ms}"}}"#
+    ))
 }
 
 fn a_jwt_payload(payload: &str) -> String {
@@ -292,7 +300,11 @@ fn the_environment_overrides_chrome_entirely() {
 
 #[test]
 fn an_empty_override_is_treated_as_unset() {
+    // `HOME` too, or this falls through to the developer's own Chrome and
+    // passes or fails depending on whether they happen to be logged in.
+    let home = tempfile::tempdir().unwrap();
     let mut env = EnvGuard::new();
+    env.set("HOME", home.path().to_str().unwrap());
     env.set("MARROWFALL_MIXAMO_TOKEN", "");
     assert!(chrome::mixamo_token().unwrap().is_none());
 }
@@ -319,4 +331,48 @@ fn waiting_gives_up_and_says_what_the_user_has_to_do() {
         .to_string();
     assert!(error.contains("Mixamo"), "got: {error}");
     assert!(error.contains("Chrome"), "got: {error}");
+}
+
+/// Adobe IMS sends no `exp`. Reading only that claim finds no token at all and
+/// asks the user to log in again while they already are, which is the fault
+/// this covers.
+#[test]
+fn an_adobe_token_is_found_though_it_carries_no_exp() {
+    let day = 86_400_000;
+    let created = (FOREVER - 3600) * 1000;
+    let jwt = an_adobe_jwt(created, day);
+    let token = chrome::newest_token(std::slice::from_ref(&jwt)).unwrap();
+    assert_eq!(token.expose_secret(), jwt);
+}
+
+/// The expiry is `created_at + expires_in`, converted from milliseconds, so a
+/// token issued a day and an hour ago has already lapsed.
+#[test]
+fn an_adobe_token_lapses_a_day_after_it_was_created() {
+    let day = 86_400_000;
+    let created = (unix_now() - 86_400 - 3600) * 1000;
+    assert!(chrome::newest_token(&[an_adobe_jwt(created, day)]).is_none());
+}
+
+/// Adobe quotes both numbers. A provider that sends them bare must still work.
+#[test]
+fn millisecond_claims_are_read_whether_quoted_or_not() {
+    let created = (FOREVER - 3600) * 1000;
+    let bare = a_jwt_payload(&format!(
+        r#"{{"created_at":{created},"expires_in":86400000}}"#
+    ));
+    assert!(chrome::newest_token(&[bare]).is_some());
+}
+
+/// A payload with neither shape is not a token, and must not be guessed at.
+#[test]
+fn a_payload_with_no_expiry_at_all_reads_as_no_token() {
+    let jwt = a_jwt_payload(r#"{"user_id":"someone"}"#);
+    assert!(chrome::newest_token(&[jwt]).is_none());
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
 }

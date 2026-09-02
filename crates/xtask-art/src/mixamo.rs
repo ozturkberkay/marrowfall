@@ -40,7 +40,7 @@ const RATE_LIMIT_ATTEMPTS: usize = 5;
 /// clip. The smallest real Mixamo export is tens of kilobytes.
 const MIN_FBX_BYTES: usize = 1024;
 
-/// One motion in Mixamo's catalogue.
+/// One motion in Mixamo's catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Product {
     pub id: String,
@@ -241,7 +241,7 @@ impl Client {
     }
 }
 
-/// The catalogue entries in a search response.
+/// The catalog entries in a search response.
 pub fn products_in(payload: &Value) -> Vec<Product> {
     let text = |product: &Value, key| {
         product
@@ -272,7 +272,7 @@ pub fn export_body(motion: &Motion) -> Value {
         "character_id": CHARACTER_ID,
         "type": "Motion",
         "product_name": motion.name,
-        "gms_hash": [motion.gms_hash],
+        "gms_hash": [flatten_params(&motion.gms_hash)],
         "preferences": {
             "format": "fbx7",
             // With its skin: an FBX carries its rest pose in the skin's bind
@@ -285,6 +285,29 @@ pub fn export_body(motion: &Motion) -> Value {
             "reducekf": "0",
         },
     })
+}
+
+/// Collapses `params` from the pairs the product call returns into the
+/// comma-joined values the export call wants.
+///
+/// The two endpoints disagree about the shape of the same field: the product
+/// gives `[["Overdrive", 0], ..]` and the export wants `"0,.."`. Sending the
+/// pairs back is accepted and then fails the render with "The job failed".
+fn flatten_params(gms_hash: &Value) -> Value {
+    let mut hash = gms_hash.clone();
+    let Some(pairs) = hash.get("params").and_then(Value::as_array) else {
+        return hash;
+    };
+    let values: Vec<String> = pairs
+        .iter()
+        .map(|pair| match pair.get(1) {
+            Some(Value::String(text)) => text.clone(),
+            Some(other) => other.to_string(),
+            None => String::new(),
+        })
+        .collect();
+    hash["params"] = Value::String(values.join(","));
+    hash
 }
 
 /// What the monitor endpoint says about an export in flight.
