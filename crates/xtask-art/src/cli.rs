@@ -14,16 +14,12 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::chrome;
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
-use crate::mixamo;
+use crate::providers::mixamo::{self, session};
 use crate::spec::{CharacterSpec, CharacterType, Paths};
 
-/// Where a human logs in, and where the terminal points them.
-const MIXAMO_URL: &str = "https://www.mixamo.com/";
-
-/// How long to wait for that login before giving up and saying so.
+/// How long to wait for a browser login before giving up and saying so.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Parser)]
@@ -410,7 +406,7 @@ pub async fn report_balance(provider: Provider) {
         // OpenAI exposes no balance endpoint on the images API.
         return;
     }
-    if let Ok(client) = crate::meshy::Client::from_env()
+    if let Ok(client) = crate::providers::meshy::Client::from_env()
         && let Ok(balance) = client.balance().await
     {
         println!("  meshy balance: {balance} credits");
@@ -486,28 +482,18 @@ fn glb_digests(library: &AnimationLibrary, root: &Path) -> Result<BTreeMap<Strin
 }
 
 /// The Mixamo credential, asking the user to log in when there is none.
-fn mixamo_session() -> Result<chrome::Token> {
-    if let Some(token) = chrome::mixamo_token()? {
+fn mixamo_session() -> Result<session::Token> {
+    if let Some(token) = session::token()? {
         return Ok(token);
     }
-    let profiles = chrome::profiles_dir()?;
+    let profiles = session::profiles_dir()?;
     println!("Mixamo needs a logged-in session, and there is none.");
-    println!("Log in at {MIXAMO_URL} in the Chrome window opening now; this carries on by itself.");
-    open_chrome(MIXAMO_URL)?;
-    chrome::wait_for_token(&profiles, LOGIN_TIMEOUT)
-}
-
-/// Opens a URL in Chrome, which is the browser the token is read from.
-fn open_chrome(url: &str) -> Result<()> {
-    let status = std::process::Command::new("open")
-        .args(["-a", "Google Chrome", url])
-        .status()
-        .context("running `open`, which is macOS only, as this pipeline is")?;
-    anyhow::ensure!(
-        status.success(),
-        "could not open Chrome. Open {url} yourself, log in, and run this again"
+    println!(
+        "Log in at {} in the Chrome window opening now; this carries on by itself.",
+        mixamo::SITE_URL
     );
-    Ok(())
+    session::open_login()?;
+    session::wait_for_token(&profiles, LOGIN_TIMEOUT)
 }
 
 pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {

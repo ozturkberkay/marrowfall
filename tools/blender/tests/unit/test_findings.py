@@ -236,7 +236,16 @@ def test_a_script_cannot_label_its_report_as_another_run(
 
 
 @pytest.mark.parametrize(
-    "name", ["bake.json", "bake.survivor.json", "bake.survivor.x.json", ".1.json"]
+    "name",
+    [
+        "bake.json",
+        "bake.survivor.json",
+        "bake.survivor.x.json",
+        ".1.json",
+        # A superscript is a digit that `int()` refuses, so the check is
+        # `isdecimal`, not `isdigit`.
+        "bake.survivor.².json",
+    ],
 )
 def test_a_report_path_that_carries_no_header_is_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, name: str

@@ -1,6 +1,6 @@
 use serde_json::json;
-use xtask_art::meshy::{
-    Task, TaskStatus, animation_body, image_to_3d_body, rigging_body, truncate,
+use xtask_art::providers::meshy::{
+    Task, TaskStatus, animation_body, image_to_3d_body, rigging_body,
 };
 use xtask_art::spec::TextureResolution;
 
@@ -26,7 +26,7 @@ fn task_status_parses_api_casing() {
 /// A status the API adds later must not crash a poll loop that has already
 /// been paid for.
 #[test]
-fn unrecognised_status_falls_back_instead_of_failing() {
+fn unrecognized_status_falls_back_instead_of_failing() {
     let parsed: TaskStatus = serde_json::from_str("\"EXPIRED\"").unwrap();
     assert_eq!(parsed, TaskStatus::Unknown);
 }
@@ -121,15 +121,6 @@ fn animation_body_uses_rig_task_id_and_numeric_action() {
     assert_eq!(body["action_id"], 92);
     assert!(body.get("input_task_id").is_none());
     assert!(body.get("action_name").is_none());
-}
-
-/// Truncation runs while reporting another error, so it must never panic.
-#[test]
-fn truncate_never_splits_a_character() {
-    let text = "é".repeat(500);
-    let cut = truncate(&text, 300);
-    assert!(cut.ends_with('…'));
-    assert_eq!(truncate("short", 300), "short");
 }
 
 #[test]

@@ -55,17 +55,19 @@ built*. So `pack` appears in the lock without appearing in the spec, its
 settings live in the spec's `bake` block, which is one block of sprite settings
 shared by the last two stages rather than one block per stage.
 
-The pipeline is Rust. `art/pipeline/` holds the two Blender scripts, the only
-Python in the repo, because `bpy` is Python-only and Blender is the one tool
-that cannot be driven any other way. `cargo art` shells out to
-`blender --background --python …` for the bake and the split, and does
-everything else itself.
+The pipeline is Rust. `tools/blender/src/` holds the only Python in the repo,
+because `bpy` is Python-only and Blender is the one tool that cannot be driven
+any other way: `bake_sprites.py`, `retarget_animation.py` and
+`strip_animation.py` run inside Blender, and `framing.py` and `findings.py`
+are the `bpy`-free modules they import. `cargo art` shells out to
+`blender --background --python …` for those three, and does everything else
+itself.
 
 ## Shared animations
 
 Motion is declared once in `art/animations/library.ron` and shared by every
 character on the same skeleton. Most of it is committed. What is not, because
-its licence allows the animation but not republishing the file, is fetched:
+its license allows the animation but not republishing the file, is fetched:
 
 ```bash
 cargo art fetch            # every clip declared but missing

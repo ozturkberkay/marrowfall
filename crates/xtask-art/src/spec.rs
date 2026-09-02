@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum View {
     /// Generated first and used as the reference for the rest, so every view
-    /// shows recognisably the same character.
+    /// shows recognizably the same character.
     Front,
     Back,
     Left,

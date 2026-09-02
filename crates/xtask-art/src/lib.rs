@@ -5,14 +5,12 @@
 
 pub mod blender;
 pub mod check;
-pub mod chrome;
 pub mod cli;
+pub mod http;
 pub mod library;
 pub mod lock;
-pub mod meshy;
-pub mod mixamo;
-pub mod openai;
 pub mod pack;
 pub mod preview;
+pub mod providers;
 pub mod spec;
 pub mod stages;

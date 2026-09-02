@@ -108,7 +108,7 @@ fn the_two_load_bearing_flags_are_never_dropped() {
     );
     assert!(
         argv.contains(&OsString::from("--python-exit-code")),
-        "defence in depth for a top-level raise: {argv:?}"
+        "defense in depth for a top-level raise: {argv:?}"
     );
 }
 

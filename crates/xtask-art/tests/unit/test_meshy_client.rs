@@ -3,7 +3,7 @@
 use serde_json::json;
 use wiremock::matchers::{body_json_string, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::meshy::{Client, Endpoint};
+use xtask_art::providers::meshy::{Client, Endpoint};
 
 use crate::support::EnvGuard;
 
@@ -251,7 +251,7 @@ async fn run_refuses_a_status_it_does_not_recognise() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(error.contains("unrecognised status"), "got: {error}");
+    assert!(error.contains("unrecognized status"), "got: {error}");
 }
 
 #[tokio::test]

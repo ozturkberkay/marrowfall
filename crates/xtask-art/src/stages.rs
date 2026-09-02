@@ -15,10 +15,10 @@ use crate::blender::{self, BLENDER_SRC};
 use crate::check::Artifacts;
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
-use crate::meshy::{self, Endpoint};
-use crate::openai;
 use crate::pack::{self, CharacterAssets};
 use crate::preview;
+use crate::providers::meshy::{self, Endpoint};
+use crate::providers::openai;
 use crate::spec::{CharacterSpec, Paths, View};
 
 /// Generates the four concept views. Each is written as it arrives and reused
@@ -74,7 +74,7 @@ pub async fn concept(spec: &CharacterSpec, paths: &Paths, force: bool) -> Result
     })
 }
 
-/// Reconstructs a textured, retopologised mesh from the concept views. Remesh
+/// Reconstructs a textured, retopologized mesh from the concept views. Remesh
 /// and texture are parameters here because the API performs them inline.
 pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
     let client = meshy::Client::from_env()?;

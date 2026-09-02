@@ -4,7 +4,7 @@ use xtask_art::library::{Animation, MotionSource};
 use xtask_art::lock::{
     LOCAL_PIPELINE_VERSION, Lock, Provider, Stage, StageRecord, TaskRef, fingerprint,
 };
-use xtask_art::meshy::Endpoint;
+use xtask_art::providers::meshy::Endpoint;
 use xtask_art::spec::{CharacterSpec, CharacterType};
 
 fn spec() -> CharacterSpec {

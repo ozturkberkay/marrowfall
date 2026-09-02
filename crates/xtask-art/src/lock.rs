@@ -13,7 +13,7 @@ use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::library::{AnimationLibrary, MotionSource};
-use crate::meshy::Endpoint;
+use crate::providers::meshy::Endpoint;
 use crate::spec::CharacterSpec;
 
 /// One step of the pipeline. Ordering is the execution order, and

@@ -4,7 +4,7 @@ use base64::Engine as _;
 use serde_json::json;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::openai::Client;
+use xtask_art::providers::openai::Client;
 
 use crate::support::{EnvGuard, a_png};
 

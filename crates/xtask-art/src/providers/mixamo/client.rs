@@ -2,8 +2,8 @@
 //!
 //! Neither the API nor the FBX format is documented by its owner, so every
 //! response is handled as raw JSON and an unexpected shape fails with the
-//! endpoint named, the way [`crate::meshy`] already does. Only the export and
-//! the poll that follows it need a credential; search and product do not.
+//! endpoint named. Only the export and the poll that follows it need a
+//! credential; search and product do not.
 //!
 //! The clip that arrives is authored on Mixamo's own body, with Mixamo's own
 //! bone names and rest pose. `retarget_animation.py` is what makes it ours.
@@ -13,10 +13,9 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use serde_json::{Value, json};
 
-use crate::chrome::Token;
-use crate::meshy::truncate;
-
-const BASE: &str = "https://www.mixamo.com/api/v1";
+use super::SITE_URL;
+use super::session::Token;
+use crate::http::{base_url, millis_from, retry_after, truncate};
 
 /// Mixamo's own web client sends this on every call, and so must we.
 const API_KEY: &str = "mixamo2";
@@ -31,8 +30,6 @@ const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// How long to wait out a rate limit that carries no usable `Retry-After`.
-const DEFAULT_BACKOFF: Duration = Duration::from_secs(5);
 /// Attempts per request before a rate limit is reported as a failure.
 const RATE_LIMIT_ATTEMPTS: usize = 5;
 
@@ -71,8 +68,6 @@ pub enum Progress {
 #[derive(Debug)]
 pub struct Client {
     http: reqwest::Client,
-    /// API root. Overridable so the tests can serve the API locally; there is
-    /// no other reason to change it.
     base: String,
     poll_interval: Duration,
     poll_timeout: Duration,
@@ -86,9 +81,7 @@ impl Client {
             .context("building HTTP client")?;
         Ok(Self {
             http,
-            base: std::env::var("MARROWFALL_MIXAMO_BASE_URL").unwrap_or_else(|_| BASE.to_owned()),
-            // Overridable so the tests can exercise the poll loop in
-            // milliseconds rather than minutes; nothing else should set these.
+            base: base_url("MARROWFALL_MIXAMO_BASE_URL", &format!("{SITE_URL}/api/v1")),
             poll_interval: millis_from("MARROWFALL_MIXAMO_POLL_MS", POLL_INTERVAL),
             poll_timeout: millis_from("MARROWFALL_MIXAMO_TIMEOUT_MS", POLL_TIMEOUT),
         })
@@ -157,7 +150,7 @@ impl Client {
             if tokio::time::Instant::now() >= deadline {
                 bail!(
                     "Mixamo has not finished this export after {} minute(s); \
-                     check https://www.mixamo.com",
+                     check {SITE_URL}",
                     self.poll_timeout.as_secs().div_ceil(60)
                 );
             }
@@ -324,7 +317,7 @@ pub fn progress_in(payload: &Value) -> Result<Progress> {
         bail!("Mixamo could not render this motion: {reason}");
     }
     if status != "completed" {
-        // Undocumented API: anything unrecognised is polled again, and the
+        // Undocumented API: anything unrecognized is polled again, and the
         // deadline is what stops a run that never finishes.
         return Ok(Progress::Working);
     }
@@ -351,21 +344,4 @@ pub fn check_fbx(bytes: &[u8]) -> Result<()> {
         bytes.len()
     );
     Ok(())
-}
-
-/// How long to wait after a rate limit (RFC 6585 section 4).
-///
-/// Seconds only. RFC 9110 also allows an HTTP-date, which is rare enough that
-/// the fixed backoff covers it.
-pub fn retry_after(header: Option<&str>) -> Duration {
-    header
-        .and_then(|value| value.trim().parse().ok())
-        .map_or(DEFAULT_BACKOFF, Duration::from_secs)
-}
-
-fn millis_from(variable: &str, fallback: Duration) -> Duration {
-    std::env::var(variable)
-        .ok()
-        .and_then(|ms| ms.parse().ok())
-        .map_or(fallback, Duration::from_millis)
 }

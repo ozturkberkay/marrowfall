@@ -10,12 +10,12 @@
 //
 // Exit codes, because a broken asset and a broken tool are different things:
 //   0  a report is on stdout
-//   3  the file is not glTF at all, reason on stderr
+//   3  the file is not glTF at all, reason on stderr, tool version on stdout
 //   2  this script was called wrongly
 //   anything else  the tool itself is broken
 import { readFile } from "node:fs/promises";
 
-import { validateBytes } from "gltf-validator";
+import { validateBytes, version } from "gltf-validator";
 
 const [path] = process.argv.slice(2);
 if (!path) {
@@ -30,7 +30,10 @@ try {
   process.stdout.write(JSON.stringify(report));
 } catch (error) {
   // A rejection means the input is not glTF at all. Report it as one line,
-  // not as an uncaught exception with a runtime stack trace.
+  // not as an uncaught exception with a runtime stack trace. There is no
+  // report to carry the version, so stdout carries it instead: every finding
+  // names the tool that measured it.
+  process.stdout.write(version());
   console.error(`${path}: ${error}`);
   process.exit(3);
 }
