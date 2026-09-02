@@ -525,10 +525,10 @@ fn only_backing_away_from_the_cursor_costs_speed() {
         } else {
             PLAYER_SPEED
         };
-        let travelled = (only_entity(&sim.snapshot()).pos - MIDFIELD).length();
+        let traveled = (only_entity(&sim.snapshot()).pos - MIDFIELD).length();
         assert!(
-            (travelled - want).abs() < 1e-3,
-            "a second of {stride:?} covered {travelled} tiles, not {want}"
+            (traveled - want).abs() < 1e-3,
+            "a second of {stride:?} covered {traveled} tiles, not {want}"
         );
     }
 }
@@ -559,10 +559,10 @@ fn a_diagonal_is_no_faster_than_a_cardinal() {
         sim.tick(Input::new(Vec2::new(1.0, 1.0).normalize()), &[]);
     }
 
-    let travelled = (only_entity(&sim.snapshot()).pos - MIDFIELD).length();
+    let traveled = (only_entity(&sim.snapshot()).pos - MIDFIELD).length();
     assert!(
-        (travelled - PLAYER_SPEED).abs() < 1e-3,
-        "a diagonal second covered {travelled}, not {PLAYER_SPEED}"
+        (traveled - PLAYER_SPEED).abs() < 1e-3,
+        "a diagonal second covered {traveled}, not {PLAYER_SPEED}"
     );
 }
 

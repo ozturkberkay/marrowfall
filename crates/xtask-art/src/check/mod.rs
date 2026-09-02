@@ -209,7 +209,7 @@ impl Report {
     }
 
     /// Where this report's own files belong. The runner compares this against
-    /// the path it asked for, so a mislabelled header cannot pass.
+    /// the path it asked for, so a mislabeled header cannot pass.
     pub fn artifacts(&self, repo_root: &Path) -> Result<Artifacts> {
         Artifacts::new(repo_root, &self.stage, &self.item, self.attempt)
     }

@@ -76,7 +76,7 @@ pub fn render(world: &World, shot: Shot) -> RgbImage {
 fn ground(world: &World, shot: Shot) -> RgbImage {
     let side = shot.side();
     RgbImage::from_fn(side, side, |px, py| {
-        Rgb(colour_of(world, tile_of(shot, px as i32, py as i32)))
+        Rgb(color_of(world, tile_of(shot, px as i32, py as i32)))
     })
 }
 
@@ -119,7 +119,7 @@ fn plot(image: &mut RgbImage, x: i32, y: i32, color: (u8, u8, u8)) {
 /// The color of one tile: hue from its tier, a nudge from its biome so two
 /// biomes in one tier are still distinguishable, and brightness from its height
 /// so terraces read as relief.
-fn colour_of(world: &World, tile: IVec2) -> [u8; 3] {
+fn color_of(world: &World, tile: IVec2) -> [u8; 3] {
     let region = region_at(world, tile);
     let base = TIER_HUES[usize::from(region.tier).min(TIER_HUES.len() - 1)];
 

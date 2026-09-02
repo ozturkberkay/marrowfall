@@ -609,7 +609,7 @@ def test_a_source_that_fills_every_role_leaves_none_unfilled() -> None:
 
 
 def test_a_source_missing_a_bone_names_the_role_it_leaves_undriven() -> None:
-    """What a clip labelled with the wrong convention looks like."""
+    """What a clip labeled with the wrong convention looks like."""
     roles = a_role_map()
     mixamo_bones = ["mixamorig:Hips", "mixamorig:Spine", "mixamorig:Spine2", "Neck"]
     assert unfilled_roles(roles.convention("meshy"), mixamo_bones) == ["spine_lower"]

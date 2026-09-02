@@ -834,7 +834,7 @@ only by the deliberate operation in `art/skeletons/README.md`.
   is what lets `PYTHONPATH` reach the embedded interpreter, which is how
   `framing` and `transfer` are importable (`stages.rs:453`). Argument order is
   a documented silent-failure mode, so the invocation lives in one tested
-  function. `--python-exit-code` is defence in depth only, per fact 15.
+  function. `--python-exit-code` is defense in depth only, per fact 15.
 - **Meshy API.** Facts 11 and 12 carry the parameters and their costs.
 - **ASD-STE100** for this document and every new error message.
 
