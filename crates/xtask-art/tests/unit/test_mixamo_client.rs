@@ -3,8 +3,8 @@
 use serde_json::json;
 use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::chrome::Token;
-use xtask_art::mixamo::{CHARACTER_ID, Client};
+use xtask_art::providers::mixamo::session::{self, Token};
+use xtask_art::providers::mixamo::{Client, client::CHARACTER_ID};
 
 use crate::support::EnvGuard;
 
@@ -18,7 +18,7 @@ fn an_fbx() -> Vec<u8> {
 fn a_token() -> Token {
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token");
-    xtask_art::chrome::mixamo_token()
+    session::token()
         .expect("token from the environment")
         .expect("a token")
 }

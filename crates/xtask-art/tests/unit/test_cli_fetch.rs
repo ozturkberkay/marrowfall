@@ -11,7 +11,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::cli::{FetchStep, fetch, fetch_plan};
 use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
-use xtask_art::mixamo::CHARACTER_ID;
+use xtask_art::providers::mixamo::client::CHARACTER_ID;
 
 use crate::support::EnvGuard;
 

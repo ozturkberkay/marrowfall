@@ -1,4 +1,4 @@
-use xtask_art::openai::{front_prompt, view_prompt};
+use xtask_art::providers::openai::{front_prompt, view_prompt};
 use xtask_art::spec::View;
 
 #[test]

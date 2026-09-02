@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use serde::Deserialize;
 
+use crate::http::{base_url, millis_from, truncate};
 use crate::spec::TextureResolution;
 use serde_json::{Value, json};
 
@@ -146,8 +147,6 @@ impl Endpoint {
 pub struct Client {
     http: reqwest::Client,
     api_key: String,
-    /// API root. Overridable so the tests can serve the API locally; there is
-    /// no other reason to change it.
     base: String,
 }
 
@@ -162,11 +161,10 @@ impl Client {
             .timeout(REQUEST_TIMEOUT)
             .build()
             .context("building HTTP client")?;
-        let base = std::env::var("MARROWFALL_MESHY_BASE_URL").unwrap_or_else(|_| BASE.to_owned());
         Ok(Self {
             http,
             api_key,
-            base,
+            base: base_url("MARROWFALL_MESHY_BASE_URL", BASE),
         })
     }
 
@@ -249,16 +247,8 @@ impl Client {
         mut on_progress: impl FnMut(u32),
     ) -> Result<Task> {
         let id = self.submit(endpoint, body).await?;
-        // Overridable so the tests can exercise the retry loop in milliseconds
-        // rather than minutes; nothing else should set it.
-        let interval = std::env::var("MARROWFALL_MESHY_POLL_MS")
-            .ok()
-            .and_then(|ms| ms.parse().ok())
-            .map_or(POLL_INTERVAL, Duration::from_millis);
-        let timeout = std::env::var("MARROWFALL_MESHY_TIMEOUT_MS")
-            .ok()
-            .and_then(|ms| ms.parse().ok())
-            .map_or(POLL_TIMEOUT, Duration::from_millis);
+        let interval = millis_from("MARROWFALL_MESHY_POLL_MS", POLL_INTERVAL);
+        let timeout = millis_from("MARROWFALL_MESHY_TIMEOUT_MS", POLL_TIMEOUT);
         let deadline = tokio::time::Instant::now() + timeout;
         let mut last_progress = u32::MAX;
 
@@ -274,7 +264,7 @@ impl Client {
             }
             if task.status == TaskStatus::Unknown {
                 bail!(
-                    "Meshy task {id} reported an unrecognised status; \
+                    "Meshy task {id} reported an unrecognized status; \
                      check the Meshy dashboard"
                 );
             }
@@ -391,13 +381,4 @@ pub fn to_data_uri(png: &[u8]) -> String {
         "data:image/png;base64,{}",
         base64::engine::general_purpose::STANDARD.encode(png)
     )
-}
-
-pub fn truncate(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        // Slice on a char boundary: this runs while reporting another error,
-        // and panicking here would hide it.
-        Some((index, _)) => format!("{}…", &text[..index]),
-        None => text.to_owned(),
-    }
 }

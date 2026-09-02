@@ -8,7 +8,7 @@
 //! `--python-exit-code` only catches a script's own top level: raised from a
 //! handler, a thread or `atexit`, Blender exits 0
 //! (`docs/research/agent_reports/proof_python_exit_code_coverage.md`). So the
-//! success sentinel is the gate and the flag is defence in depth. [`run`]
+//! success sentinel is the gate and the flag is defense in depth. [`run`]
 //! deletes any stale sentinel first, then asserts the script wrote a fresh
 //! one.
 

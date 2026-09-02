@@ -2,8 +2,8 @@
 //! comes back. No network here; the client tests use a local server.
 
 use serde_json::json;
-use xtask_art::mixamo::{
-    CHARACTER_ID, Motion, Progress, check_fbx, export_body, products_in, progress_in, retry_after,
+use xtask_art::providers::mixamo::client::{
+    CHARACTER_ID, Motion, Progress, check_fbx, export_body, products_in, progress_in,
 };
 
 /// The 20 byte header every binary FBX starts with, then filler so the
@@ -88,7 +88,7 @@ fn an_export_still_running_asks_to_be_polled_again() {
         progress_in(&json!({"status": "processing"})).unwrap(),
         Progress::Working
     );
-    // Undocumented API: an unrecognised state is polled, and the deadline is
+    // Undocumented API: an unrecognized state is polled, and the deadline is
     // what stops a run that never finishes.
     assert_eq!(
         progress_in(&json!({"status": "something new"})).unwrap(),
@@ -131,22 +131,4 @@ fn an_error_page_returned_with_a_success_status_is_caught() {
 fn a_truncated_download_is_caught() {
     let error = check_fbx(&an_fbx(64)).unwrap_err().to_string();
     assert!(error.contains("64 bytes"), "got: {error}");
-}
-
-// --- Rate limiting --------------------------------------------------------
-
-#[test]
-fn a_rate_limit_is_waited_out_for_as_long_as_the_server_asks() {
-    assert_eq!(retry_after(Some("7")).as_secs(), 7);
-    assert_eq!(retry_after(Some("0")), std::time::Duration::ZERO);
-}
-
-#[test]
-fn a_rate_limit_with_no_usable_hint_backs_off_anyway() {
-    // RFC 6585 makes Retry-After optional, and RFC 9110 also allows a date.
-    assert!(retry_after(None) > std::time::Duration::ZERO);
-    assert_eq!(
-        retry_after(Some("Wed, 21 Oct 2026 07:28:00 GMT")),
-        retry_after(None)
-    );
 }

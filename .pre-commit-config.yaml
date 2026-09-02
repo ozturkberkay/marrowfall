@@ -117,6 +117,7 @@ repos:
         entry: bun run prettier --check
         language: system
         types: [javascript]
+        files: \.mjs$
 
       # BASH
       - id: bashunit

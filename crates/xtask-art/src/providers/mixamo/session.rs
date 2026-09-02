@@ -13,11 +13,10 @@ use base64::Engine as _;
 use rusty_leveldb::{DB, LdbIterator as _, Options};
 use serde_json::Value;
 
+use super::SITE_URL;
+
 /// Supplies the token directly, for CI and tests. Set, and Chrome is not read.
 const TOKEN_ENV: &str = "MARROWFALL_MIXAMO_TOKEN";
-
-/// Local Storage is keyed by origin, and this is the only one we look at.
-const MIXAMO_ORIGIN: &str = "https://www.mixamo.com";
 
 /// How often a browser login is checked for while waiting on the user.
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -45,7 +44,7 @@ impl fmt::Debug for Token {
 }
 
 /// The token to export with, from the environment or from Chrome.
-pub fn mixamo_token() -> Result<Option<Token>> {
+pub fn token() -> Result<Option<Token>> {
     if let Ok(secret) = std::env::var(TOKEN_ENV)
         && !secret.is_empty()
     {
@@ -80,6 +79,19 @@ pub fn token_in(chrome: &Path) -> Result<Option<Token>> {
     Ok(newest_token(&values))
 }
 
+/// Opens the login page in the browser the token is later read from.
+pub fn open_login() -> Result<()> {
+    let status = std::process::Command::new("open")
+        .args(["-a", "Google Chrome", SITE_URL])
+        .status()
+        .context("running `open`, which is macOS only, as this pipeline is")?;
+    anyhow::ensure!(
+        status.success(),
+        "could not open Chrome. Open {SITE_URL} yourself, log in, and run this again"
+    );
+    Ok(())
+}
+
 /// Polls `chrome` until a session appears, or gives up and says why.
 pub fn wait_for_token(chrome: &Path, within: Duration) -> Result<Token> {
     let deadline = Instant::now() + within;
@@ -90,7 +102,7 @@ pub fn wait_for_token(chrome: &Path, within: Duration) -> Result<Token> {
         anyhow::ensure!(
             Instant::now() < deadline,
             "no Mixamo session appeared in Chrome within {} seconds. \
-             Log in at {MIXAMO_ORIGIN} and run this again.",
+             Log in at {SITE_URL} and run this again.",
             within.as_secs()
         );
         std::thread::sleep(POLL_INTERVAL);
@@ -151,7 +163,7 @@ fn stored_values(leveldb: &Path) -> Result<Vec<String>> {
         .new_iter()
         .with_context(|| format!("reading {}", leveldb.display()))?;
 
-    let prefix = format!("_{MIXAMO_ORIGIN}\u{0}\u{1}").into_bytes();
+    let prefix = format!("_{SITE_URL}\u{0}\u{1}").into_bytes();
     let mut values = Vec::new();
     while let Some((key, value)) = entries.next() {
         if key.starts_with(&prefix) {

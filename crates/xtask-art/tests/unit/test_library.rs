@@ -305,7 +305,7 @@ fn a_corrupt_fetch_record_says_how_to_start_over() {
 fn the_skeleton_name_carries_no_vendor() {
     // Meshy happens to produce this skeleton today; the name outlives it.
     assert_eq!(HUMANOID, "humanoid");
-    assert_eq!(xtask_art::meshy::RIGS, HUMANOID);
+    assert_eq!(xtask_art::providers::meshy::RIGS, HUMANOID);
 }
 
 #[test]

@@ -65,11 +65,14 @@ pub fn validate(file: &Path, repo_root: &Path, attempt: u32) -> Result<Vec<Findi
         } else {
             stderr.clone()
         };
+        // There is no report to read the version from, so the driver puts it
+        // on stdout instead.
+        let version = String::from_utf8_lossy(&output.stdout);
         return Ok(vec![unreadable(
             &subject,
             attempt,
             "unreadable files".to_owned(),
-            format!("glTF-Validator on {subject}, as delivered"),
+            measured_on(version.trim(), &subject),
             message,
         )]);
     }
@@ -111,10 +114,7 @@ fn unreadable(
 pub fn findings(report: &str, subject: &str, attempt: u32) -> Result<Vec<Finding>> {
     let report: ValidatorReport =
         serde_json::from_str(report).context("parsing the gltf-validator report")?;
-    let measured_on = format!(
-        "glTF-Validator {} on {subject}, as delivered",
-        report.validator_version
-    );
+    let measured_on = measured_on(&report.validator_version, subject);
     report
         .issues
         .messages
@@ -134,6 +134,12 @@ pub fn findings(report: &str, subject: &str, attempt: u32) -> Result<Vec<Finding
             })
         })
         .collect()
+}
+
+/// The space a finding was measured in. One shape, whether the validator
+/// reported on the file or refused to read it.
+fn measured_on(version: &str, subject: &str) -> String {
+    format!("glTF-Validator {version} on {subject}, as delivered")
 }
 
 /// The validator's own severity scale. An unknown value is refused rather

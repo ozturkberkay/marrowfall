@@ -769,9 +769,11 @@ crates/xtask-art/src/
   lock.rs                   # + content hashes, + Model in the version guard
   library.rs                # + Animation::source_fps, travels, + verdict
   providers/                # NEW  one module per vendor, constants inside
+    mod.rs                  # NEW  the contract, in one doc comment
     openai.rs
     meshy.rs                # + pose_mode, + print/analyze, + model_url rig
     mixamo/
+      mod.rs                # NEW  SITE_URL, shared by client and session
       client.rs             # + traveling export, + fps from source_fps
       session.rs            # the Chrome token reader, was chrome.rs
   http.rs                   # NEW  retry_after and the env backoff helpers
@@ -1070,13 +1072,13 @@ finding("clip.floor_snap", measured=abs(lift_after), limit=0.005,
 channels (fact 5), so it can only ever read a residual. It is not a
 substitute for `source.traveling`, which is why that rule is symmetric.
 
-**Foot planting** (requirement 6). Thresholds are world-space metres scaled
+**Foot planting** (requirement 6). Thresholds are world-space meters scaled
 from the published 180 cm reference, and the speed threshold is a rate, so it
 means the same thing at 8 fps and 30 fps.
 
 ```python
 scale = character_height_m / 1.80
-speed = lambda f: step_xy(toe, f) * source_fps        # metres per second
+speed = lambda f: step_xy(toe, f) * source_fps        # meters per second
 contact = [f for f in frames
            if world_z(toe, f) < 0.03 * scale and speed(f) < 0.30 * scale]
 width = max(3, round(5 * source_fps / 60) | 1)   # odd and >= 3, or no majority
@@ -1114,11 +1116,11 @@ run from 24 to 30, changing playback speed, which Out of Scope forbids.
 **The cleanup, in world space.** Fact 13 is Meshy's extension deleting nothing
 because it measured local volume against a world checker, and this asset
 family carries a 100x node scale, so the transform comes first and every
-constant is world-space metres.
+constant is world-space meters.
 
 ```python
 bm.transform(obj.matrix_world)                  # world space, once, up front
-bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)      # metres
+bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)      # meters
 drop_objects_not_in(profile.meshes)
 drop_islands_under(1e-6)                        # m3, about a 1 cm cube
 fill_holes(bm)
@@ -1391,8 +1393,8 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | #   | Task | Cost | Description | Success Criteria | Deps |
 | --- | ---- | ---- | ----------- | ---------------- | ---- |
 | T1  | Harness, Finding, validator, diagnostics | 1.0 d | One tested function builds every `blender` argv in the documented order, `--python-use-system-env` and `--log-file` included. `findings.py` and `check/mod.rs` carry `Finding` with the required `comparison`, `attempt` and `measured_on`, writing `reports/<stage>.<item>.<attempt>.json`. Each script writes a sentinel Rust asserts. `check/validator.rs` runs the npm validator under Bun. Diagnostics: argv verbatim, the log, the `.blend` from the exception handler, partial frames. | A unit test fails if any flag or the order changes. A script raising outside its top level leaves no sentinel and fails. A rule with no `measured_on` or no `comparison` fails its own test. No gate can emit NaN. An injected NaN fails and the four committed GLBs pass. A deliberately failed bake leaves argv, log, `.blend` and partial frames. | none |
-| T1b | Isolate vendors | 1 d | From the human's review. Move `openai.rs`, `meshy.rs`, `mixamo.rs` and `chrome.rs` under `providers/`, with `chrome.rs` becoming `mixamo/session.rs`. Vendor URLs, ids and keys live only in their own module; `cli.rs` imports them. Generic HTTP helpers (`retry_after`, the env backoff) move to `http.rs`. `stages.rs` stays the only caller. No new traits: `MotionSource` in `library.rs` is already the seam. | A unit test greps the crate and fails on any vendor host, id or key outside `providers/`. Every existing test passes unchanged. `cargo doc` links resolve. | T1 |
-| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`. `check/gltf_world.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig. Runs in CI with no Blender. `cargo art check` prints the itemised defect list. | T1, T1b |
+| T1b | Isolate vendors | 1 d | From the human's review. Move `openai.rs`, `meshy.rs`, `mixamo.rs` and `chrome.rs` under `providers/`, with `chrome.rs` becoming `mixamo/session.rs`. Vendor URLs, ids and keys live only in their own module; `cli.rs` imports them. Generic HTTP helpers (`retry_after`, the env backoff) move to `http.rs`. `stages.rs` and `cli.rs` are the only callers, and no new one is added. No new traits: `MotionSource` in `library.rs` is already the seam. | A unit test greps `src/` and fails on any vendor host, id or key outside `providers/`. Scoped to `src/` because a test keeps its own copy of a literal on purpose: `test_mixamo_session.rs` rebuilds the Local Storage key from the origin, and importing `SITE_URL` there would move both sides together and the test could no longer fail. Every existing test passes unchanged. `cargo doc` links resolve. | T1 |
+| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`. `check/gltf_world.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig. Runs in CI with no Blender. `cargo art check` prints the itemized defect list. | T1, T1b |
 | T3  | Mesh measurement in Rust, calibrated on `bare.glb` | 2 d | **First: download `bare.glb`, take it to world through the glTF node chain, then weld.** Report a merge histogram at 1e-6, 1e-5, 1e-4 and 1e-3 and pick the plateau. Then `check/mesh.rs`: holes, non-manifold, islands, self-intersections via `parry3d`'s `Bvh`, mirror distance, world size, budget, UV bounds, facing, texture. Map `print/analyze` into the report. Write every `bare.glb` limit into `[profile]`. | The weld distance is chosen from the histogram, not assumed. Every `bare.glb` limit in `[profile]` is a real number. Every `mesh.*` row except `non_manifold_post` rejects its negative fixture in CI with no Blender. | T1, T2 |
 | T4  | Aim table and role map | 1.5 d | Add `parents`, `optional`, `fingerprint` and `[aim_table]`. Implement the three table validations and the skip-unmapped-ancestor parent walk. Checked against a synthetic fixture, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a broken mirror pair, and an out-of-band aim each fail to load. | T2 |
 | T5  | The transfer, the rename, and the refit | 3.5 d | `transfer.py` with no `bpy`: quaternion swing-twist aim application projecting the **vector part** per fact 19, `swing_singular` raised at 180 degrees, roleless bones skipped, separate `ref_world_*` dicts, algebraic local matrices, rotation-only keys for non-root bones, typed errors, LINEAR and CONSTANT, no reference-frame key. Delete `rebase_action`, `sole_children`, `align_to_world`, `bind_pose_mismatch`, `bone_directions` and the twelve self-referential tests. **Rename the committed `humanoid.glb` bones and refit `idle.glb` and `run.glb` in this PR**, because the rename invalidates them and this is the first task with the new retarget. | The three numeric known-answer tests pass: 10 deg twist to 10.00 and 0.00, 30 deg swing to 0.00 and 30.00, `Offset(LeftUpLeg)` about 174 and not identity. The 180 degree case raises `swing_singular`. A rig with `head_end` is skipped, not raised on. Requirements 1, 2, 7, 8, 9, 10 each have a passing test and a rejected negative. The 1.5x scale test gives identical output bone lengths. | T1, T4 |

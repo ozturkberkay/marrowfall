@@ -10,7 +10,7 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::library::{Animation, HUMANOID, MotionSource};
 use xtask_art::lock::TaskRef;
-use xtask_art::meshy::Endpoint;
+use xtask_art::providers::meshy::Endpoint;
 use xtask_art::spec::View;
 use xtask_art::spec::{CharacterType, Paths};
 use xtask_art::stages;

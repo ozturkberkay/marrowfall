@@ -243,7 +243,7 @@ def _header_of(path: pathlib.Path) -> tuple[str, str, int]:
     """`bake.survivor.1.json` names the stage, the item and the attempt."""
     stage, _, rest = path.stem.partition(".")
     item, _, attempt = rest.partition(".")
-    if not (stage and item and attempt.isdigit()):
+    if not (stage and item and attempt.isdecimal()):
         raise RuntimeError(
             f"{path.name} is not <stage>.<item>.<attempt>.json, so this run "
             "has no header to report under"

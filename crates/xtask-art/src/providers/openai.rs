@@ -9,6 +9,7 @@ use anyhow::{Context as _, Result, bail};
 use base64::Engine as _;
 use serde_json::Value;
 
+use crate::http::base_url;
 use crate::spec::View;
 
 const BASE: &str = "https://api.openai.com/v1";
@@ -20,19 +21,16 @@ const SIZE: &str = "1024x1536";
 pub struct Client {
     http: reqwest::Client,
     api_key: String,
-    /// API root. Overridable so the tests can serve the API locally; there is
-    /// no other reason to change it.
     base: String,
 }
 
 impl Client {
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY is not set")?;
-        let base = std::env::var("MARROWFALL_OPENAI_BASE_URL").unwrap_or_else(|_| BASE.to_owned());
         Ok(Self {
             http: reqwest::Client::new(),
             api_key,
-            base,
+            base: base_url("MARROWFALL_OPENAI_BASE_URL", BASE),
         })
     }
 
@@ -56,7 +54,7 @@ impl Client {
     }
 
     /// Generates a further view, conditioned on an already-generated one so
-    /// the result is recognisably the same character.
+    /// the result is recognizably the same character.
     pub async fn edit(&self, prompt: &str, reference_png: &[u8]) -> Result<Vec<u8>> {
         let part = reqwest::multipart::Part::bytes(reference_png.to_vec())
             .file_name("reference.png")
@@ -171,7 +169,7 @@ pub fn view_prompt(view: View, description: &str, pose: &str) -> String {
     format!(
         "Using the attached image as reference, render the SAME character from {}. \
          Keep the body, proportions, markings, colors and clothing identical to the \
-         reference, at the same scale and vertical centring.\n{}\nCHARACTER: {description}",
+         reference, at the same scale and vertical centering.\n{}\nCHARACTER: {description}",
         camera(view),
         shared_rules(pose)
     )

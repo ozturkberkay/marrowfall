@@ -45,7 +45,7 @@ impl MotionSource {
     /// so committing them stops every contributor buying them again. Adobe
     /// grants the *use* of a Mixamo animation but forbids redistributing the
     /// file, and this repository is public. One boolean per provider, so
-    /// adding one is a decision rather than a licence audit.
+    /// adding one is a decision rather than a license audit.
     pub const fn redistributable(&self) -> bool {
         match self {
             Self::Meshy { .. } | Self::Authored => true,

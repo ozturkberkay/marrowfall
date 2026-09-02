@@ -175,6 +175,12 @@ fn a_file_that_is_not_gltf_at_all_is_an_error_finding() {
         !findings[0].message.trim().is_empty(),
         "the reason is stated"
     );
+    assert!(
+        findings[0].measured_on.starts_with("glTF-Validator 2."),
+        "one rule, one shape: the version names the tool that refused it, \
+         the way a reported issue does. Got: {}",
+        findings[0].measured_on
+    );
 }
 
 /// The other half of that split: a tool we cannot run is not a measurement.

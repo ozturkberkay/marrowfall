@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use rusty_leveldb::{DB, Options};
-use xtask_art::chrome;
+use xtask_art::providers::mixamo::session;
 
 use crate::support::EnvGuard;
 
@@ -77,7 +77,7 @@ fn mixamo_key(name: &str) -> String {
 #[test]
 fn a_stored_jwt_is_found_by_its_shape() {
     let jwt = a_jwt(FOREVER);
-    let token = chrome::newest_token(std::slice::from_ref(&jwt)).unwrap();
+    let token = session::newest_token(std::slice::from_ref(&jwt)).unwrap();
     assert_eq!(token.expose_secret(), jwt);
 }
 
@@ -87,7 +87,7 @@ fn a_jwt_is_found_inside_the_json_adobe_wraps_it_in() {
     let jwt = a_jwt(FOREVER);
     let stored = format!(r#"{{"tokenValue":"{jwt}","user":"someone@example.com"}}"#);
     assert_eq!(
-        chrome::newest_token(&[stored]).unwrap().expose_secret(),
+        session::newest_token(&[stored]).unwrap().expose_secret(),
         jwt
     );
 }
@@ -96,14 +96,14 @@ fn a_jwt_is_found_inside_the_json_adobe_wraps_it_in() {
 fn the_longest_lived_token_wins() {
     let older = a_jwt(FOREVER - 3600);
     let newer = a_jwt(FOREVER);
-    let found = chrome::newest_token(&[older, newer.clone()]).unwrap();
+    let found = session::newest_token(&[older, newer.clone()]).unwrap();
     assert_eq!(found.expose_secret(), newer, "a stale session lingers");
 }
 
 #[test]
 fn an_expired_token_reads_as_no_token() {
     // Adobe's last a day, so a stale one must re-prompt rather than 401.
-    assert!(chrome::newest_token(&[a_jwt(1_600_000_000)]).is_none());
+    assert!(session::newest_token(&[a_jwt(1_600_000_000)]).is_none());
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn anything_that_is_not_a_jwt_is_ignored() {
         a_jwt_payload(r#"{"sub":"no expiry claim"}"#),
         a_jwt_payload("this payload is not json"),
     ];
-    assert!(chrome::newest_token(&values).is_none());
+    assert!(session::newest_token(&values).is_none());
 }
 
 #[test]
@@ -129,19 +129,19 @@ fn a_payload_whose_length_needs_padding_still_decodes() {
         3,
         "unpadded length"
     );
-    assert!(chrome::newest_token(&[jwt]).is_some());
+    assert!(session::newest_token(&[jwt]).is_some());
 }
 
 #[test]
 fn nothing_stored_means_nothing_found() {
-    assert!(chrome::newest_token(&[]).is_none());
+    assert!(session::newest_token(&[]).is_none());
 }
 
 #[test]
 fn a_token_never_prints_itself() {
     // A leaked bearer token is an Adobe account credential.
     let jwt = a_jwt(FOREVER);
-    let token = chrome::newest_token(std::slice::from_ref(&jwt)).unwrap();
+    let token = session::newest_token(std::slice::from_ref(&jwt)).unwrap();
     assert!(!format!("{token:?}").contains(&jwt), "got: {token:?}");
 }
 
@@ -157,7 +157,7 @@ fn a_live_session_yields_the_token_it_stored() {
         &[(&mixamo_key("adobeid"), latin1(&jwt))],
     );
 
-    let token = chrome::token_in(dir.path()).unwrap().unwrap();
+    let token = session::token_in(dir.path()).unwrap().unwrap();
     assert_eq!(token.expose_secret(), jwt);
 }
 
@@ -173,7 +173,7 @@ fn a_utf16_value_is_decoded_too() {
     );
 
     assert_eq!(
-        chrome::token_in(dir.path())
+        session::token_in(dir.path())
             .unwrap()
             .unwrap()
             .expose_secret(),
@@ -189,7 +189,7 @@ fn a_value_tagged_with_an_encoding_nobody_documents_is_skipped() {
     a_profile(dir.path(), "Default", &[(&mixamo_key("odd"), tagged)]);
 
     assert!(
-        chrome::token_in(dir.path()).unwrap().is_none(),
+        session::token_in(dir.path()).unwrap().is_none(),
         "Chrome's layout is a convention, so an unknown shape is not guessed at"
     );
 }
@@ -211,7 +211,7 @@ fn a_subdirectory_beside_the_storage_does_not_stop_the_read() {
     .unwrap();
 
     assert_eq!(
-        chrome::token_in(dir.path())
+        session::token_in(dir.path())
             .unwrap()
             .unwrap()
             .expose_secret(),
@@ -235,7 +235,7 @@ fn another_sites_storage_is_left_alone() {
             .collect::<Vec<_>>(),
     );
 
-    assert!(chrome::token_in(dir.path()).unwrap().is_none());
+    assert!(session::token_in(dir.path()).unwrap().is_none());
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn every_profile_is_searched_and_the_freshest_wins() {
         &[(&mixamo_key("id"), latin1(&newer))],
     );
 
-    let token = chrome::token_in(dir.path()).unwrap().unwrap();
+    let token = session::token_in(dir.path()).unwrap().unwrap();
     assert_eq!(token.expose_secret(), newer);
 }
 
@@ -262,7 +262,7 @@ fn every_profile_is_searched_and_the_freshest_wins() {
 fn a_logged_out_profile_yields_nothing() {
     let dir = tempfile::tempdir().unwrap();
     a_profile(dir.path(), "Default", &[]);
-    assert!(chrome::token_in(dir.path()).unwrap().is_none());
+    assert!(session::token_in(dir.path()).unwrap().is_none());
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn no_chrome_at_all_is_not_an_error() {
     // CI runs Linux with no browser installed.
     let dir = tempfile::tempdir().unwrap();
     assert!(
-        chrome::token_in(&dir.path().join("nothing here"))
+        session::token_in(&dir.path().join("nothing here"))
             .unwrap()
             .is_none()
     );
@@ -283,7 +283,7 @@ fn an_unreadable_storage_names_the_directory_and_not_the_contents() {
     std::fs::create_dir_all(&leveldb).unwrap();
     std::fs::write(leveldb.join("CURRENT"), "not a leveldb").unwrap();
 
-    let error = format!("{:#}", chrome::token_in(dir.path()).unwrap_err());
+    let error = format!("{:#}", session::token_in(dir.path()).unwrap_err());
     assert!(error.contains("leveldb"), "got: {error}");
 }
 
@@ -294,7 +294,7 @@ fn the_environment_overrides_chrome_entirely() {
     // The CI and test escape hatch: no browser, no LevelDB, no login.
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-token-from-somewhere-else");
-    let token = chrome::mixamo_token().unwrap().unwrap();
+    let token = session::token().unwrap().unwrap();
     assert_eq!(token.expose_secret(), "a-token-from-somewhere-else");
 }
 
@@ -306,7 +306,7 @@ fn an_empty_override_is_treated_as_unset() {
     let mut env = EnvGuard::new();
     env.set("HOME", home.path().to_str().unwrap());
     env.set("MARROWFALL_MIXAMO_TOKEN", "");
-    assert!(chrome::mixamo_token().unwrap().is_none());
+    assert!(session::token().unwrap().is_none());
 }
 
 #[test]
@@ -319,14 +319,14 @@ fn waiting_returns_at_once_when_the_session_is_already_there() {
         &[(&mixamo_key("adobeid"), latin1(&jwt))],
     );
 
-    let token = chrome::wait_for_token(dir.path(), Duration::from_secs(1)).unwrap();
+    let token = session::wait_for_token(dir.path(), Duration::from_secs(1)).unwrap();
     assert_eq!(token.expose_secret(), jwt);
 }
 
 #[test]
 fn waiting_gives_up_and_says_what_the_user_has_to_do() {
     let dir = tempfile::tempdir().unwrap();
-    let error = chrome::wait_for_token(dir.path(), Duration::ZERO)
+    let error = session::wait_for_token(dir.path(), Duration::ZERO)
         .unwrap_err()
         .to_string();
     assert!(error.contains("Mixamo"), "got: {error}");
@@ -341,7 +341,7 @@ fn an_adobe_token_is_found_though_it_carries_no_exp() {
     let day = 86_400_000;
     let created = (FOREVER - 3600) * 1000;
     let jwt = an_adobe_jwt(created, day);
-    let token = chrome::newest_token(std::slice::from_ref(&jwt)).unwrap();
+    let token = session::newest_token(std::slice::from_ref(&jwt)).unwrap();
     assert_eq!(token.expose_secret(), jwt);
 }
 
@@ -351,7 +351,7 @@ fn an_adobe_token_is_found_though_it_carries_no_exp() {
 fn an_adobe_token_lapses_a_day_after_it_was_created() {
     let day = 86_400_000;
     let created = (unix_now() - 86_400 - 3600) * 1000;
-    assert!(chrome::newest_token(&[an_adobe_jwt(created, day)]).is_none());
+    assert!(session::newest_token(&[an_adobe_jwt(created, day)]).is_none());
 }
 
 /// Adobe quotes both numbers. A provider that sends them bare must still work.
@@ -361,14 +361,14 @@ fn millisecond_claims_are_read_whether_quoted_or_not() {
     let bare = a_jwt_payload(&format!(
         r#"{{"created_at":{created},"expires_in":86400000}}"#
     ));
-    assert!(chrome::newest_token(&[bare]).is_some());
+    assert!(session::newest_token(&[bare]).is_some());
 }
 
 /// A payload with neither shape is not a token, and must not be guessed at.
 #[test]
 fn a_payload_with_no_expiry_at_all_reads_as_no_token() {
     let jwt = a_jwt_payload(r#"{"user_id":"someone"}"#);
-    assert!(chrome::newest_token(&[jwt]).is_none());
+    assert!(session::newest_token(&[jwt]).is_none());
 }
 
 fn unix_now() -> i64 {
