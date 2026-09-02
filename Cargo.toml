@@ -45,6 +45,10 @@ serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0"
 base64 = "0.23"
 clap = { version = "4.6", features = ["derive"] }
+# The rig and mesh gates read the glTF node graph. `import` would pull in image
+# decoding, and no gate reads a texture, so the JSON and the GLB container are
+# all this needs.
+gltf = { version = "1.4.1", default-features = false, features = ["names"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
@@ -57,6 +61,8 @@ rusty-leveldb = { version = "4.0.1", default-features = false, features = ["fs"]
 serde_json = "1.0"
 tempfile = "3.27.0"
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "time", "fs"] }
+# The skeleton profile: every published rig limit, as data.
+toml = { version = "1.1.4", default-features = false, features = ["parse", "serde", "std"] }
 
 [workspace.lints.clippy]
 unwrap_used = "warn"

@@ -51,6 +51,9 @@ class Severity(enum.StrEnum):
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
+    """Measured, and inside its limit."""
+    SKIPPED = "skipped"
+    """Not measured: a spec field switched this rule off."""
 
 
 class Comparison(enum.StrEnum):

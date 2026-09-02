@@ -9,6 +9,9 @@
 //! records the space it measured in, and states the limit it was read
 //! against. The runner only counts errors.
 
+pub mod gltf_world;
+pub mod profile;
+pub mod rig;
 pub mod validator;
 
 use std::path::{Path, PathBuf};
@@ -16,8 +19,19 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
 
+use profile::Profile;
+
 /// Derived, gitignored, one directory for the whole pipeline.
 const REPORTS_DIR: &str = "art/staging/reports";
+
+/// A path as a finding names it: relative to the repository, so a report
+/// reads the same on every machine.
+pub fn relative_to(path: &Path, repo_root: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
 
 /// How bad a finding is. Only [`Severity::Error`] can stop the pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +39,15 @@ const REPORTS_DIR: &str = "art/staging/reports";
 pub enum Severity {
     Error,
     Warning,
+    /// Measured, and inside its limit. Every rule reports its measurement,
+    /// because a rule that goes quiet when it passes cannot be told from one
+    /// that never ran.
     Info,
+    /// Not measured, because a spec field switched this rule off. The
+    /// measurement and the limit carry nothing, and only the message says
+    /// why, so it is a severity of its own rather than an `info` a consumer
+    /// would have to tell apart by reading prose.
+    Skipped,
 }
 
 /// How a measurement is read against its limit.
@@ -43,6 +65,17 @@ pub enum Comparison {
 }
 
 impl Comparison {
+    /// The spelling both sides use on the wire, which is also what
+    /// `--list-rules` prints.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Le => "le",
+            Self::Lt => "lt",
+            Self::Eq => "eq",
+            Self::Ge => "ge",
+        }
+    }
+
     pub fn holds(self, measured: f64, limit: f64) -> bool {
         match self {
             Self::Le => measured <= limit,
@@ -109,6 +142,75 @@ impl Finding {
         }
         ensure!(self.attempt >= 1, "{}: the first attempt is 1", self.rule);
         Ok(())
+    }
+}
+
+/// One gate, as `cargo art check --list-rules` prints it.
+///
+/// Findings are built through here rather than by hand, so a rule cannot
+/// report a limit, a unit or a space that the printed list does not carry,
+/// and no caller decides whether its own measurement passed.
+pub struct Rule {
+    /// Stable id, such as `rig.child_axis`.
+    pub id: &'static str,
+    pub comparison: Comparison,
+    pub unit: &'static str,
+    /// The representation and the space. Every finding of this rule repeats
+    /// it, because a precise number on the wrong representation is how 171
+    /// holes read as 13,368.
+    pub space: &'static str,
+    /// Every published limit is profile data, so the rule reads it rather
+    /// than holding a copy.
+    pub limit: fn(&Profile) -> f64,
+}
+
+impl Rule {
+    /// One measurement of this rule. The comparison decides the severity, so
+    /// a broken measurement cannot be filed as information.
+    pub fn measured(
+        &self,
+        profile: &Profile,
+        subject: &str,
+        measured: f64,
+        attempt: u32,
+        message: String,
+    ) -> Finding {
+        let limit = (self.limit)(profile);
+        Finding {
+            rule: self.id.to_owned(),
+            severity: if self.comparison.holds(measured, limit) {
+                Severity::Info
+            } else {
+                Severity::Error
+            },
+            subject: subject.to_owned(),
+            measured,
+            limit,
+            comparison: self.comparison,
+            unit: self.unit.to_owned(),
+            attempt,
+            measured_on: self.space.to_owned(),
+            message,
+        }
+    }
+
+    /// A measurement that does not exist: a bone with no length, an axis with
+    /// no direction. It carries its own unit, the way an unreadable file does
+    /// in [`validator`], because this rule's unit would be a lie. Always an
+    /// error, because a gate never emits NaN and never goes quiet.
+    pub fn undefined(&self, subject: &str, attempt: u32, message: String) -> Finding {
+        Finding {
+            rule: self.id.to_owned(),
+            severity: Severity::Error,
+            subject: subject.to_owned(),
+            measured: 1.0,
+            limit: 0.0,
+            comparison: Comparison::Eq,
+            unit: "undefined measurements".to_owned(),
+            attempt,
+            measured_on: self.space.to_owned(),
+            message,
+        }
     }
 }
 

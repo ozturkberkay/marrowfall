@@ -120,6 +120,23 @@ fn uppercase_names_are_rejected() {
     assert!(spec.validate().is_err());
 }
 
+/// The name becomes a directory, a file name, and the item part of a report
+/// name, where the dot is the separator. Refused on the way in, so it cannot
+/// be refused later by a report writer with nothing useful to say.
+#[test]
+fn a_name_holding_a_dot_is_refused_as_the_spec_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spec.ron");
+    let mut spec = spec();
+    spec.name = "survivor.old".to_owned();
+    spec.save(&path).unwrap();
+
+    let error = format!("{:#}", CharacterSpec::load(&path).unwrap_err());
+
+    assert!(error.contains("no dot"), "got: {error}");
+    assert!(error.contains("spec.ron"), "got: {error}");
+}
+
 #[test]
 fn paths_are_derived_from_name() {
     let paths = Paths::new("/repo", "skeleton");

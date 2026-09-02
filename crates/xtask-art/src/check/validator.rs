@@ -11,7 +11,7 @@ use std::process::Command;
 use anyhow::{Context as _, Result, bail, ensure};
 use serde::Deserialize;
 
-use super::{Comparison, Finding, Severity};
+use super::{Comparison, Finding, Severity, relative_to};
 
 /// The rule id every finding here carries.
 pub const RULE: &str = "gltf.validator";
@@ -34,7 +34,7 @@ fn bun_binary() -> String {
 /// A missing file is an error finding rather than a skip, because a gate that
 /// goes quiet on absent input proves nothing.
 pub fn validate(file: &Path, repo_root: &Path, attempt: u32) -> Result<Vec<Finding>> {
-    let subject = relative(file, repo_root);
+    let subject = relative_to(file, repo_root);
     if !file.exists() {
         return Ok(vec![unreadable(
             &subject,
@@ -151,13 +151,6 @@ fn severity_of(severity: u8) -> Result<Severity> {
         2 | 3 => Ok(Severity::Info),
         other => bail!("gltf-validator reported unknown severity {other}"),
     }
-}
-
-fn relative(path: &Path, repo_root: &Path) -> String {
-    path.strip_prefix(repo_root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
 }
 
 #[derive(Deserialize)]

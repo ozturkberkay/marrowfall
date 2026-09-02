@@ -153,6 +153,7 @@ def test_a_report_has_errors_only_when_an_error_is_present() -> None:
         findings=(
             a_finding(severity=Severity.WARNING),
             a_finding(severity=Severity.INFO),
+            a_finding(severity=Severity.SKIPPED),
         ),
     )
     assert not quiet.has_errors

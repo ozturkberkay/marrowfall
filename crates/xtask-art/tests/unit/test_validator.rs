@@ -4,11 +4,11 @@
 //! deliberately broken copy of it. A stubbed validator would only prove that
 //! our own mapping compiles.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use xtask_art::check::{Comparison, Severity, validator};
 
-use crate::support::EnvGuard;
+use crate::support::{EnvGuard, committed_glb, repo_root};
 
 /// The four GLBs the repository commits. The calibration set: known-good art
 /// in, no errors out.
@@ -18,14 +18,6 @@ const COMMITTED: [&str; 4] = [
     "art/characters/survivor/model.glb",
     "art/skeletons/humanoid.glb",
 ];
-
-/// The repository itself, so the tests read the real committed art.
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
 
 /// Writes a copy of `glb` with one float in its first float accessor set to
 /// NaN. Byte surgery, because the point is a file no exporter would produce.
@@ -64,14 +56,7 @@ fn with_an_injected_nan(glb: &Path, out: &Path) {
 fn the_four_committed_glbs_carry_no_errors() {
     let root = repo_root();
     for file in COMMITTED {
-        let path = root.join(file);
-        assert_eq!(
-            &std::fs::read(&path).unwrap()[..4],
-            b"glTF",
-            "{file} is a Git LFS pointer, not a GLB. Run `git lfs pull`, and \
-             in CI pass `lfs: true` to actions/checkout."
-        );
-        let findings = validator::validate(&path, &root, 1).unwrap();
+        let findings = validator::validate(&committed_glb(file), &root, 1).unwrap();
 
         assert!(
             !findings.iter().any(|f| f.severity == Severity::Error),

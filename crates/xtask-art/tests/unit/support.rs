@@ -5,12 +5,36 @@
 //! serializes that and restores it, so tests in this binary cannot leak
 //! settings into each other.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use xtask_art::library::AnimationLibrary;
 use xtask_art::spec::{Bake, CharacterSpec, CharacterType, Remesh, Subject, Texture};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// The repository itself, so a test reads the real committed art.
+pub fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root")
+}
+
+/// One committed art file, checked to be the art rather than a pointer to
+/// it. A checkout without Git LFS leaves text here, and every gate would
+/// then measure a file that is not the asset.
+pub fn committed_glb(file: &str) -> PathBuf {
+    let path = repo_root().join(file);
+    let bytes = std::fs::read(&path).unwrap_or_default();
+    assert_eq!(
+        bytes.get(..4),
+        Some(b"glTF".as_slice()),
+        "{file} is missing or is a Git LFS pointer, not a GLB. Run \
+         `git lfs pull`, and in CI pass `lfs: true` to actions/checkout."
+    );
+    path
+}
 
 /// Holds the environment lock and undoes every variable it set on drop.
 /// One per test: the lock is not re-entrant, so nesting two deadlocks.

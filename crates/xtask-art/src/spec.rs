@@ -212,7 +212,25 @@ impl CharacterSpec {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading spec {}", path.display()))?;
-        ron::from_str(&text).with_context(|| format!("parsing spec {}", path.display()))
+        let spec: Self =
+            ron::from_str(&text).with_context(|| format!("parsing spec {}", path.display()))?;
+        // The name goes into every derived path and into every report file
+        // name, so it is refused here rather than deep inside a stage that
+        // has already spent money.
+        Self::validate_name(&spec.name).with_context(|| format!("in {}", path.display()))?;
+        Ok(spec)
+    }
+
+    /// The name is used as a directory, a file name, and the item part of a
+    /// report name, where a dot is the separator.
+    fn validate_name(name: &str) -> Result<()> {
+        anyhow::ensure!(!name.is_empty(), "name must not be empty");
+        anyhow::ensure!(
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+            "name must be lowercase ascii, digits or underscore, with no dot: {name:?}"
+        );
+        Ok(())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -229,14 +247,7 @@ impl CharacterSpec {
 
     /// Rejects specs that would fail late, in the middle of a paid pipeline.
     pub fn validate(&self) -> Result<()> {
-        anyhow::ensure!(!self.name.is_empty(), "name must not be empty");
-        anyhow::ensure!(
-            self.name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
-            "name must be lowercase ascii, digits or underscore: {:?}",
-            self.name
-        );
+        Self::validate_name(&self.name)?;
         anyhow::ensure!(
             !self.subject.description.starts_with("TODO"),
             "spec still has the placeholder description, describe the character first"

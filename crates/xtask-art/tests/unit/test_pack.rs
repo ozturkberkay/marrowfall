@@ -323,7 +323,7 @@ fn sprite_height_is_honoured_and_aspect_preserved() {
 /// Guards the anchor against a naive `cell_width / 2`, which happens to
 /// agree whenever the crop is symmetric about the axis.
 #[test]
-fn anchor_follows_the_rotation_axis_not_the_crop_centre() {
+fn anchor_follows_the_rotation_axis_not_the_crop_center() {
     // An asymmetric silhouette straddling the axis: a limb swung out to
     // one side makes the crop center drift away from the rotation axis.
     let frames = vec![Frame {

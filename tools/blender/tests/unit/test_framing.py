@@ -554,6 +554,30 @@ def test_a_role_map_reads_a_convention_per_provider() -> None:
     assert roles.convention("mixamo")["spine_lower"] == "Spine"
 
 
+def test_a_role_map_ignores_the_tables_another_reader_owns() -> None:
+    """`[profile]` belongs to the Rust rig gates and `[aim_table]` to the
+    transfer, and both live in the same file as the roles."""
+    roles = SkeletonRoles.parse(
+        ROLES_TOML + '\n[profile]\nbones = ["Hips"]\n\n[aim_table]\nhips = [90, 0, 0]\n'
+    )
+
+    assert sorted(roles.conventions) == ["meshy", "mixamo"]
+
+
+def test_a_role_map_with_no_conventions_at_all_is_refused() -> None:
+    with pytest.raises(ValidationError, match="conventions"):
+        SkeletonRoles.parse('canonical = "meshy"\n')
+
+
+def test_a_misspelled_table_is_refused_rather_than_dropped() -> None:
+    """Only the tables another reader owns are ignored, so a typo still
+    fails instead of silently changing nothing."""
+    with pytest.raises(ValidationError, match="conventionz"):
+        SkeletonRoles.parse(
+            ROLES_TOML.replace("[conventions.meshy]", "[conventionz.meshy]")
+        )
+
+
 def test_a_canonical_convention_that_is_not_declared_is_refused() -> None:
     with pytest.raises(ValidationError, match="canonical convention 'meshy'"):
         SkeletonRoles(canonical="meshy", conventions={"mixamo": {"hips": "Hips"}})

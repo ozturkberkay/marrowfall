@@ -14,6 +14,8 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
+use crate::check::profile::Profile;
+use crate::check::{Finding, Report, Severity, rig};
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
 use crate::providers::mixamo::{self, session};
@@ -21,6 +23,9 @@ use crate::spec::{CharacterSpec, CharacterType, Paths};
 
 /// How long to wait for a browser login before giving up and saying so.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Nothing here retries, so every finding is from the first attempt.
+const FIRST_ATTEMPT: u32 = 1;
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo art", about = "Marrowfall character art pipeline")]
@@ -71,10 +76,13 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Validate specs without running anything.
+    /// Validate specs and measure the art on disk, without running anything.
     Check {
         /// Defaults to every spec in art/characters.
         name: Option<String>,
+        /// Print every rule id, limit, comparison, unit and space, and stop.
+        #[arg(long, conflicts_with = "name")]
+        list_rules: bool,
     },
 }
 
@@ -548,7 +556,16 @@ pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn check(root: &Path, name: Option<&str>) -> Result<()> {
+/// Validates every spec, then measures the rig art each one has on disk.
+///
+/// A character whose rig is not built yet is named and counted as unbuilt,
+/// never as passing. A missing file is an error at the stage boundary, where
+/// the stage has just written it; here there is nothing to have written it
+/// yet.
+pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
+    if list_rules {
+        return list_rig_rules(root);
+    }
     let dir = root.join("art/characters");
     let specs: Vec<PathBuf> = match name {
         Some(name) => vec![Paths::new(root, name).spec()],
@@ -570,17 +587,131 @@ pub fn check(root: &Path, name: Option<&str>) -> Result<()> {
     };
 
     let mut failed = 0;
+    let mut defects = 0;
+    let mut unbuilt = 0;
     for path in &specs {
-        match CharacterSpec::load(path).and_then(|spec| spec.validate()) {
-            Ok(()) => println!("ok    {}", path.display()),
+        let spec = match CharacterSpec::load(path).and_then(|spec| {
+            spec.validate()?;
+            Ok(spec)
+        }) {
+            Ok(spec) => {
+                println!("ok    {}", path.display());
+                spec
+            }
             Err(error) => {
                 failed += 1;
                 println!("FAIL  {}: {error:#}", path.display());
+                continue;
             }
+        };
+        match check_rig(root, &spec)? {
+            Some(count) => defects += count,
+            None => unbuilt += 1,
         }
     }
     anyhow::ensure!(failed == 0, "{failed} spec(s) invalid");
-    println!("\n{} spec(s) ok", specs.len());
+    println!("\n{} spec(s) ok, {defects} rig defect(s)", specs.len());
+    if unbuilt > 0 {
+        println!("{unbuilt} character(s) have no rig on disk yet");
+    }
+    anyhow::ensure!(defects == 0, "{defects} rig defect(s)");
+    Ok(())
+}
+
+/// Measures one character's rigged GLB against its skeleton profile, prints
+/// the defects, and writes the report. `None` when the rig is not on disk.
+fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    let paths = Paths::new(root, &spec.name);
+    let glb = paths.character_glb();
+    if !spec.subject.kind.can_be_rigged() {
+        println!(
+            "      no rig: {:?} characters are not rigged",
+            spec.subject.kind
+        );
+        return Ok(None);
+    }
+    if !glb.exists() {
+        println!("      no rig yet at {}", paths.relative(&glb));
+        return Ok(None);
+    }
+
+    let profile = Profile::of(root, &spec.subject.skeleton)?;
+    let findings = rig::check_file(
+        &glb,
+        root,
+        &profile,
+        f64::from(spec.subject.height_meters),
+        FIRST_ATTEMPT,
+    )?;
+    let mut report = Report::new(rig::STAGE, &spec.name, FIRST_ATTEMPT);
+    report.extend(findings)?;
+    // The passing measurements stay in the report; the terminal gets the
+    // defects and anything a spec field switched off.
+    for finding in report.findings() {
+        if finding.severity != Severity::Info {
+            println!("  {}", defect(finding));
+        }
+    }
+    let written = report.write(root)?;
+    let defects = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.severity == Severity::Error)
+        .count();
+    println!(
+        "      {} measurement(s), {defects} defect(s), report at {}",
+        report.findings().len(),
+        paths.relative(&written)
+    );
+    Ok(Some(defects))
+}
+
+/// One itemized defect: what was measured, what was allowed, and why it
+/// matters, on one line.
+fn defect(finding: &Finding) -> String {
+    format!(
+        "{severity} {rule} {subject}: {measured:.3} {comparison} {limit} {unit}. {message}",
+        severity = match finding.severity {
+            Severity::Error => "ERROR",
+            Severity::Warning => "WARN ",
+            Severity::Info => "info ",
+            Severity::Skipped => "off  ",
+        },
+        rule = finding.rule,
+        subject = finding.subject,
+        measured = finding.measured,
+        comparison = finding.comparison.as_str(),
+        limit = finding.limit,
+        unit = finding.unit,
+        message = finding.message,
+    )
+}
+
+/// Prints every rig rule with the limit each skeleton's profile publishes
+/// for it. Every skeleton, because the limits are per profile and a second
+/// one is a second file rather than a code change.
+fn list_rig_rules(root: &Path) -> Result<()> {
+    let skeletons = Profile::declared(root)?;
+    anyhow::ensure!(
+        !skeletons.is_empty(),
+        "no skeleton profile in {}",
+        Profile::dir(root).display()
+    );
+    for skeleton in skeletons {
+        let profile = Profile::of(root, &skeleton)?;
+        println!("rules for the {skeleton:?} skeleton, from its [profile]\n");
+        for rule in rig::RULES {
+            println!(
+                "{:<20} {} {:<4} {:<22} {}",
+                rule.id,
+                rule.comparison.as_str(),
+                (rule.limit)(&profile),
+                rule.unit,
+                rule.space,
+            );
+        }
+        println!();
+    }
     Ok(())
 }
 
@@ -622,6 +753,6 @@ where
         }
         Command::Fetch { names, force } => fetch(&root, &names, force).await,
         Command::Status { name, json } => status(&root, &name, json),
-        Command::Check { name } => check(&root, name.as_deref()),
+        Command::Check { name, list_rules } => check(&root, name.as_deref(), list_rules),
     }
 }
