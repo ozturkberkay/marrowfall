@@ -3,6 +3,7 @@
 // crash.
 #![allow(clippy::unwrap_used)]
 
+mod meshes;
 mod rigs;
 mod support;
 mod test_bake_stage;
@@ -13,10 +14,12 @@ mod test_cli_commands;
 mod test_cli_fetch;
 mod test_cli_prompts;
 mod test_cli_run;
+mod test_gltf_mesh;
 mod test_gltf_world;
 mod test_http;
 mod test_library;
 mod test_lock;
+mod test_mesh;
 mod test_meshy;
 mod test_meshy_client;
 mod test_mixamo;

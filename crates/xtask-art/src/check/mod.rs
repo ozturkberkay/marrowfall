@@ -9,7 +9,9 @@
 //! records the space it measured in, and states the limit it was read
 //! against. The runner only counts errors.
 
+pub mod gltf_mesh;
 pub mod gltf_world;
+pub mod mesh;
 pub mod profile;
 pub mod rig;
 pub mod validator;

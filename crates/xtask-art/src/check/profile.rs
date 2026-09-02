@@ -130,6 +130,32 @@ impl<'de> Deserialize<'de> for Axis {
     }
 }
 
+/// The `[profile.mesh]` table: one ceiling per mesh rule.
+///
+/// Every value is a count or a percent, so they are stored as `f64` and read
+/// straight through [`super::Rule`], which compares in `f64`. An integer
+/// field would have to be widened at every use.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshLimits {
+    /// Boundary edges: an edge used by exactly one face.
+    pub holes: f64,
+    /// Edges shared by three or more faces.
+    pub non_manifold_edges: f64,
+    /// Connected pieces of the welded surface.
+    pub islands: f64,
+    /// Faces that cross another face of the same mesh.
+    pub self_intersections: f64,
+    /// How far a vertex may sit from its own reflection, as a percent of the
+    /// mesh's width.
+    pub mirror_percent: f64,
+    /// The triangle budget the rigger states.
+    pub triangles: f64,
+    /// Meshy's own edge count, which adds boundary and true non-manifold
+    /// edges together.
+    pub printability_edges: f64,
+}
+
 /// A target angle and how far from it is still acceptable.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +188,9 @@ pub struct Profile {
     pub mirror_tolerance_degrees: f64,
     pub max_bind_deviation_degrees: f64,
     pub humerus_below_horizontal: Band,
+    /// Every published mesh limit. The mesh gates run on the character, not
+    /// on the skeleton, and they read these.
+    pub mesh: MeshLimits,
     /// Bone to its parent. Every bone but the root has a row.
     pub parents: BTreeMap<String, String>,
     /// Bone to the child its `child_axis` must point at.
@@ -346,6 +375,15 @@ impl Profile {
                 "humerus_below_horizontal.tolerance",
                 self.humerus_below_horizontal.tolerance,
             ),
+            // Every mesh ceiling. Zero islands or zero triangles describes
+            // no mesh that can exist, so none of these may be zero either.
+            ("mesh.holes", self.mesh.holes),
+            ("mesh.non_manifold_edges", self.mesh.non_manifold_edges),
+            ("mesh.islands", self.mesh.islands),
+            ("mesh.self_intersections", self.mesh.self_intersections),
+            ("mesh.mirror_percent", self.mesh.mirror_percent),
+            ("mesh.triangles", self.mesh.triangles),
+            ("mesh.printability_edges", self.mesh.printability_edges),
         ] {
             ensure!(
                 value.is_finite() && value > 0.0,

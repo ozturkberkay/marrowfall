@@ -114,6 +114,29 @@ max_bind_deviation_degrees = 75.0
 # The upper arm, measured below the horizontal plane.
 humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 
+# Every published mesh limit. Read by `crates/xtask-art/src/check/mesh.rs`.
+#
+# PROVISIONAL: the five calibrated values here are measured on the committed
+# `art/characters/survivor/model.glb`, which is the file after rigging. The
+# gates run on `art/staging/<char>/bare.glb`, the mesh before rigging, and no
+# Meshy key on this machine could download it. **T10 downloads `bare.glb` and
+# recalibrates these rows.**
+#
+# Measured welded at 1e-5 m in world space, with the headroom each limit
+# leaves. The plateau that chose 1e-5 is in the design document. The last two
+# rows are not calibrations at all: one is Meshy's stated rigging limit and
+# one is the edge count the design records for `print/analyze`.
+[profile.mesh]
+holes = 200                  # boundary edges. model.glb reads 171
+non_manifold_edges = 10      # edges shared by 3+ faces. model.glb reads 8
+islands = 8                  # connected pieces. model.glb reads 7
+self_intersections = 1000    # faces that meet. model.glb reads 861
+mirror_percent = 3.5         # of the width. model.glb reads 3.021
+# Meshy's stated limit for rigging, not a calibration.
+triangles = 300000           # model.glb reads 54,864
+# Meshy's own count, which adds boundary and non-manifold edges together.
+printability_edges = 200     # model.glb is recorded at 179
+
 # The real hierarchy. Read by `rig.parents` and `rig.single_root`.
 [profile.parents]
 Spine = "Hips"

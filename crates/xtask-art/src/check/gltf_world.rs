@@ -73,6 +73,59 @@ impl Joint {
     }
 }
 
+/// One node of the file's one real scene, with its whole chain composed.
+#[derive(Debug, Clone)]
+pub struct WorldNode<'a> {
+    pub node: gltf::Node<'a>,
+    /// The node above this one, or `None` for a scene root.
+    pub parent: Option<usize>,
+    /// The whole node chain composed, from the scene root down.
+    pub world: DMat4,
+}
+
+/// Every node of one glTF file, in parents-first order, each with its whole
+/// node chain composed.
+///
+/// One owner for the transform, because both the rig gates and the mesh
+/// gates read it and reading a local value as a world value is the 100x
+/// mistake this module exists to stop.
+///
+/// Only one scene is real: a node outside it has no world transform, so
+/// nothing outside it is returned. `scene` is optional in glTF, and a viewer
+/// picks when it is absent, so the first scene is the fallback.
+pub fn world_nodes<'a>(document: &'a gltf::Document) -> Result<Vec<WorldNode<'a>>> {
+    let scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .context("the file declares no scene")?;
+    let mut found = Vec::new();
+    let mut reached = BTreeSet::new();
+    let roots: Vec<gltf::Node<'a>> = scene.nodes().collect();
+    let mut queue: Vec<(gltf::Node<'a>, Option<usize>, DMat4)> = roots
+        .into_iter()
+        .rev()
+        .map(|root| (root, None, DMat4::IDENTITY))
+        .collect();
+    while let Some((node, parent, above)) = queue.pop() {
+        ensure!(
+            reached.insert(node.index()),
+            "node {} appears twice in the scene", // Two parents, two world transforms.
+            node.index()
+        );
+        let world = above * local(&node);
+        let index = node.index();
+        for child in node.children().collect::<Vec<_>>().into_iter().rev() {
+            queue.push((child, Some(index), world));
+        }
+        found.push(WorldNode {
+            node,
+            parent,
+            world,
+        });
+    }
+    Ok(found)
+}
+
 /// Every joint of one glTF file, in world space, plus what the object-level
 /// rule needs.
 #[derive(Debug, Clone)]
@@ -91,15 +144,6 @@ impl Skeleton {
     pub fn from_slice(bytes: &[u8]) -> Result<Self> {
         let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
         let document = &gltf.document;
-
-        // Only one scene is real: a node outside it has no world transform,
-        // so a joint missing from it is refused rather than measured against
-        // an assumed identity. `scene` is optional in glTF, and a viewer
-        // picks when it is absent, so the first scene is the fallback.
-        let scene = document
-            .default_scene()
-            .or_else(|| document.scenes().next())
-            .context("the file declares no scene")?;
         let joints: BTreeSet<usize> = document
             .skins()
             .flat_map(|skin| skin.joints())
@@ -110,15 +154,31 @@ impl Skeleton {
             "the file declares no skin, so it holds no skeleton"
         );
 
-        let mut walker = Walker {
-            found: Vec::new(),
-            reached: BTreeSet::new(),
-            joints: &joints,
-        };
-        for root in scene.nodes() {
-            walker.walk(&root, DMat4::IDENTITY, None)?;
+        let scene = world_nodes(document)?;
+        // The nearest joint above each node. Filled parents-first, so a
+        // node's own answer is already there when its children ask.
+        let mut nearest: BTreeMap<usize, String> = BTreeMap::new();
+        let mut found = Vec::new();
+        for entry in &scene {
+            let index = entry.node.index();
+            let above = entry
+                .parent
+                .and_then(|parent| nearest.get(&parent))
+                .cloned();
+            let name = node_name(&entry.node);
+            if joints.contains(&index) {
+                found.push(Joint {
+                    name: name.clone(),
+                    parent: above,
+                    world: entry.world,
+                });
+                nearest.insert(index, name);
+            } else if let Some(above) = above {
+                nearest.insert(index, above);
+            }
         }
-        if let Some(missing) = joints.difference(&walker.reached).next() {
+        let reached: BTreeSet<usize> = scene.iter().map(|entry| entry.node.index()).collect();
+        if let Some(missing) = joints.difference(&reached).next() {
             bail!("joint {missing} is not in the scene, so it has no world transform");
         }
 
@@ -128,12 +188,12 @@ impl Skeleton {
             .flat_map(|animation| animation.channels())
         {
             let node = channel.target().node();
-            if walker.reached.contains(&node.index()) && !joints.contains(&node.index()) {
+            if reached.contains(&node.index()) && !joints.contains(&node.index()) {
                 *object_channels.entry(node_name(&node)).or_insert(0_usize) += 1;
             }
         }
         Ok(Self {
-            joints: walker.found,
+            joints: found,
             object_channels,
         })
     }
@@ -166,38 +226,6 @@ impl Skeleton {
     }
 }
 
-/// Walks the scene once, composing every node transform on the way down.
-struct Walker<'a> {
-    found: Vec<Joint>,
-    reached: BTreeSet<usize>,
-    joints: &'a BTreeSet<usize>,
-}
-
-impl Walker<'_> {
-    fn walk(&mut self, node: &gltf::Node<'_>, parent: DMat4, bone: Option<&str>) -> Result<()> {
-        ensure!(
-            self.reached.insert(node.index()),
-            "node {} appears twice in the scene", // Two parents, two world transforms.
-            node.index()
-        );
-        let world = parent * local(node);
-        let mut child_bone = bone;
-        let name = node_name(node);
-        if self.joints.contains(&node.index()) {
-            self.found.push(Joint {
-                name: name.clone(),
-                parent: bone.map(str::to_owned),
-                world,
-            });
-            child_bone = Some(&name);
-        }
-        for child in node.children() {
-            self.walk(&child, world, child_bone)?;
-        }
-        Ok(())
-    }
-}
-
 /// One node's own transform, widened to `f64`.
 fn local(node: &gltf::Node<'_>) -> DMat4 {
     let columns = node.transform().matrix();
@@ -206,7 +234,7 @@ fn local(node: &gltf::Node<'_>) -> DMat4 {
 
 /// A node with no name of its own is named by its index, so a finding can
 /// still point at it.
-fn node_name(node: &gltf::Node<'_>) -> String {
+pub fn node_name(node: &gltf::Node<'_>) -> String {
     node.name()
         .map(str::to_owned)
         .unwrap_or_else(|| format!("node {}", node.index()))

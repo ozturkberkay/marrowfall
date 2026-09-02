@@ -167,7 +167,54 @@ fn check_itemizes_the_defects_of_the_rig_on_disk() {
 
     let error = check(dir.path(), None, false).unwrap_err().to_string();
 
-    assert!(error.contains("22 rig defect(s)"), "got: {error}");
+    assert!(error.contains("22 defect(s)"), "got: {error}");
+}
+
+/// The mesh gates run on the bare mesh, which is the mesh before rigging.
+/// The committed `model.glb` is the file after rigging, so it stands in as
+/// the calibration asset until `bare.glb` can be downloaded.
+#[test]
+fn check_measures_the_bare_mesh_and_writes_its_own_report() {
+    let dir = a_repo_with_a_rig("survivor");
+    let bare = Paths::new(dir.path(), "survivor").bare_glb();
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    std::fs::copy(real_repo().join("art/characters/survivor/model.glb"), &bare).unwrap();
+
+    // The rig still fails, so the command still fails.
+    check(dir.path(), None, false).unwrap_err();
+
+    let report = xtask_art::check::Report::read(
+        &dir.path().join("art/staging/reports/mesh.survivor.1.json"),
+    )
+    .unwrap();
+    assert_eq!(report.stage(), "mesh");
+    assert_eq!(report.findings().len(), 13);
+    assert!(!report.has_errors(), "the calibration asset passes");
+    // `check` calls nothing, so the one remote rule reports as unavailable
+    // rather than going quiet.
+    let remote = report
+        .findings()
+        .iter()
+        .find(|finding| finding.rule == "mesh.printability")
+        .expect("the remote rule reports either way");
+    assert_eq!(remote.severity, xtask_art::check::Severity::Warning);
+}
+
+#[test]
+fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
+    let dir = a_repo_with_a_rig("survivor");
+
+    // The rig is there and the bare mesh is not, so only the rig is
+    // measured and only the rig fails.
+    let error = check(dir.path(), None, false).unwrap_err().to_string();
+
+    assert!(error.contains("22 defect(s)"), "got: {error}");
+    assert!(
+        !dir.path()
+            .join("art/staging/reports/mesh.survivor.1.json")
+            .exists(),
+        "nothing to measure leaves no report"
+    );
 }
 
 #[test]

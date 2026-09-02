@@ -48,8 +48,16 @@ clap = { version = "4.6", features = ["derive"] }
 # The rig and mesh gates read the glTF node graph. `import` would pull in image
 # decoding, and no gate reads a texture, so the JSON and the GLB container are
 # all this needs.
-gltf = { version = "1.4.1", default-features = false, features = ["names"] }
+gltf = { version = "1.4.1", default-features = false, features = ["names", "utils"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Self-intersection counting: the broad-phase `Bvh` plus triangle queries.
+# `spade` is Delaunay triangulation for convex decomposition, which no gate
+# does, so the default features are off and only `dim3` + `f32` + `std` stay.
+parry3d = { version = "0.30.2", default-features = false, features = [
+    "alloc",
+    "required-features",
+    "std",
+] }
 reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "multipart",

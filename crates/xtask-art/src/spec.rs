@@ -349,6 +349,13 @@ impl Paths {
         self.dir().join("model.glb")
     }
 
+    /// The mesh before rigging, as the model stage downloads it. The mesh
+    /// gates run here, because cleaning geometry after rigging desyncs the
+    /// skin weights. Derived; gitignored.
+    pub fn bare_glb(&self) -> PathBuf {
+        self.staging().join("bare.glb")
+    }
+
     /// Raw bake output. Derived; gitignored.
     pub fn staging(&self) -> PathBuf {
         self.root.join(format!("art/staging/{}", self.name))

@@ -15,7 +15,7 @@ use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::check::profile::Profile;
-use crate::check::{Finding, Report, Severity, rig};
+use crate::check::{Finding, Report, Severity, mesh, rig};
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
 use crate::providers::mixamo::{self, session};
@@ -556,15 +556,15 @@ pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Validates every spec, then measures the rig art each one has on disk.
+/// Validates every spec, then measures the rig and the mesh each one has on
+/// disk.
 ///
-/// A character whose rig is not built yet is named and counted as unbuilt,
-/// never as passing. A missing file is an error at the stage boundary, where
-/// the stage has just written it; here there is nothing to have written it
-/// yet.
+/// A stage whose art is not built yet is named and counted as unbuilt, never
+/// as passing. A missing file is an error at the stage boundary, where the
+/// stage has just written it; here there is nothing to have written it yet.
 pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
     if list_rules {
-        return list_rig_rules(root);
+        return print_rule_list(root);
     }
     let dir = root.join("art/characters");
     let specs: Vec<PathBuf> = match name {
@@ -604,22 +604,24 @@ pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
                 continue;
             }
         };
-        match check_rig(root, &spec)? {
-            Some(count) => defects += count,
-            None => unbuilt += 1,
+        for measured in [check_rig(root, &spec)?, check_mesh(root, &spec)?] {
+            match measured {
+                Some(count) => defects += count,
+                None => unbuilt += 1,
+            }
         }
     }
     anyhow::ensure!(failed == 0, "{failed} spec(s) invalid");
-    println!("\n{} spec(s) ok, {defects} rig defect(s)", specs.len());
+    println!("\n{} spec(s) ok, {defects} defect(s)", specs.len());
     if unbuilt > 0 {
-        println!("{unbuilt} character(s) have no rig on disk yet");
+        println!("{unbuilt} stage(s) have no art on disk yet");
     }
-    anyhow::ensure!(defects == 0, "{defects} rig defect(s)");
+    anyhow::ensure!(defects == 0, "{defects} defect(s)");
     Ok(())
 }
 
-/// Measures one character's rigged GLB against its skeleton profile, prints
-/// the defects, and writes the report. `None` when the rig is not on disk.
+/// Measures one character's rigged GLB against its skeleton profile.
+/// `None` when the rig is not on disk.
 fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
     let paths = Paths::new(root, &spec.name);
     let glb = paths.character_glb();
@@ -634,7 +636,6 @@ fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
         println!("      no rig yet at {}", paths.relative(&glb));
         return Ok(None);
     }
-
     let profile = Profile::of(root, &spec.subject.skeleton)?;
     let findings = rig::check_file(
         &glb,
@@ -643,7 +644,36 @@ fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
         f64::from(spec.subject.height_meters),
         FIRST_ATTEMPT,
     )?;
-    let mut report = Report::new(rig::STAGE, &spec.name, FIRST_ATTEMPT);
+    report_on(root, &paths, rig::STAGE, findings).map(Some)
+}
+
+/// Measures one character's bare mesh, which is the mesh before rigging.
+/// `None` when it is not on disk: the `model` stage downloads it.
+fn check_mesh(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    let paths = Paths::new(root, &spec.name);
+    let glb = paths.bare_glb();
+    if !glb.exists() {
+        println!("      no bare mesh yet at {}", paths.relative(&glb));
+        return Ok(None);
+    }
+    let profile = Profile::of(root, &spec.subject.skeleton)?;
+    let findings = mesh::check_file(
+        &glb,
+        root,
+        &profile,
+        f64::from(spec.subject.height_meters),
+        // `check` measures what is on disk and calls nothing, so
+        // `mesh.printability` reports as unavailable. The model stage is
+        // where the response comes from.
+        None,
+        FIRST_ATTEMPT,
+    )?;
+    report_on(root, &paths, mesh::STAGE, findings).map(Some)
+}
+
+/// Prints the defects of one stage's findings and writes its report.
+fn report_on(root: &Path, paths: &Paths, stage: &str, findings: Vec<Finding>) -> Result<usize> {
+    let mut report = Report::new(stage, &paths.name, FIRST_ATTEMPT);
     report.extend(findings)?;
     // The passing measurements stay in the report; the terminal gets the
     // defects and anything a spec field switched off.
@@ -659,11 +689,11 @@ fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
         .filter(|finding| finding.severity == Severity::Error)
         .count();
     println!(
-        "      {} measurement(s), {defects} defect(s), report at {}",
+        "      {stage}: {} measurement(s), {defects} defect(s), report at {}",
         report.findings().len(),
         paths.relative(&written)
     );
-    Ok(Some(defects))
+    Ok(defects)
 }
 
 /// One itemized defect: what was measured, what was allowed, and why it
@@ -687,10 +717,10 @@ fn defect(finding: &Finding) -> String {
     )
 }
 
-/// Prints every rig rule with the limit each skeleton's profile publishes
-/// for it. Every skeleton, because the limits are per profile and a second
-/// one is a second file rather than a code change.
-fn list_rig_rules(root: &Path) -> Result<()> {
+/// Prints every rule with the limit each skeleton's profile publishes for
+/// it. Every skeleton, because the limits are per profile and a second one
+/// is a second file rather than a code change.
+fn print_rule_list(root: &Path) -> Result<()> {
     let skeletons = Profile::declared(root)?;
     anyhow::ensure!(
         !skeletons.is_empty(),
@@ -700,9 +730,9 @@ fn list_rig_rules(root: &Path) -> Result<()> {
     for skeleton in skeletons {
         let profile = Profile::of(root, &skeleton)?;
         println!("rules for the {skeleton:?} skeleton, from its [profile]\n");
-        for rule in rig::RULES {
+        for rule in rig::RULES.iter().chain(mesh::RULES.iter()) {
             println!(
-                "{:<20} {} {:<4} {:<22} {}",
+                "{:<20} {} {:<8} {:<16} {}",
                 rule.id,
                 rule.comparison.as_str(),
                 (rule.limit)(&profile),
