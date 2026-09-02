@@ -27,8 +27,9 @@ jobs:
       shell: ${{ steps.filter.outputs.shell }}
       markdown: ${{ steps.filter.outputs.markdown }}
       python: ${{ steps.filter.outputs.python }}
+      javascript: ${{ steps.filter.outputs.javascript }}
       rust: ${{ steps.filter.outputs.rust }}
-      lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_any == 'true' }}
+      lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.javascript == 'true' || steps.filter.outputs.workflows_any == 'true' }}
       unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
       security_audit_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_security_audit == 'true' }}
       rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
@@ -70,6 +71,10 @@ jobs:
               - '**/*.py'
               - 'pyproject.toml'
               - 'uv.lock'
+            javascript:
+              - '**/*.mjs'
+              - 'package.json'
+              - 'bun.lock'
             rust:
               - '**/*.rs'
               - '**/Cargo.toml'
@@ -78,21 +83,30 @@ jobs:
               - 'clippy.toml'
               - 'deny.toml'
               - '.cargo/**'
+              # The glTF-Validator gate is a Rust test that spawns this.
+              - 'package.json'
+              - 'bun.lock'
+              - 'tools/gltf_validator/**'
 
   lint:
     needs: prepare
     if: needs.prepare.outputs.lint_needed == 'true'
-    uses: ./.github/workflows/lint.yml
+    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
+    # rhysd/actionlint#711.
+    uses: ./.github/workflows/lint.yml # zizmor: ignore[self-repository]
     with:
       shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
       markdown: ${{ needs.prepare.outputs.markdown == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
       python: ${{ needs.prepare.outputs.python == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
+      javascript: ${{ needs.prepare.outputs.javascript == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
       actions: ${{ needs.prepare.outputs.workflows_any == 'true' }}
 
   unit_test:
     needs: prepare
     if: needs.prepare.outputs.unit_test_needed == 'true'
-    uses: ./.github/workflows/unit_test.yml
+    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
+    # rhysd/actionlint#711.
+    uses: ./.github/workflows/unit_test.yml # zizmor: ignore[self-repository]
     with:
       shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
       python: ${{ needs.prepare.outputs.python == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
@@ -100,14 +114,18 @@ jobs:
   security_audit:
     needs: prepare
     if: needs.prepare.outputs.security_audit_needed == 'true'
-    uses: ./.github/workflows/security_audit.yml
+    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
+    # rhysd/actionlint#711.
+    uses: ./.github/workflows/security_audit.yml # zizmor: ignore[self-repository]
     with:
       rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_security_audit == 'true' }}
 
   rust:
     needs: prepare
     if: needs.prepare.outputs.rust_needed == 'true'
-    uses: ./.github/workflows/rust.yml
+    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
+    # rhysd/actionlint#711.
+    uses: ./.github/workflows/rust.yml # zizmor: ignore[self-repository]
     with:
       rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
 

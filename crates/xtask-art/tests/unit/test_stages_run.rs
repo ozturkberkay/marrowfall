@@ -561,7 +561,7 @@ fn install_strip_stub(root: &std::path::Path, env: &mut EnvGuard) {
     std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
 
     let stub = root.join("strip-stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(&stub, "#!/bin/sh\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n").unwrap();
     std::fs::set_permissions(
         &stub,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
@@ -659,7 +659,8 @@ async fn a_downloaded_animation_is_stripped_but_the_character_is_not() {
     std::fs::write(
         &stub,
         "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"--glb\" ]; then \
-         echo \"$2\" >> \"$MARROWFALL_STRIP_LOG\"; fi\n  shift\ndone\nexit 0\n",
+         echo \"$2\" >> \"$MARROWFALL_STRIP_LOG\"; fi\n  shift\ndone\n\
+         : > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
     )
     .unwrap();
     std::fs::set_permissions(

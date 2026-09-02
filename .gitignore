@@ -18,6 +18,9 @@
 # here on each machine.
 /art/animations/local/
 
+# JavaScript (the glTF-Validator only, bun-managed)
+/node_modules/
+
 # Python (Blender scripts; uv-managed)
 .venv/
 __pycache__/

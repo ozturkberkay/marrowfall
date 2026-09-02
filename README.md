@@ -33,6 +33,7 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 │   └── xtask-world/          # World preview tool
 ├── project/                  # Godot project, including `data/` tuning tables
 ├── art/                      # Concepts, sprites, animations, skeletons, branding
+├── tools/                    # Blender scripts, and the glTF-Validator driver
 ├── scripts/                  # Shell scripts and git hooks
 ├── docs/                     # Design docs, blog posts etc.
 └── Cargo.toml                # Rust workspace root
@@ -68,7 +69,7 @@ is what lets one command run a whole tier across the workspace:
 
 | Tier | Dependencies | Command | Wired in |
 | ----------- | ------------------------------------- | -------------------------------------------------- | --------------------------- |
-| Unit | Mocks only, zero I/O | `cargo nextest run --workspace --test unit` | `game`, `host`, `render`, `sprites`, `worldgen`, `xtask-art`, `xtask-world` |
+| Unit | Mocks and local stubs, no remote service | `cargo nextest run --workspace --test unit` | `game`, `host`, `render`, `sprites`, `worldgen`, `xtask-art`, `xtask-world` |
 | Integration | Real threads and channels, no engine | `cargo nextest run --workspace --test integration` | `host` |
 | E2E | Black box, launches `godot --headless` | `cargo nextest run --workspace --test e2e` | nothing yet |
 

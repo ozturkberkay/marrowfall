@@ -3,6 +3,9 @@ brew "prek"
 brew "rustup"
 brew "cargo-nextest"
 brew "uv"
+# The Khronos glTF-Validator ships as an npm package, and there is no
+# Homebrew formula for it. Bun installs and runs it.
+brew "bun"
 brew "lychee"
 brew "git-lfs"
 brew "bashunit"

@@ -20,9 +20,9 @@ the root bone, is what carries it through. The bake discards it on import.
 import argparse
 import pathlib
 import sys
-import traceback
 
 import bpy
+from findings import guard
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -97,11 +97,13 @@ def main() -> None:
     print(f"stripped {args.glb.name}: {before / 1e6:.2f} MB -> {after / 1e3:.0f} KB")
 
 
+def save_blend(path: pathlib.Path) -> None:
+    """The scene as it stood when the script failed, for a human to open."""
+    bpy.ops.wm.save_as_mainfile(filepath=str(path), copy=True)
+
+
 if __name__ == "__main__":
     # Blender exits 0 on an uncaught exception, so a failure here would look
-    # like success and leave a multi-megabyte file committed.
-    try:
-        main()
-    except Exception:  # noqa: BLE001
-        traceback.print_exc()
-        sys.exit(1)
+    # like success and leave a multi-megabyte file committed. `guard` writes
+    # the success sentinel the Rust side asserts.
+    guard(main, save_blend)

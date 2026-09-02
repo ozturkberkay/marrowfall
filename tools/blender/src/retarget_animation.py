@@ -26,7 +26,6 @@ playing it stays with the bake: only the bake knows which body that is.
 import argparse
 import pathlib
 import sys
-import traceback
 
 import bpy
 from bake_sprites import (
@@ -38,6 +37,7 @@ from bake_sprites import (
     rotation_curves,
     scale_translation,
 )
+from findings import guard
 from framing import (
     SkeletonRoles,
     Vec4,
@@ -331,11 +331,13 @@ def main() -> None:
     retarget(args.source, args.rig, args.out, args.name, args.convention)
 
 
+def save_blend(path: pathlib.Path) -> None:
+    """The scene as it stood when the script failed, for a human to open."""
+    bpy.ops.wm.save_as_mainfile(filepath=str(path), copy=True)
+
+
 if __name__ == "__main__":
     # Blender exits 0 on an uncaught exception, so a failed fit would look like
-    # success and leave a clip nobody can bake.
-    try:
-        main()
-    except Exception:  # noqa: BLE001
-        traceback.print_exc()
-        sys.exit(1)
+    # success and leave a clip nobody can bake. `guard` writes the success
+    # sentinel the Rust side asserts.
+    guard(main, save_blend)

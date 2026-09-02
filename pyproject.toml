@@ -1,5 +1,5 @@
 # Python exists in this repo for one reason: Blender is scripted in Python and
-# nothing else — every scripting flag its CLI offers is a Python one. So the
+# nothing else. Every scripting flag its CLI offers is a Python one, so the
 # sprite bake runs inside Blender. Everything else is Rust. See tools/blender/.
 [project]
 name = "marrowfall-pipeline"
@@ -34,7 +34,7 @@ testpaths = ["tools/blender/tests"]
 # The bake is run by Blender as a loose script, not installed as a package, so
 # its directory goes on the path the same way Blender puts it there.
 pythonpath = ["tools/blender/src"]
-addopts = "--cov=framing --cov-report=term-missing --cov-fail-under=100"
+addopts = "--cov=framing --cov=findings --cov-report=term-missing --cov-fail-under=100"
 
 [tool.ty.src]
 include = ["tools/blender"]
@@ -42,7 +42,7 @@ include = ["tools/blender"]
 [tool.ty.environment]
 # The bake is a loose script, not an installed package, so `framing` resolves
 # from its own directory. Blender is given that path on PYTHONPATH, pytest via
-# its `pythonpath`, and ty here — three views of the same one path.
+# its `pythonpath`, and ty here. Three views of the same one path.
 extra-paths = ["tools/blender/src"]
 
 # `framing.py` and the tests are checked with every rule on. Only the modules

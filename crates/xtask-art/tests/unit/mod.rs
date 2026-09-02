@@ -5,6 +5,8 @@
 
 mod support;
 mod test_bake_stage;
+mod test_blender;
+mod test_check;
 
 mod test_chrome;
 mod test_cli;
@@ -26,3 +28,4 @@ mod test_preview;
 mod test_spec;
 mod test_stages;
 mod test_stages_run;
+mod test_validator;

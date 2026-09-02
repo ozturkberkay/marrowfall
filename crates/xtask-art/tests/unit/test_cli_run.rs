@@ -90,6 +90,7 @@ for d in s se e ne n nw w sw; do
     cp "$MARROWFALL_STUB_FRAME" "$out/idle_${d}_${i}.png"
   done
 done
+: > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
     )

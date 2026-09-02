@@ -40,6 +40,13 @@ function setup_python() {
   uv sync
 }
 
+# JavaScript
+
+function setup_javascript() {
+  echo "📦 Setting up the JavaScript environment."
+  bun install --frozen-lockfile
+}
+
 # Game
 
 function setup_game() {
@@ -56,5 +63,6 @@ function setup() {
   setup_git_lfs
   setup_rust
   setup_python
+  setup_javascript
   setup_game
 }

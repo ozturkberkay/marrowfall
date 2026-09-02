@@ -1,0 +1,16 @@
+{
+  "name": "marrowfall-pipeline",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Bun exists in this repo for one reason: the Khronos glTF-Validator ships as an npm package. See tools/gltf_validator/.",
+  "dependencies": {
+    "gltf-validator": "2.0.0-dev.3.10"
+  },
+  "packageManager": "bun@1.4.0",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "devDependencies": {
+    "prettier": "3.9.6"
+  }
+}
