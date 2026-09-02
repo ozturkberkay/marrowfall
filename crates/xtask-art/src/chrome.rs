@@ -1,17 +1,8 @@
-//! Reads the Mixamo credential out of Chrome's own storage.
-//!
-//! Exporting a Mixamo animation needs a bearer token that only a logged-in
-//! browser session has, and it lasts about a day. This reads that session's
-//! token instead of asking a human to open devtools and paste it, which is a
-//! chore they would repeat daily.
-//!
-//! **Nothing is persisted.** The token is read fresh, handed over once, and
-//! dropped. It is never printed, never written to disk, and never put in an
-//! error message: a leaked bearer token is an Adobe account credential.
-//!
-//! Chrome's on-disk layout is a convention rather than a standard, so every
-//! part of it is treated as untrusted input: an unexpected shape is skipped,
-//! never asserted on. `MARROWFALL_MIXAMO_TOKEN` bypasses all of it.
+//! Reads the Mixamo bearer token from Chrome's session storage, so nobody
+//! pastes it from devtools every day. The token is read, handed over once, and
+//! dropped: never printed, written, or put in an error. Chrome's layout is a
+//! convention, so anything unexpected is skipped, not asserted on.
+//! `MARROWFALL_MIXAMO_TOKEN` bypasses all of it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -204,7 +195,11 @@ fn jwt_candidates(value: &str) -> impl Iterator<Item = &str> {
     value.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
 }
 
-/// The `exp` claim, per RFC 7519 section 4.1.4, in seconds since the epoch.
+/// When a token stops working, in seconds since the epoch.
+///
+/// Adobe IMS carries no `exp` (RFC 7519 section 4.1.4). It sends `created_at`
+/// and `expires_in` instead, both in milliseconds and both as strings, so
+/// `exp` is the fallback rather than the rule.
 ///
 /// The signature is deliberately not verified: Mixamo is both the audience
 /// and the verifier, and all we need is to know when to prompt again.
@@ -218,10 +213,21 @@ fn expiry(jwt: &str) -> Option<i64> {
     let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .ok()?;
-    serde_json::from_slice::<Value>(&json)
-        .ok()?
-        .get("exp")?
+    let claims = serde_json::from_slice::<Value>(&json).ok()?;
+    if let (Some(created), Some(lifetime)) =
+        (millis(&claims, "created_at"), millis(&claims, "expires_in"))
+    {
+        return Some((created + lifetime) / 1000);
+    }
+    claims.get("exp")?.as_i64()
+}
+
+/// One millisecond claim, which Adobe writes as a string and others as a number.
+fn millis(claims: &Value, name: &str) -> Option<i64> {
+    let claim = claims.get(name)?;
+    claim
         .as_i64()
+        .or_else(|| claim.as_str()?.parse::<i64>().ok())
 }
 
 fn unix_now() -> i64 {
