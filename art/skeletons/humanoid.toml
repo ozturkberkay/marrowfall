@@ -1,8 +1,11 @@
 # Which bone fills each role, per naming convention.
 #
-# Retargeting matches by role, never by name: `Spine` is this rig's highest
-# spine bone and Mixamo's lowest. A provider is a table here plus a
-# `MotionSource` variant, tied together by `MotionSource::bone_convention`.
+# Retargeting matches by role, never by name. A provider is a table here plus
+# a `MotionSource` variant, tied together by `MotionSource::bone_convention`.
+#
+# The two tables are identical, and they are still two tables: a bought rig
+# names its bones the same way today and nothing says the next one will.
+# `[fingerprints]` is what tells them apart.
 
 canonical = "meshy"
 
@@ -11,12 +14,17 @@ canonical = "meshy"
 # conventions below fill all 22, so nothing is optional yet.
 optional_roles = []
 
+# The two roles whose joints root travel is sized by: a clip authored for a
+# longer thigh takes a longer step, and a step is what the femur measures.
+# Total height carries the head and the feet, and neither one takes a step.
+stride_segment = ["left_upper_leg", "left_leg"]
+
 [conventions.meshy]
 hips = "Hips"
-spine_lower = "Spine02"
-spine_middle = "Spine01"
-spine_upper = "Spine"
-neck = "neck"
+spine_lower = "Spine"
+spine_middle = "Spine1"
+spine_upper = "Spine2"
+neck = "Neck"
 head = "Head"
 left_shoulder = "LeftShoulder"
 left_arm = "LeftArm"
@@ -147,9 +155,9 @@ right_toe = [0.0, -1.0, 0.0]
 # the only reader, and `cargo art check --list-rules` prints it.
 #
 # Bone names are the Mixamo and HumanIK standard, with the spine numbered from
-# the bottom, so `Spine` is the lowest of the three. The committed rig still
-# carries the auto-rigger's own names and fails seven of these rules; the
-# rename lands with the new retarget.
+# the bottom, so `Spine` is the lowest of the three. The committed rig was
+# renamed to these, so the two convention tables below are now identical and
+# `[fingerprints]` is what tells them apart.
 [profile]
 # The exact bone set. `head_end` and `headfront` fill no role, and they are
 # listed because they are part of this rig.

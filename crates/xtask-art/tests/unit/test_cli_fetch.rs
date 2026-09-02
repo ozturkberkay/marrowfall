@@ -9,6 +9,7 @@ use std::path::Path;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+use xtask_art::check::clip;
 use xtask_art::cli::{FetchStep, fetch, fetch_plan};
 use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
 use xtask_art::providers::mixamo::client::CHARACTER_ID;
@@ -179,7 +180,9 @@ fn a_name_the_library_does_not_declare_lists_what_it_does() {
 
 // --- Fetching -------------------------------------------------------------
 
-/// A repo with the retarget script, a virtualenv and a canonical rig.
+/// A repo with the retarget script, a virtualenv, a canonical rig and the
+/// skeleton file beside it. The real one: the runner reads `[profile]` out of
+/// it to hold the script's report to the published rule list.
 fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -189,18 +192,47 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
 
     let rig = AnimationLibrary::reference_rig(root, HUMANOID);
     std::fs::create_dir_all(rig.parent().unwrap()).unwrap();
-    std::fs::write(rig, b"glTF").unwrap();
+    std::fs::write(&rig, b"glTF").unwrap();
+    let skeleton = rig.with_extension("toml");
+    std::fs::copy(
+        crate::support::repo_root().join("art/skeletons/humanoid.toml"),
+        skeleton,
+    )
+    .unwrap();
     library.save(root).unwrap();
     dir
 }
 
-/// A stub that writes the GLB the retarget would have written.
-fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
-    let stub = dir.join("blender-stub.sh");
-    std::fs::write(
+/// The report writing, as the real script looks like from outside: the
+/// header comes off the path the runner set, and `MARROWFALL_STUB_FINDING`
+/// stands in for the 44 findings the retarget really writes.
+const WRITES_A_REPORT: &str = r#"
+name=$(basename "$MARROWFALL_REPORT" .json)
+stage=${name%%.*}; rest=${name#*.}; item=${rest%.*}; attempt=${rest##*.}
+printf '{"stage":"%s","item":"%s","attempt":%s,"findings":[%s]}' \
+  "$stage" "$item" "$attempt" "$MARROWFALL_STUB_FINDING" > "$MARROWFALL_REPORT"
+"#;
+
+/// One executable stub, named after what it does wrong.
+fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    let stub = dir.join(name);
+    std::fs::write(&stub, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(
         &stub,
-        r#"#!/bin/sh
-printf '%s\n' "$@" > "$MARROWFALL_STUB_ARGV"
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    stub
+}
+
+/// Blender as the fetch path uses it: it writes the clip, the report and the
+/// sentinel.
+fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
+    a_stub(
+        dir,
+        "blender-stub.sh",
+        &format!(
+            r#"printf '%s\n' "$@" > "$MARROWFALL_STUB_ARGV"
 out=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
@@ -208,17 +240,21 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$(dirname "$out")"
 printf 'glTF fitted' > "$out"
+{WRITES_A_REPORT}
 : > "$MARROWFALL_SENTINEL"
 exit 0
-"#,
+"#
+        ),
     )
-    .unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
-    stub
+}
+
+/// One finding as JSON, built through the rule registry so the stub cannot
+/// report a limit, a unit or a space the published list does not carry.
+fn a_clip_finding(measured: f64) -> String {
+    let profile =
+        xtask_art::check::profile::Profile::of(&crate::support::repo_root(), HUMANOID).unwrap();
+    let finding = clip::INTERPOLATION.measured(&profile, "Hips", measured, 1, "stub".to_owned());
+    serde_json::to_string(&finding).unwrap()
 }
 
 /// Serves one product, its export, and the file that export produces.
@@ -277,7 +313,8 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         .set(
             "MARROWFALL_STUB_ARGV",
             dir.path().join("argv.txt").to_str().unwrap(),
-        );
+        )
+        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(0.0));
 
     fetch(dir.path(), &["walk_back".to_owned()], false)
         .await
@@ -359,14 +396,12 @@ async fn a_retarget_that_writes_nothing_is_not_recorded_as_fetched() {
     let server = MockServer::start().await;
     serve_mixamo(&server).await;
     let dir = a_repo(&a_library());
-    // Finishes cleanly, sentinel and all, but writes no clip.
-    let stub = dir.path().join("silent-stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n").unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    // Finishes cleanly, sentinel and all, and measures nothing at all.
+    let stub = a_stub(
+        dir.path(),
+        "silent-stub.sh",
+        ": > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
+    );
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
         .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
@@ -377,9 +412,134 @@ async fn a_retarget_that_writes_nothing_is_not_recorded_as_fetched() {
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("walk_back.glb"), "got: {error}");
+    assert!(error.contains("wrote no report"), "got: {error}");
     assert!(
         LibraryLock::load(dir.path()).unwrap().fetched.is_empty(),
         "nothing arrived, so nothing is recorded"
     );
+}
+
+/// The report is written and the clip is not, which is the shape a failed
+/// export leaves behind.
+#[tokio::test]
+async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_stub(
+        dir.path(),
+        "no-clip-stub.sh",
+        &format!("{WRITES_A_REPORT}\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"),
+    );
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(0.0));
+
+    let error = format!(
+        "{:#}",
+        fetch(dir.path(), &["walk_back".to_owned()], false)
+            .await
+            .unwrap_err()
+    );
+
+    assert!(error.contains("walk_back.glb"), "got: {error}");
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// A clip that broke a `clip.*` rule is not recorded, however complete the
+/// file looks. The report stays on disk for a human.
+#[tokio::test]
+async fn a_retarget_that_breaks_a_rule_is_not_recorded_as_fetched() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        // Four channels left on Bezier. The registry decides the severity,
+        // so this is an error without the stub claiming to be one.
+        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(4.0));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("left 1 defect(s)"), "got: {error}");
+    assert!(
+        dir.path()
+            .join("art/staging/reports/retarget.walk_back.1.json")
+            .exists(),
+        "the report is the diagnostic, so it stays"
+    );
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// A defect filed as information. The runner's own gate reads severity, so
+/// without the registry check this clip would be recorded as fetched with
+/// four broken channels sitting in its report.
+#[tokio::test]
+async fn a_retarget_that_calls_a_defect_information_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set(
+            "MARROWFALL_STUB_FINDING",
+            &a_clip_finding(4.0).replace("\"error\"", "\"info\""),
+        );
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("severity"), "got: {error}");
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// A rule `--list-rules` does not print has no published limit, so a report
+/// naming one is refused rather than filed.
+#[tokio::test]
+async fn a_retarget_reporting_a_rule_nobody_publishes_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set(
+            "MARROWFALL_STUB_FINDING",
+            &a_clip_finding(0.0).replace("clip.interpolation", "clip.made_up"),
+        );
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("clip.made_up"), "got: {error}");
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }

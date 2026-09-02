@@ -227,6 +227,16 @@ def write_report(findings: Iterable[Finding]) -> Report:
     return report
 
 
+def attempt() -> int:
+    """Which regeneration this run is, off the path the runner set.
+
+    Every Finding carries it, and `write_report` refuses a report whose
+    findings claim another attempt, so this is the only place a script reads
+    it from.
+    """
+    return _header_of(report_path())[2]
+
+
 def report_path() -> pathlib.Path:
     """Where this run writes its findings.
 

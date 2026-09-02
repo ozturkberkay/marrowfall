@@ -13,6 +13,7 @@ use anyhow::{Context as _, Result};
 
 use crate::blender::{self, BLENDER_SRC};
 use crate::check::Artifacts;
+use crate::check::profile::Profile;
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -325,11 +326,25 @@ pub fn retarget(
     // Not a `Stage`: the retarget runs inside the fetch path and the lock
     // keeps its six stages. It still gets its own report.
     let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
-    let findings = blender::run(&script, &args, &artifacts, repo_root)
-        .with_context(|| format!("retargeting {}", source.display()))?;
+    let report = blender::run(&script, &args, &artifacts, repo_root)
+        .with_context(|| format!("retargeting {}", source.display()))?
+        .with_context(|| format!("the retarget of {name} wrote no report"))?;
+    let off = report.off_registry(&Profile::of(repo_root, skeleton)?);
     anyhow::ensure!(
-        findings.is_none(),
-        "the retarget reported findings nobody reads yet"
+        off.is_empty(),
+        "the retarget of {name} reported findings the rule list does not \
+         carry, so nothing published what they were read against: {}",
+        off.join("; ")
+    );
+    anyhow::ensure!(
+        !report.has_errors(),
+        "the retarget of {name} left {} defect(s), listed in {}",
+        report
+            .findings()
+            .iter()
+            .filter(|finding| !finding.holds())
+            .count(),
+        artifacts.report().display()
     );
     Ok(())
 }

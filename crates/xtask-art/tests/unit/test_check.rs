@@ -8,7 +8,9 @@ use std::path::Path;
 
 use xtask_art::check::aim::{self, AimTable};
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Artifacts, Comparison, Finding, Report, Severity, every_rule, mesh, rig};
+use xtask_art::check::{
+    Artifacts, Comparison, Finding, Report, Severity, clip, every_rule, mesh, rig,
+};
 use xtask_art::library::HUMANOID;
 
 use crate::rigs::HEIGHT_METERS;
@@ -29,6 +31,11 @@ fn a_finding() -> Finding {
     }
 }
 
+/// The committed humanoid profile, which every published limit comes from.
+fn profile() -> Profile {
+    Profile::of(&repo_root(), HUMANOID).expect("the committed humanoid profile")
+}
+
 fn added(finding: Finding) -> anyhow::Result<()> {
     Report::new("clip", "run", 1).add(finding)
 }
@@ -43,8 +50,8 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        27,
-        "13 rig rules, the aim table, and 13 mesh rules"
+        29,
+        "13 rig rules, the aim table, 13 mesh rules and 2 clip rules"
     );
     assert_eq!(
         ids.iter()
@@ -53,9 +60,115 @@ fn every_family_reaches_the_printed_rule_list() {
         ids.len(),
         "a rule id is listed twice"
     );
-    for expected in ["rig.child_axis", "rig.aim_table", "mesh.holes"] {
+    for expected in [
+        "rig.child_axis",
+        "rig.aim_table",
+        "mesh.holes",
+        "clip.interpolation",
+    ] {
         assert!(ids.contains(&expected), "{expected} is not in the list");
     }
+}
+
+/// The two `clip.*` rules are measured inside Blender, which CI has none of,
+/// so their side of the contract is a recorded report: the real one the
+/// refit of `run.glb` wrote, committed the way `mesh.printability`'s
+/// recorded response is.
+fn a_recorded_retarget_report() -> Report {
+    Report::read(&repo_root().join("crates/xtask-art/tests/fixtures/retarget.run.1.json"))
+        .expect("the recorded retarget report")
+}
+
+#[test]
+fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
+    let report = a_recorded_retarget_report();
+
+    assert_eq!((report.stage(), report.item()), ("retarget", "run"));
+    assert_eq!(report.findings().len(), 44, "22 bones, both rules");
+    assert!(!report.has_errors(), "the refit of our own clip is clean");
+    assert_eq!(
+        report.off_registry(&profile()),
+        Vec::<String>::new(),
+        "every finding says what `--list-rules` says"
+    );
+}
+
+/// One clean finding of a published rule, for the negatives below to vary.
+fn a_clip_finding() -> Finding {
+    clip::INTERPOLATION.measured(&profile(), "Hips", 0.0, 1, "stub".to_owned())
+}
+
+/// Three `[synth]` negatives for the runner's half: a rule nothing
+/// published, a published rule reported against a limit of its own, and a
+/// defect filed as information. The last is the worst of the three, because
+/// the runner's own gate reads severity: four channels left on Bezier called
+/// `info` would exit 0 with the number sitting in the report.
+#[test]
+fn a_report_that_disagrees_with_the_rule_list_is_named_back() {
+    let mut report = Report::new("retarget", "run", 1);
+    for finding in [
+        Finding {
+            rule: "clip.made_up".to_owned(),
+            ..a_finding()
+        },
+        Finding {
+            comparison: Comparison::Le,
+            limit: 5.0,
+            ..a_clip_finding()
+        },
+        Finding {
+            severity: Severity::Info,
+            measured: 4.0,
+            ..a_clip_finding()
+        },
+    ] {
+        report.add(finding).unwrap();
+    }
+
+    let off = report.off_registry(&profile());
+
+    assert_eq!(off.len(), 3, "{off:#?}");
+    assert!(off[0].contains("clip.made_up"), "{off:#?}");
+    assert!(
+        off[1].contains("comparison") && off[1].contains("limit"),
+        "{off:#?}"
+    );
+    assert!(
+        off[2].contains("severity") && off[2].contains("Info at 4"),
+        "{off:#?}"
+    );
+}
+
+/// The other three severities. A number decides `info` and `error` and
+/// nothing else: a warning says the measurement could not be taken and a
+/// skip says a spec field switched the rule off, so neither follows from
+/// one.
+#[test]
+fn a_warning_and_a_skip_are_not_held_to_the_comparison() {
+    let mut report = Report::new("retarget", "run", 1);
+    for severity in [Severity::Warning, Severity::Skipped] {
+        report
+            .add(Finding {
+                severity,
+                measured: 4.0,
+                ..a_clip_finding()
+            })
+            .unwrap();
+    }
+
+    assert_eq!(report.off_registry(&profile()), Vec::<String>::new());
+}
+
+/// And the clean finding itself, so the check is not passing everything.
+#[test]
+fn a_defect_reported_as_an_error_agrees_with_the_rule_list() {
+    let mut report = Report::new("retarget", "run", 1);
+    report
+        .add(clip::INTERPOLATION.measured(&profile(), "Hips", 4.0, 1, "stub".to_owned()))
+        .unwrap();
+
+    assert_eq!(report.off_registry(&profile()), Vec::<String>::new());
+    assert!(report.has_errors(), "the comparison decided that");
 }
 
 /// Every rule in that list has to report something on real art, or a rule
@@ -75,6 +188,7 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
         rig::check_file(&rig_glb, &root, &profile, HEIGHT_METERS, 1).unwrap(),
         aim::check_file(&rig_glb, &root, &profile, &table, table.canonical(), 1).unwrap(),
         mesh::check_file(&mesh_glb, &root, &profile, HEIGHT_METERS, None, 1).unwrap(),
+        a_recorded_retarget_report().findings().to_vec(),
     ]
     .concat();
 

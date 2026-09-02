@@ -50,12 +50,10 @@ from pathlib import Path
 import bpy
 from findings import guard
 from framing import (
-    BIND_POSE_TOLERANCE_DEG,
     BakeSettings,
     Bounds,
     Framing,
     Vec3,
-    bind_pose_mismatch,
     bone_from_data_path,
     direction_rotation,
     forearm_roll_sign,
@@ -484,7 +482,7 @@ def rest_points(armature: bpy.types.Object) -> list[Vec3]:
     it twice on a rig whose object scale differs.
 
     Heads only. glTF stores no bone lengths, so the importer invents tails, and
-    on this project's rigs they land tens of metres from the body.
+    on this project's rigs they land tens of meters from the body.
     """
     return [
         (bone.head_local.x, bone.head_local.y, bone.head_local.z)
@@ -551,19 +549,6 @@ def strip_root_motion(armature: bpy.types.Object) -> None:
     print(f"pinned root motion on {roots}")
 
 
-def bone_directions(
-    armature: bpy.types.Object,
-) -> dict[str, tuple[float, float, float]]:
-    """Each bone's rest direction, for comparing one rig's bind pose to another."""
-    directions = {}
-    for bone in armature.data.bones:
-        delta = bone.tail_local - bone.head_local
-        if delta.length > 0:
-            delta = delta.normalized()
-            directions[bone.name] = (delta.x, delta.y, delta.z)
-    return directions
-
-
 def take_action(
     path: Path, target: bpy.types.Object, name: str
 ) -> tuple[bpy.types.Action, float]:
@@ -575,6 +560,11 @@ def take_action(
     nodes inside their own file, the format has no cross-file reference. The
     imported armature is therefore thrown away after its action has been taken;
     bone names match, so the action drives the character's own skeleton.
+
+    Nothing here compares the two bind poses. The retarget transfers motion in
+    world space against the aim table, so a clip fitted to this skeleton is
+    already in this rest pose, and the old check read the importer's invented
+    bone tails to say so.
     """
     if not path.exists():
         sys.exit(f"error: animation {path} not found")
@@ -596,10 +586,9 @@ def take_action(
     action.name = name
     if source_rig is None:
         sys.exit(
-            f"error: {path} has no armature, so its bind pose cannot be checked "
-            "against the character's. Re-download it."
+            f"error: {path} has no armature, so the body it was authored for "
+            "cannot be measured. Re-download it."
         )
-    source_bind = bone_directions(source_rig)
     source_height = rest_height(rest_points(source_rig))
     # Discard the imported skeleton; only its measurements were wanted.
     for obj in imported:
@@ -616,14 +605,6 @@ def take_action(
             f"error: {path} animates bones absent from the character: "
             f"{missing[:5]}, the animation and the character come from "
             "different rigs"
-        )
-    if off := bind_pose_mismatch(bone_directions(target), source_bind):
-        worst = ", ".join(f"{name} {angle:.0f} deg" for name, angle in off[:4])
-        sys.exit(
-            f"error: {path} was built for a rig in a different bind pose "
-            f"({len(off)} bone(s) over {BIND_POSE_TOLERANCE_DEG:.0f} deg: {worst}). "
-            "An action holds rotations relative to its own rest pose, so this "
-            "would flail. Re-buy the animation against this character's rig."
         )
     return action, source_height
 

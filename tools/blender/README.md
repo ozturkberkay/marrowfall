@@ -1,0 +1,58 @@
+# Blender scripts
+
+Python exists in this repository for one reason: Blender is scripted in Python
+and nothing else. Everything the pipeline can measure without Blender is Rust,
+under `crates/xtask-art/src/check/`.
+
+## Four rules
+
+1. **A gate needs a negative control.** No check merges without a fixture it
+   is proved to reject. Where real broken art exists, that is the fixture.
+2. **A gate needs a calibration.** Known-good art in, silence out, and every
+   rule names the representation and the space it measured in.
+3. **A fixer is never trusted by its return code.** Every repair is followed
+   by re-running the gate that asked for it.
+4. **CI-side measurement is Rust.** Python measures only what needs `bpy`,
+   because there is no Blender build for this project's CI runner and rule one
+   is worthless if a negative control cannot run there.
+
+## Which files import `bpy`
+
+| Module | `bpy` | What it is |
+| --- | --- | --- |
+| `transfer.py` | no | the retarget maths: world matrices in, local poses out |
+| `clip.py` | no | the two counts the retarget reports on its own output |
+| `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
+| `framing.py` | no | the bake's camera geometry and frame sampling |
+| `findings.py` | no | the Finding record, the report, and the success sentinel |
+| `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
+| `bake_sprites.py` | yes | renders the sprite sheet |
+| `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
+
+The five `bpy`-free modules are unit tested by `uv run pytest` at 100 percent
+coverage, with no Blender anywhere. That split is not tidiness: `bpy` only
+exists inside Blender, so a module that imports it cannot be tested at all.
+
+## Two things a script never does
+
+**It never decides its own exit code from its own findings.** It measures,
+writes its report through `findings.write_report`, and finishes. The Rust
+runner reads that report and decides. Blender exits 0 when a script raises
+from a handler, a thread or `atexit`, so the exit code cannot say whether a
+run finished: `findings.guard` writes a success sentinel as its last act and
+Rust asserts the file exists.
+
+**It never applies an object transform to a rig that owns an action.**
+`transform_apply` rescales the rest geometry and leaves every location key
+byte identical, so their meaning changes by the object's scale and 2.316 m of
+travel reads as 231.599 m. World matrices are composed instead, as
+`matrix_world @ pose.matrix`, and written back through
+`matrix_world.inverted()`. A unit test reads every script here and fails on
+the call, because the last caller was deleted and nothing else would notice
+it coming back.
+
+## Running one by hand
+
+The Rust side owns the invocation, in `crates/xtask-art/src/blender.rs`, and
+one tested function builds every argument list. `art/staging/reports/` keeps
+the argv verbatim beside each report, so a failed run can be repeated exactly.
