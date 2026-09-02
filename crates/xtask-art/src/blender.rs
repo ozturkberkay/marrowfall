@@ -124,7 +124,7 @@ pub fn run(
     let named = report.artifacts(repo_root)?.report();
     ensure!(
         named == wanted,
-        "the report in {} says it belongs at {}. A mislabelled report is \
+        "the report in {} says it belongs at {}. A mislabeled report is \
          attributed to the wrong stage everywhere downstream",
         wanted.display(),
         named.display()

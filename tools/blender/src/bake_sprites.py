@@ -139,7 +139,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--keep-root-motion",
         action="store_true",
         help="Leave the root bone's translation intact. By default it is "
-        "removed, because the game moves the character and a travelling "
+        "removed, because the game moves the character and a traveling "
         "animation slides out of frame. Diagnostics only.",
     )
     parser.add_argument(
@@ -309,7 +309,7 @@ def setup_lighting() -> None:
     key.rotation_euler = key_light_rotation()
     bpy.context.collection.objects.link(key)
 
-    # Ambient fill via world colour, lifts shadows so detail stays legible
+    # Ambient fill via world color, lifts shadows so detail stays legible
     # once the sprite is downscaled and composited over a dark tile.
     world = bpy.data.worlds.new("world")
     world.use_nodes = True
@@ -513,7 +513,7 @@ def strip_root_motion(armature: bpy.types.Object) -> None:
     """Pins the root bone in place across every action.
 
     Library animations usually travel: a walk-backward moves along -Y. The game
-    moves the character itself, so a travelling animation would slide out of
+    moves the character itself, so a traveling animation would slide out of
     frame, and because the camera is tilted, horizontal travel projects onto
     the *vertical* screen axis too, inflating the crop for every frame.
 

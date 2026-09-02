@@ -245,7 +245,7 @@ fn a_report_whose_header_disagrees_with_its_path_is_refused() {
 
     assert!(
         error.contains("clip.idle.1.json"),
-        "a mislabelled report is attributed to the wrong stage: {error}"
+        "a mislabeled report is attributed to the wrong stage: {error}"
     );
 }
 
