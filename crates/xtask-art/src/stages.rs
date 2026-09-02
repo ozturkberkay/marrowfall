@@ -6,13 +6,15 @@
 //! and to invoke individually.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::ffi::OsString;
+use std::path::Path;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
 
+use crate::blender::{self, BLENDER_SRC};
+use crate::check::Artifacts;
 use crate::library::{Animation, AnimationLibrary, MotionSource};
-use crate::lock::{StageRecord, TaskRef};
+use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::meshy::{self, Endpoint};
 use crate::openai;
 use crate::pack::{self, CharacterAssets};
@@ -249,8 +251,8 @@ pub async fn download(
         client.download(url, &dest).await?;
         // Providers ship the whole character with each animation; committing
         // ~5 MB of mesh and texture per motion would be permanent in git.
-        if matches!(task, TaskRef::Animation { .. }) {
-            strip_animation(&dest, root)?;
+        if let TaskRef::Animation { name, .. } = task {
+            strip_animation(&dest, name, root)?;
         }
         downloaded += 1;
     }
@@ -266,16 +268,22 @@ pub async fn download(
 }
 
 /// Rewrites an animation GLB with only its armature and action.
-fn strip_animation(glb: &Path, repo_root: &Path) -> Result<()> {
+fn strip_animation(glb: &Path, name: &str, repo_root: &Path) -> Result<()> {
     let script = repo_root.join(BLENDER_SRC).join("strip_animation.py");
     anyhow::ensure!(
         script.exists(),
         "missing strip script at {}",
         script.display()
     );
-    let mut command = blender_command_bare(&script, repo_root)?;
-    command.arg("--glb").arg(glb);
-    run_blender(command).with_context(|| format!("stripping {}", glb.display()))
+    let args = vec![OsString::from("--glb"), glb.into()];
+    let artifacts = Artifacts::new(repo_root, Stage::Download.as_str(), name, FIRST_ATTEMPT)?;
+    let findings = blender::run(&script, &args, &artifacts, repo_root)
+        .with_context(|| format!("stripping {}", glb.display()))?;
+    anyhow::ensure!(
+        findings.is_none(),
+        "the strip reported findings nobody reads yet"
+    );
+    Ok(())
 }
 
 /// Fits a downloaded clip onto the skeleton's canonical rig, writing the
@@ -302,19 +310,28 @@ pub fn retarget(
         rig.display()
     );
 
-    let mut command = blender_command_bare(&script, repo_root)?;
-    command
-        .arg("--source")
-        .arg(source)
-        .arg("--rig")
-        .arg(rig)
-        .arg("--convention")
-        .arg(animation.source.bone_convention())
-        .arg("--out")
-        .arg(out)
-        .arg("--name")
-        .arg(name);
-    run_blender(command).with_context(|| format!("retargeting {}", source.display()))
+    let args = vec![
+        OsString::from("--source"),
+        source.into(),
+        OsString::from("--rig"),
+        rig.into(),
+        OsString::from("--convention"),
+        animation.source.bone_convention().into(),
+        OsString::from("--out"),
+        out.into(),
+        OsString::from("--name"),
+        name.into(),
+    ];
+    // Not a `Stage`: the retarget runs inside the fetch path and the lock
+    // keeps its six stages. It still gets its own report.
+    let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
+    let findings = blender::run(&script, &args, &artifacts, repo_root)
+        .with_context(|| format!("retargeting {}", source.display()))?;
+    anyhow::ensure!(
+        findings.is_none(),
+        "the retarget reported findings nobody reads yet"
+    );
+    Ok(())
 }
 
 /// Renders sprite frames via headless Blender. One invocation for every
@@ -353,8 +370,9 @@ pub fn bake(
             .with_context(|| format!("clearing {}", paths.staging().display()))?;
     }
 
-    let mut command = blender_command(&script, paths, spec, repo_root)?;
-    command.arg("--character").arg(&character);
+    let mut args = bake_args(paths, spec);
+    args.push("--character".into());
+    args.push(character.into());
     for (name, animation) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
         let glb = library.glb(repo_root, name);
         anyhow::ensure!(
@@ -367,13 +385,16 @@ pub fn bake(
                 MotionSource::Authored => "author it and commit it".to_owned(),
             }
         );
-        command
-            .arg("--animation")
-            .arg(format!("{name}={}", glb.display()))
-            .arg("--fps")
-            .arg(format!("{name}={}", animation.fps));
+        args.push("--animation".into());
+        args.push(blender::pair(name, glb));
+        args.push("--fps".into());
+        args.push(blender::pair(name, animation.fps.to_string()));
     }
-    run_blender(command)?;
+    let artifacts = Artifacts::new(repo_root, Stage::Bake.as_str(), &spec.name, FIRST_ATTEMPT)?;
+    anyhow::ensure!(
+        blender::run(&script, &args, &artifacts, repo_root)?.is_none(),
+        "the bake reported findings nobody reads yet"
+    );
 
     let names: Vec<&str> = library
         .resolve(&spec.animations, &spec.subject.skeleton)?
@@ -396,103 +417,24 @@ pub fn bake(
     })
 }
 
-/// Where the bake script and the modules it imports live.
-const BLENDER_SRC: &str = "tools/blender/src";
+/// Nothing but the concept stage retries, so every other report is the first
+/// and only attempt.
+const FIRST_ATTEMPT: u32 = 1;
 
-/// Site-packages of the project's virtualenv, handed to Blender's embedded
-/// interpreter. The Python minor version must match Blender's, because
-/// pydantic ships a compiled core, hence the glob.
-pub fn venv_site_packages(repo_root: &Path) -> Result<PathBuf> {
-    let lib = repo_root.join(".venv/lib");
-    let mut candidates: Vec<(u32, u32, PathBuf)> = std::fs::read_dir(&lib)
-        .with_context(|| {
-            format!(
-                "no virtualenv at {}, run `uv sync`",
-                repo_root.join(".venv").display()
-            )
-        })?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let path = entry.path();
-            let site = path.join("site-packages");
-            if !site.is_dir() {
-                return None;
-            }
-            // Sort on the parsed version, not the directory name: "python3.9"
-            // sorts after "python3.13" as text, which would pick the older one.
-            let name = path.file_name()?.to_str()?.strip_prefix("python")?;
-            let (major, minor) = name.split_once('.')?;
-            Some((major.parse().ok()?, minor.parse().ok()?, site))
-        })
-        .collect();
-    candidates.sort_unstable();
-    candidates
-        .pop()
-        .map(|(_, _, site)| site)
-        .with_context(|| format!("no site-packages under {}, run `uv sync`", lib.display()))
-}
-
-/// Locates the Blender executable. Overridable for a test stub, or an
-/// install outside PATH.
-fn blender_binary() -> String {
-    std::env::var("MARROWFALL_BLENDER_BIN").unwrap_or_else(|_| "blender".to_owned())
-}
-
-/// Blender, with the project's Python importable and nothing else assumed.
-fn blender_command_bare(script: &Path, repo_root: &Path) -> Result<Command> {
-    let python_path = std::env::join_paths([
-        venv_site_packages(repo_root)?.into_os_string(),
-        repo_root.join(BLENDER_SRC).into_os_string(),
-    ])
-    .context("building PYTHONPATH for blender")?;
-
-    let mut command = Command::new(blender_binary());
-    command
-        .env("PYTHONPATH", python_path)
-        .arg("--background")
-        .arg("--python-use-system-env")
-        .arg("--python")
-        .arg(script)
-        .arg("--");
-    Ok(command)
-}
-
-/// The shared part of the Blender invocation.
-fn blender_command(
-    script: &Path,
-    paths: &Paths,
-    spec: &CharacterSpec,
-    repo_root: &Path,
-) -> Result<Command> {
-    let mut command = blender_command_bare(script, repo_root)?;
-    command
-        .arg("--out")
-        .arg(paths.staging())
-        .arg("--directions")
-        .arg(spec.bake.directions.to_string())
-        .arg("--size")
-        .arg(spec.bake.render_size.to_string())
-        .arg("--trim-start")
-        .arg(spec.bake.trim_start.to_string())
-        .arg("--forearm-roll")
-        .arg(spec.bake.forearm_roll.to_string());
-    Ok(command)
-}
-
-fn run_blender(mut command: Command) -> Result<()> {
-    let output = command
-        .output()
-        .context("running blender, is it on PATH?")?;
-    if !output.status.success() {
-        // Blender writes diagnostics to both streams; showing one of them
-        // routinely hides the actual cause.
-        bail!(
-            "blender bake failed:\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    Ok(())
+/// The bake parameters the spec fixes, ahead of the per-animation arguments.
+fn bake_args(paths: &Paths, spec: &CharacterSpec) -> Vec<OsString> {
+    vec![
+        "--out".into(),
+        paths.staging().into(),
+        "--directions".into(),
+        spec.bake.directions.to_string().into(),
+        "--size".into(),
+        spec.bake.render_size.to_string().into(),
+        "--trim-start".into(),
+        spec.bake.trim_start.to_string().into(),
+        "--forearm-roll".into(),
+        spec.bake.forearm_roll.to_string().into(),
+    ]
 }
 
 /// Crops, scales and packs the baked frames, then writes the manifest. One

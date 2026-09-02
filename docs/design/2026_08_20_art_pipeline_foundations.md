@@ -27,7 +27,7 @@ settled decision. Reaching 1,000 means deleting one of those three.
 - A verifier that measures swing and twist separately, terminal bones
   included, against the original vendor file.
 - Foot planting, floor snapping, and stride scaled by femur length, on
-  travelling source clips.
+  traveling source clips.
 - Two mandatory properties for every gate: a negative control that proves it
   can fail, and a calibration that proves it stays quiet on known-good art.
 - Local mesh cleanup and symmetrize, opt-in per character, on for the
@@ -51,12 +51,12 @@ settled decision. Reaching 1,000 means deleting one of those three.
   photos work on stylised art (`research_concept_and_model_stage.md:24`).
   `rig.humerus_angle` catches the same defect one stage later, for free.
 - **Waivers and a severity override.** Decision 11 forbids them.
-- **Colour pixel goldens of the bake, and Godot frame goldens.** EEVEE output
+- **Color pixel goldens of the bake, and Godot frame goldens.** EEVEE output
   varies by GPU (`research_art_pipeline_qa_systems.md:70`).
 - **A vision model as an image judge.** Classical image checks come first.
 - **Idempotency keys.** Neither provider implements one and the SDK never
   sends the header (`research_concept_and_model_stage.md:66`).
-- **A licence provenance gate.** Adobe's Mixamo terms were unreadable to every
+- **A license provenance gate.** Adobe's Mixamo terms were unreadable to every
   research agent, so the rule has no source of truth
   (`research_unattended_art_pipelines.md:224`).
 - **Deferred, not dropped:** the `illegal` field, source IK baking, joint
@@ -134,7 +134,7 @@ design.
 | 16 | Blender ships no official Linux arm64 build and our CI runner is `ubuntu-24.04-arm`, so nothing in CI can call `bpy`. The npm `gltf-validator` is Dart compiled to JS, so it is architecture independent. | blender.org, `pr.yml:18`, Khronos npm README |
 | 17 | The hunched posture is in the Mixamo source: `strafe_left` is authored with the head 34 to 37 deg forward. Our output copies it faithfully. | audit |
 | 18 | `stages::concept` reuses images on disk unless `force` is true, and `stages::retarget` is called from exactly one place, the Mixamo fetch path. | `stages.rs:35`, `cli.rs:459` |
-| 19 | A swing-twist split must project the quaternion's **vector part**, not `Quaternion.axis`, which is normalised and drops `sin(angle / 2)`. On a pure 10 deg twist the wrong form reads twist 90.22 and swing 80.22 against a true 10.00 and 0.00, and it is worst **near identity**, where a pure swing hides it. | `proof_swing_twist_vector_part.md` |
+| 19 | A swing-twist split must project the quaternion's **vector part**, not `Quaternion.axis`, which is normalized and drops `sin(angle / 2)`. On a pure 10 deg twist the wrong form reads twist 90.22 and swing 80.22 against a true 10.00 and 0.00, and it is worst **near identity**, where a pure swing hides it. | `proof_swing_twist_vector_part.md` |
 
 ### How do we know a gate can fail, and that it measures the right thing?
 
@@ -244,7 +244,7 @@ clip.twist(b,t) = twist(out,b,t) - twist(out,b,rest)
 
 **Pros:** sees the wrist, the 9.9 degree spine and a re-rolled thigh without
 failing on the convention difference. Matches published practice, which
-compares global joint state normalised by character height
+compares global joint state normalized by character height
 (`research_art_pipeline_qa_systems.md:135`). A failure names the bone.
 
 **Cons:** two rules and two limits, and a cross-rig calibration needs a third
@@ -276,7 +276,7 @@ Settled by decision 7. Every candidate was installed, run headless on Blender
 | Rokoko beta | 9.5 to 43.9 deg | no world-space rest compensation |
 | retarget_bvh, stock | 9.5 to 33.3 deg | limbs-only aim table, and "Bend Positive" costs 33 deg of elbow |
 | Rokoko stable | did not run | `Action.fcurves` removed in Blender 5.0 |
-| Expy-Kit | did not run | no licence file, so all rights reserved |
+| Expy-Kit | did not run | no license file, so all rights reserved |
 | Auto-Rig Pro | not testable | paid, no scripting API |
 | Mwni | segfault | calls `popup_menu`, which needs a window |
 
@@ -634,7 +634,7 @@ There is no `cargo art review`, no `review.accepted` rule, no lock accept
 field and no `Stage::Review`. There is also no `art/review/` directory:
 `/art/preview/` stays gitignored local scratch.
 
-**Clip audition, with an artefact.** At fetch time, before any retarget, the
+**Clip audition, with an artifact.** At fetch time, before any retarget, the
 source clip's own posture is measured: head pitch, spine lean, arm swing at a
 few frames. Those numbers go into `art/staging/reports/fetch.1.json` as
 `source.posture` findings **and** into the `verdict` field on `Fetched`, so a
@@ -674,13 +674,13 @@ the judgement half. No new command.
 
 **Rationale:** Accepted.
 
-#### ❌ Option 2: A recorded accept in the lock, or a colour pixel golden
+#### ❌ Option 2: A recorded accept in the lock, or a color pixel golden
 
 ```ron
 Bake(accepted_by: "berkay", sheet: "a1b2c3d4")   // dropped
 ```
 
-**Pros:** an accept survives a force-push, and a colour golden catches shading.
+**Pros:** an accept survives a force-push, and a color golden catches shading.
 
 **Cons:** the accept duplicates what a pull request approval already records
 and the lock field is the abuse vector, and a published graphics diff still
@@ -711,7 +711,7 @@ spec.ron
                        world_height, humerus_angle, facing, object_transform,
                        bind_deviation, up_axis, names_standard]  ─▶ rename
                [gltf.validator]
-  ▼ fetch    ─▶ [source.*  posture, fps_declared, travelling]   (library.lock)
+  ▼ fetch    ─▶ [source.*  posture, fps_declared, traveling]   (library.lock)
   ▼ retarget ─▶ [clip.fps_grid] [clip.object_transform] [clip.interpolation]
                [clip.swing  absolute vs the vendor file, every mapped bone]
                [clip.twist  change from each rig's own rest twist]
@@ -735,7 +735,7 @@ spec.ron
 | Mesh cleanup | **Our own `bmesh`, ~60 lines** | `print/repair` (10 credits), Meshy's extension | repair strips textures, and the extension deletes nothing while returning FINISHED (fact 13) |
 | Mesh and rig measurement | **Rust, `gltf` crate** | Blender `bmesh`, `bpy`-free Python over raw JSON | rule four plus fact 16. `gltf` is the standard reader and gives the node graph the rig rules need |
 | Self-intersection counting | **`parry3d`, its `Bvh`** | hand-rolled BVH, `pymeshlab` | dimforge, maintained, ships the broad-phase `Bvh` plus triangle queries. `Qbvh` was removed and replaced by `Bvh`. This is the one measurement `bmesh` never did (`research_concept_and_model_stage.md:40`) |
-| glTF structural validation | **npm `gltf-validator` under Node** | Homebrew, a precompiled binary, a Rust wrapper | there is no Homebrew formula and the GitHub binaries are x64. The npm package is Dart compiled to JS, so it is architecture independent (fact 16), and `validateBytes()` returns a report with severities |
+| glTF structural validation | **npm `gltf-validator` under Bun** | Homebrew, a precompiled binary, a Rust wrapper | there is no Homebrew formula and the GitHub binaries are x64. The npm package is Dart compiled to JS, so it is architecture independent (fact 16), and `validateBytes()` returns a report with severities |
 | Concept image checks | **`opencv-python-headless`** | Pillow plus numpy, rembg | the arm-gap check needs contour hierarchy (`findContours` with `RETR_CCOMP`) |
 | Blender in CI | **Not used** | container, an x86_64 runner | fact 16 |
 | Art sign-off | **Pull request approval** | Chromatic, Skia Gold, a lock field | decision 13. GitHub already forbids self-approval |
@@ -768,10 +768,19 @@ crates/xtask-art/src/
   spec.rs                   # + Subject::cleanup, Subject::symmetry
   lock.rs                   # + content hashes, + Model in the version guard
   library.rs                # + Animation::source_fps, travels, + verdict
-  meshy.rs                  # + pose_mode, + print/analyze, + model_url rig
-  mixamo.rs                 # + travelling export, + fps from source_fps
+  providers/                # NEW  one module per vendor, constants inside
+    openai.rs
+    meshy.rs                # + pose_mode, + print/analyze, + model_url rig
+    mixamo/
+      client.rs             # + traveling export, + fps from source_fps
+      session.rs            # the Chrome token reader, was chrome.rs
+  http.rs                   # NEW  retry_after and the env backoff helpers
   stages.rs                 # + model downloads bare.glb, + fixer before rig
+  blender.rs                # NEW  argv builder, runner, sentinel, diagnostics
   cli.rs                    # + the concept retry loop, - pause_for_review
+
+tools/gltf_validator/
+  validate.mjs              # NEW  drives the npm validator, which has no CLI
 
 tools/blender/src/
   transfer.py               # NEW  pure maths: matrices in and out, no bpy
@@ -808,7 +817,7 @@ only by the deliberate operation in `art/skeletons/README.md`.
   `{Left,Right}{UpLeg,Leg,Foot,ToeBase}`.
 - **Swing-twist decomposition.** The twist about an axis comes from the
   quaternion's vector part projected onto that axis, per fact 19. `mathutils`
-  `Quaternion.axis` is normalised and must not be used.
+  `Quaternion.axis` is normalized and must not be used.
 - **Foot contact thresholds**, from `research_art_pipeline_qa_systems.md:110`
   to `114`, stated at 180 cm scale and converted to a rate before use.
   Contact when toe height is under 3 cm and speed under 30 cm per second.
@@ -874,7 +883,8 @@ Contract for callers:
   reason as an `error` with a stated message. `clip.twist` at 180 degrees of
   swing is the one case, and its message is
   `"swing is 180 degrees, twist undefined"`.
-- The runner writes `art/staging/reports/<stage>.<attempt>.json` on every run,
+- The runner writes `art/staging/reports/<stage>.<item>.<attempt>.json` on
+  every run, one stem per clip or character so nothing overwrites a sibling,
   so no retry overwrites the attempt before it.
 
 **Published limits.** Every value lives in `[profile]`. Calibration assets and
@@ -891,7 +901,7 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `clip.foot_contact.plants` | 1 per foot per cycle | ge |
 | `clip.fps_grid` | 1e-4 frame | le |
 | `clip.loop` | 2.0 deg, today's `LOOP_TOLERANCE_DEG` | le |
-| `source.travelling` | 0.02 m of hip travel, the threshold both ways | ge when `travels`, le when not |
+| `source.traveling` | 0.02 m of hip travel, the threshold both ways | ge when `travels`, le when not |
 | `rig.child_axis` | 2.0 deg | le |
 | `rig.mirror_length`, `rig.mirror_direction` | 1.0 percent, 1.0 deg | le |
 | `rig.humerus_angle` | 15 deg from the target of 40 | le |
@@ -922,10 +932,13 @@ one tested function, never string concatenation, always in this order:
 cargo art check --list-rules    # every rule id, limit, comparison, unit, space
 
 blender --background --factory-startup --offline-mode --python-use-system-env
-        --python-exit-code 1 --log-file <path> --python <script> -- <args>
+        --python-exit-code 1 --log-level debug --log-file <path>
+        --python <script> -- <args>
 ```
 
-The script writes a sentinel JSON as its last act and Rust asserts it exists,
+The script writes a sentinel JSON from an `atexit` handler registered first,
+so it runs last, and only when `sys.excepthook`, `sys.unraisablehook` and
+`threading.excepthook` recorded no failure. Rust asserts it exists,
 per fact 15.
 
 ## Existing Code & Reuse
@@ -980,7 +993,7 @@ line reads the way it does:
 ```python
 def swing_twist(q, axis, bone):
     """Split q about axis. Project the quaternion's VECTOR PART, never
-    `q.axis`, which is normalised and drops sin(angle / 2). That error is
+    `q.axis`, which is normalized and drops sin(angle / 2). That error is
     worst NEAR IDENTITY (proof_swing_twist_vector_part.md).
     """
     proj = axis * Vector((q.x, q.y, q.z)).dot(axis)
@@ -1017,7 +1030,7 @@ def local(bone, world_out, rest, parent_world_out):
 `check/clip.rs` runs the same split for `clip.twist`, on full animated world
 rotations where 180 degrees of swing from rest **is** reachable. A gate cannot
 raise, so there it reports `clip.twist` as an `error` with the message
-`"swing is 180 degrees, twist undefined"` rather than normalising a zero
+`"swing is 180 degrees, twist undefined"` rather than normalizing a zero
 quaternion into a NaN.
 
 **Only the root gets location keys.** `transfer()` returns the source's world
@@ -1031,7 +1044,7 @@ transforms are never applied: world matrices are read as
 
 **Root travel, a per-axis maximum, on the stripped copy.** An endpoint
 difference cancels a symmetric excursion, which is the pattern this design
-condemns. Sources are fetched travelling (decision 12), so at the retarget
+condemns. Sources are fetched traveling (decision 12), so at the retarget
 boundary a correct clip travels 2.2 to 2.7 m and the rule runs at the bake
 boundary. Below it, root scale and floor snap (requirement 4, techniques 32
 and 37):
@@ -1055,7 +1068,7 @@ finding("clip.floor_snap", measured=abs(lift_after), limit=0.005,
 
 `clip.root_travel` runs after `strip_root_motion`, which pins the horizontal
 channels (fact 5), so it can only ever read a residual. It is not a
-substitute for `source.travelling`, which is why that rule is symmetric.
+substitute for `source.traveling`, which is why that rule is symmetric.
 
 **Foot planting** (requirement 6). Thresholds are world-space metres scaled
 from the published 180 cm reference, and the speed threshold is a rate, so it
@@ -1122,7 +1135,7 @@ through the glTF node chain and then welded, and reports the pair.
 - **A gate that measures the wrong representation gives precise, wrong
   numbers.** Seam splitting turned 171 holes into 13,368, so every rule states
   its space and is calibrated before its limit is trusted.
-- **A normalised axis is not a vector part.** Fact 19 is the same class of
+- **A normalized axis is not a vector part.** Fact 19 is the same class of
   fault one level down: the wrong projection is invisible on a large twist and
   worst near identity, which is why the split ships with two numeric
   known-answer tests rather than one comparison.
@@ -1161,7 +1174,7 @@ through the glTF node chain and then welded, and reports the pair.
   `clear_constraints=True` does not imply it despite its tooltip, and
   constrained motion bakes to zero.
 - **Meshy is non-deterministic** and exposes no seed, so committing the
-  artefact as a checkpoint is the correct response. It refunds a technical
+  artifact as a checkpoint is the correct response. It refunds a technical
   failure, never a generation you dislike.
 - **The concept stage is not free.** Three attempts is 2.40 USD of OpenAI
   images, `ConfirmSpend` quotes that once, and the cap is in the loop.
@@ -1194,7 +1207,7 @@ so they are calibrated and carry no negative, per the Terminology exemption.
 | `mesh.stray_object` | `clean.glb`, only `char1` | `[art]` `model.glb`, which carries `Icosphere` | the `meshes` allowlist |
 | `mesh.budget` | `bare.glb` tris under 300,000 | `[synth]` 400,000 tris | `model.glb` reads 54,864 tris against the spec's 30,000 target. `bare.glb` in T3 |
 | `mesh.uv` | `bare.glb`, one tile in [0,1] | `[synth]` a UV at 1.4 | 0 out-of-bounds on `model.glb` |
-| `mesh.texture` | `bare.glb` has a base colour image | `[synth]` the same GLB with materials stripped | rigging's own precondition |
+| `mesh.texture` | `bare.glb` has a base color image | `[synth]` the same GLB with materials stripped | rigging's own precondition |
 | `mesh.cleanup_effective` | a real run, holes 171 to 27 | `[synth]` a fixer stub that changes nothing, 8 lt 8 fails | the before and after pair. Non-manifold is excluded and owned by `non_manifold_post` |
 | `rig.bone_set` | renamed rig | `[art]` the current rig, which has `Spine02` and `neck` | the 24 committed names |
 | `rig.parents` | renamed rig | `[art]` the current rig, `Spine` above `Spine02` | the committed parent map |
@@ -1211,7 +1224,7 @@ so they are calibrated and carry no negative, per the Terminology exemption.
 | `gltf.validator` | every shipped GLB | `[synth]` a GLB with an injected NaN | the four committed GLBs |
 | `source.posture` | `strafe_left.fbx`, head 34 to 37 | none, `info` only | the three Mixamo clips |
 | `source.fps_declared` | `source_fps` equals the file's rate | `[synth]` a `library.ron` with `source_fps` 24 against a 30 fps FBX | the three clips, read from the FBX |
-| `source.travelling` | `strafe_left.fbx` at `travels: true`, 2.31 m of hip travel, and `idle` at `travels: false`, under 2 cm | `[synth]` **both directions**: an in-place export declared `travels: true`, and a travelling export declared `travels: false` | symmetric on 0.02 m, so a mistyped flag fails either way. `travels` is declared per clip in T7 |
+| `source.traveling` | `strafe_left.fbx` at `travels: true`, 2.31 m of hip travel, and `idle` at `travels: false`, under 2 cm | `[synth]` **both directions**: an in-place export declared `travels: true`, and a traveling export declared `travels: false` | symmetric on 0.02 m, so a mistyped flag fails either way. `travels` is declared per clip in T7 |
 | `clip.swing` | the new output | `[art]` the shipped `strafe_left.glb`, whose wrists are 52.9 and 66.5 deg out of their own rest. The absolute cross-rig figure is measured in T6 | the CMU cross-rig clip, T6 |
 | `clip.twist` | the new output | `[synth]` the new output with a 90 deg twist **post-multiplied in the bone's local frame**, `q @ Quaternion((0, 1, 0), radians(90))`, on `LeftUpLeg`. The same test asserts `clip.swing` stays under its limit, which is what proves the injection is a twist and not a yaw. Pre-multiplying by a world +Y rotation would yaw a downward thigh and fire `clip.swing` instead. The shipped clips cannot serve: `rotation_difference` is pure swing, so they carry our rest twist unchanged (fact 2) | the CMU cross-rig clip, T6 |
 | `clip.fps_grid` | a clip at its own `source_fps` | `[art]` the shipped `strafe_left.glb` in a 24 fps scene, range 0.8 to 16.8 | `run.glb` |
@@ -1304,7 +1317,7 @@ still run.
 every atlas and manifest, and greps the log, because Godot exits 0 on a script
 error (`research_godot_ci_e2e_testing.md`). Loading only, never pixels.
 
-**Cross-reference to Out of Scope:** no test asserts colour pixels, loads a
+**Cross-reference to Out of Scope:** no test asserts color pixels, loads a
 quadruped profile, calls Meshy's paid repair, checks a concept arm angle,
 changes a sprite rate, or asserts a strict T-pose bind.
 
@@ -1328,9 +1341,10 @@ changes a sprite rate, or asserts a strict T-pose bind.
 
 ## Development Environment Changes
 
-- Node added to the `Brewfile` and to `setup`, with the npm `gltf-validator`
-  pinned in a lockfile. There is no Homebrew formula and the published
-  binaries are x64 (fact 16).
+- Bun added to the `Brewfile` and to `setup`, with the npm `gltf-validator`
+  pinned in `bun.lock`. There is no Homebrew formula for the validator and the
+  published binaries are x64 (fact 16). Bun installs it and runs it, so the
+  repository needs one JavaScript runtime rather than a runtime plus npm.
 - `opencv-python-headless` added to the `uv` dependencies.
 - `gltf` and `parry3d` crates added to `crates/xtask-art/Cargo.toml`.
 - `pyproject.toml`: `--cov=framing,transfer,plant,concept_check,findings` with
@@ -1338,7 +1352,7 @@ changes a sprite rate, or asserts a strict T-pose bind.
 - `MARROWFALL_UPDATE_GOLDENS`, unset by default. Set to `1` a golden is
   rewritten, and CI asserts it is unset.
 - **Failure diagnostics**, per `research_unattended_art_pipelines.md:181`,
-  owned by T1: the exact `blender` argv written verbatim into the report,
+  owned by T1: the exact `blender` argv written verbatim to a file beside the report,
   `--log-file` at debug level beside it, the `.blend` saved from the exception
   handler, and partial frames kept on a render failure. All under
   `art/staging/`, gitignored.
@@ -1376,13 +1390,14 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 
 | #   | Task | Cost | Description | Success Criteria | Deps |
 | --- | ---- | ---- | ----------- | ---------------- | ---- |
-| T1  | Harness, Finding, validator, diagnostics | 1.0 d | One tested function builds every `blender` argv in the documented order, `--python-use-system-env` and `--log-file` included. `findings.py` and `check/mod.rs` carry `Finding` with the required `comparison`, `attempt` and `measured_on`, writing `reports/<stage>.<attempt>.json`. Each script writes a sentinel Rust asserts. `check/validator.rs` runs the npm validator under Node. Diagnostics: argv verbatim, the log, the `.blend` from the exception handler, partial frames. | A unit test fails if any flag or the order changes. A script raising outside its top level leaves no sentinel and fails. A rule with no `measured_on` or no `comparison` fails its own test. No gate can emit NaN. An injected NaN fails and the four committed GLBs pass. A deliberately failed bake leaves argv, log, `.blend` and partial frames. | none |
-| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`. `check/gltf_world.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig. Runs in CI with no Blender. `cargo art check` prints the itemised defect list. | T1 |
+| T1  | Harness, Finding, validator, diagnostics | 1.0 d | One tested function builds every `blender` argv in the documented order, `--python-use-system-env` and `--log-file` included. `findings.py` and `check/mod.rs` carry `Finding` with the required `comparison`, `attempt` and `measured_on`, writing `reports/<stage>.<item>.<attempt>.json`. Each script writes a sentinel Rust asserts. `check/validator.rs` runs the npm validator under Bun. Diagnostics: argv verbatim, the log, the `.blend` from the exception handler, partial frames. | A unit test fails if any flag or the order changes. A script raising outside its top level leaves no sentinel and fails. A rule with no `measured_on` or no `comparison` fails its own test. No gate can emit NaN. An injected NaN fails and the four committed GLBs pass. A deliberately failed bake leaves argv, log, `.blend` and partial frames. | none |
+| T1b | Isolate vendors | 1 d | From the human's review. Move `openai.rs`, `meshy.rs`, `mixamo.rs` and `chrome.rs` under `providers/`, with `chrome.rs` becoming `mixamo/session.rs`. Vendor URLs, ids and keys live only in their own module; `cli.rs` imports them. Generic HTTP helpers (`retry_after`, the env backoff) move to `http.rs`. `stages.rs` stays the only caller. No new traits: `MotionSource` in `library.rs` is already the seam. | A unit test greps the crate and fails on any vendor host, id or key outside `providers/`. Every existing test passes unchanged. `cargo doc` links resolve. | T1 |
+| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`. `check/gltf_world.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig. Runs in CI with no Blender. `cargo art check` prints the itemised defect list. | T1, T1b |
 | T3  | Mesh measurement in Rust, calibrated on `bare.glb` | 2 d | **First: download `bare.glb`, take it to world through the glTF node chain, then weld.** Report a merge histogram at 1e-6, 1e-5, 1e-4 and 1e-3 and pick the plateau. Then `check/mesh.rs`: holes, non-manifold, islands, self-intersections via `parry3d`'s `Bvh`, mirror distance, world size, budget, UV bounds, facing, texture. Map `print/analyze` into the report. Write every `bare.glb` limit into `[profile]`. | The weld distance is chosen from the histogram, not assumed. Every `bare.glb` limit in `[profile]` is a real number. Every `mesh.*` row except `non_manifold_post` rejects its negative fixture in CI with no Blender. | T1, T2 |
 | T4  | Aim table and role map | 1.5 d | Add `parents`, `optional`, `fingerprint` and `[aim_table]`. Implement the three table validations and the skip-unmapped-ancestor parent walk. Checked against a synthetic fixture, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a broken mirror pair, and an out-of-band aim each fail to load. | T2 |
 | T5  | The transfer, the rename, and the refit | 3.5 d | `transfer.py` with no `bpy`: quaternion swing-twist aim application projecting the **vector part** per fact 19, `swing_singular` raised at 180 degrees, roleless bones skipped, separate `ref_world_*` dicts, algebraic local matrices, rotation-only keys for non-root bones, typed errors, LINEAR and CONSTANT, no reference-frame key. Delete `rebase_action`, `sole_children`, `align_to_world`, `bind_pose_mismatch`, `bone_directions` and the twelve self-referential tests. **Rename the committed `humanoid.glb` bones and refit `idle.glb` and `run.glb` in this PR**, because the rename invalidates them and this is the first task with the new retarget. | The three numeric known-answer tests pass: 10 deg twist to 10.00 and 0.00, 30 deg swing to 0.00 and 30.00, `Offset(LeftUpLeg)` about 174 and not identity. The 180 degree case raises `swing_singular`. A rig with `head_end` is skipped, not raised on. Requirements 1, 2, 7, 8, 9, 10 each have a passing test and a rejected negative. The 1.5x scale test gives identical output bone lengths. | T1, T4 |
 | T6  | Clip verifier: swing and twist | 1.5 d | `check/clip.rs`: `clip.swing` absolute against the vendor file, `clip.twist` as the change from each rig's own rest twist about its own +Y using the same vector-part split, both over every mapped bone, frames aligned by seconds. `clip.object_transform` as identity object matrices plus byte-matching rest bones. Commit one CMU BVH clip and **measure both limits from it**. Delete `verify_retarget.py` and `LIMB_CHAIN`. | Both limits are written into `[profile]` from a measurement, not assumed. The Rust split passes the same two numeric cases as the Python one. `clip.swing` rejects the shipped `strafe_left.glb` and stays quiet on `run.glb` and the CMU clip. `clip.twist` rejects the post-multiplied 90 deg twist, and `clip.swing` stays under its limit on that same fixture. A 180 degree swing reports an error, never a NaN. | T5 |
-| T7  | `source_fps`, `travels`, travelling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request travelling export from Mixamo and add `source.travelling`, **symmetric on 0.02 m of hip travel in both directions**. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.travelling` rejects an in-place export declared `travels: true` **and** a travelling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. No sprite rate changes. | T5 |
+| T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. No sprite rate changes. | T5 |
 | T8  | Femur scale and floor snap | 1.5 d | Femur ratio replaces total height, with every location key scaled in the same operation. Snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`. | Requirement 4 holds. Travel matches the source within 2 percent. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
 | T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **Measure the first real `clean.glb` and write `mesh.non_manifold_post`'s ceiling into `[profile]`**, because T3 has no `clean.glb` to read. | **A real 5-credit rigging call with a data URI succeeds**, or the short-lived upload fallback ships instead. `cleanup_effective` shows holes, islands and self-intersections strictly decreasing. `non_manifold_post`'s ceiling is a measured number and every later run stays inside it. Texture and UVs survive. The no-op stub is rejected at 8 lt 8. With `symmetry: false` the fixer skips it, the mirror rules report `info`, and their negative controls still run. | T3 |
@@ -1390,5 +1405,5 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, every animation GLB, `pose_mode`, the Blender version and the script version into the right stages. Add `Model` to the version guard. Add `verdict` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. | T1 |
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |
-| T15 | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, refit `idle.glb` and `run.glb`, refetch the three Mixamo clips travelling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 |
+| T15 | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, refit `idle.glb` and `run.glb`, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 |
 | T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15 |

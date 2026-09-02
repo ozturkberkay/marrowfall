@@ -15,6 +15,10 @@ on:
         description: Lint Python (Blender) scripts
         type: boolean
         default: false
+      javascript:
+        description: Format-check the glTF-Validator driver
+        type: boolean
+        default: false
       actions:
         description: Lint and audit GitHub Actions workflows
         type: boolean
@@ -28,6 +32,9 @@ on:
         type: boolean
         default: true
       python:
+        type: boolean
+        default: true
+      javascript:
         type: boolean
         default: true
       actions:
@@ -116,6 +123,32 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check
 
+  javascript_lint:
+    name: JavaScript Lint
+    if: inputs.javascript
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install the pinned JavaScript packages
+        run: bun install --frozen-lockfile
+
+      # The JavaScript only. markdownlint owns the markdown and ruff the
+      # Python, and two formatters over one file would fight.
+      - name: Prettier
+        run: bun run prettier --check "**/*.mjs"
+
   actions_lint:
     name: Actions Lint
     if: inputs.actions
@@ -155,4 +188,4 @@ jobs:
       # Security: unpinned actions, injection through untrusted inputs,
       # over-broad permissions. Complements actionlint rather than repeating it.
       - name: Zizmor
-        run: uvx zizmor --persona=regular --format=plain .
+        run: uvx zizmor@1.30.0 --persona=regular --format=plain .

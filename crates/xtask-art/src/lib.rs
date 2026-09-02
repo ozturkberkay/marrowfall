@@ -3,6 +3,8 @@
 //! Split into a library so the tests in `tests/` can reach it: an
 //! integration test cannot import a binary-only crate.
 
+pub mod blender;
+pub mod check;
 pub mod chrome;
 pub mod cli;
 pub mod library;

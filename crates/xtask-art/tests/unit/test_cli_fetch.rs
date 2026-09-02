@@ -208,6 +208,7 @@ while [ $# -gt 0 ]; do
 done
 mkdir -p "$(dirname "$out")"
 printf 'glTF fitted' > "$out"
+: > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
     )
@@ -358,8 +359,9 @@ async fn a_retarget_that_writes_nothing_is_not_recorded_as_fetched() {
     let server = MockServer::start().await;
     serve_mixamo(&server).await;
     let dir = a_repo(&a_library());
+    // Finishes cleanly, sentinel and all, but writes no clip.
     let stub = dir.path().join("silent-stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(&stub, "#!/bin/sh\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n").unwrap();
     std::fs::set_permissions(
         &stub,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),

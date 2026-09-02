@@ -44,11 +44,11 @@ Conventions:
 import argparse
 import math
 import sys
-import traceback
 from collections.abc import Callable
 from pathlib import Path
 
 import bpy
+from findings import guard
 from framing import (
     BIND_POSE_TOLERANCE_DEG,
     BakeSettings,
@@ -753,13 +753,13 @@ def main() -> None:
     bake(args.out, character, animations, framing, settings)
 
 
+def save_blend(path: Path) -> None:
+    """The scene as it stood when the bake failed, for a human to open."""
+    bpy.ops.wm.save_as_mainfile(filepath=str(path), copy=True)
+
+
 if __name__ == "__main__":
     # Blender exits 0 on an uncaught exception, so a crashed bake would
     # otherwise be recorded as a success with a half-populated output dir.
-    # SystemExit derives from BaseException, so the `sys.exit(...)` calls above
-    # pass straight through with their own status.
-    try:
-        main()
-    except Exception:  # noqa: BLE001
-        traceback.print_exc()
-        sys.exit(1)
+    # `guard` writes the success sentinel the Rust side asserts.
+    guard(main, save_blend)

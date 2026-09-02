@@ -111,6 +111,13 @@ repos:
         files: \.py$
         pass_filenames: false
 
+      # JAVASCRIPT
+      - id: prettier
+        name: Prettier
+        entry: bun run prettier --check
+        language: system
+        types: [javascript]
+
       # BASH
       - id: bashunit
         name: Bash Unit Tests
