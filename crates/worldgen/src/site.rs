@@ -26,7 +26,7 @@ use crate::world::World;
 pub struct Site {
     pub kind: SiteId,
     pub class: SiteClassId,
-    /// The centre tile, in world coordinates.
+    /// The center tile, in world coordinates.
     pub at: IVec2,
 }
 
@@ -81,7 +81,7 @@ pub fn site_at(world: &World, class: SiteClassId, cell: IVec2) -> Option<Site> {
     })
 }
 
-/// Every site of every class whose centre lies within `radius` tiles of `tile`.
+/// Every site of every class whose center lies within `radius` tiles of `tile`.
 ///
 /// The window is a fixed number of cells per class, computed from the pitch, so
 /// this is a bounded walk and never a search.

@@ -39,13 +39,14 @@ use crate::{Vec2, WorldVec};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Locomotion {
     Idle,
-    /// Travelling the way it points, give or take 45 degrees.
+    /// Traveling the way it points, give or take 45 degrees. Named for the
+    /// direction, not the gait: which clip plays is the renderer's call.
     Forward,
-    /// Travelling away from where it points, which costs speed.
+    /// Traveling away from where it points, which costs speed.
     Backward,
-    /// Travelling sideways, to its own left.
+    /// Traveling sideways, to its own left.
     StrafeLeft,
-    /// Travelling sideways, to its own right.
+    /// Traveling sideways, to its own right.
     StrafeRight,
 }
 

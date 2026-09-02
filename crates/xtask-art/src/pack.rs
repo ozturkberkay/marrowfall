@@ -223,9 +223,9 @@ pub fn character_scale<'a>(
     Ok(CharacterScale {
         scale: f64::from(sprite_height) / f64::from(reference.height),
         ground_y: reference.y + reference.height - 1,
-        // The bake centres the camera on the character, so the canvas's
-        // horizontal centre is his axis of rotation. That is more stable than
-        // any crop's centre, which drifts when a limb swings out to one side.
+        // The bake centers the camera on the character, so the canvas's
+        // horizontal center is his axis of rotation. That is more stable than
+        // any crop's center, which drifts when a limb swings out to one side.
         axis_x: canvas_width / 2,
     })
 }
@@ -360,7 +360,7 @@ pub fn pack_animation(
     anyhow::ensure!(
         character.axis_x >= crop.x && character.axis_x < crop.x + crop.width,
         "the character's rotation axis (x={}) falls outside this animation's content \
-         crop ({}..{}), the bake camera is not centred on him, so the sprite \
+         crop ({}..{}), the bake camera is not centered on him, so the sprite \
          would not line up with its tile",
         character.axis_x,
         crop.x,

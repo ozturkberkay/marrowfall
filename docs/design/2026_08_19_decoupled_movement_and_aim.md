@@ -17,7 +17,7 @@ travels another needs pixels that do not exist yet.
 - The simulation owns an exact aim, so attacks, cones and line of sight can read
   it.
 - The sprite shows one of sixteen poses, picked from that exact aim.
-- Travelling away from the cursor plays a backward clip and costs speed.
+- Traveling away from the cursor plays a backward clip and costs speed.
 - Every direction of travel reads about as fast as every other on screen.
 - The art pipeline bakes and packs sixteen directions.
 
@@ -53,7 +53,7 @@ travels another needs pixels that do not exist yet.
 - **A real-time 3D renderer:** it would make the pose count, the clip matrix and
   per-item equipment bakes all disappear, and the 3D source assets exist. It is
   rejected because the sprite pipeline works and the look is established.
-  Revisit when the equipment catalogue passes roughly 20 distinct pieces, a
+  Revisit when the equipment catalog passes roughly 20 distinct pieces, a
   rotatable camera is wanted, or the clip count passes 12.
 - **Gamepad aim:** the right stick gives this same value shape, needing four
   actions.
@@ -503,7 +503,7 @@ inverse that knows the camera, the zoom and the viewport. Raw pixels put
 `TILE_WIDTH`, `TILE_HEIGHT` and the camera into the crate whose whole point is
 having no pixels.
 
-**Rationale:** Both rejected. The point costs a new inverse and buys a behaviour
+**Rationale:** Both rejected. The point costs a new inverse and buys a behavior
 nobody wants, and `snapshot.rs` and the `Facing` doc both forbid the pixels.
 
 ### How much of the isometric foreshortening comes out of walking speed?
@@ -560,7 +560,7 @@ pub const ISO_SPEED_COMPENSATION: f32 = 1.0;
 **Cons:** walking up the screen then crosses twice the tiles of walking
 sideways, which is the worst version of the problem above.
 
-**Rationale:** Rejected. It maximises the gap between what the player sees and
+**Rationale:** Rejected. It maximizes the gap between what the player sees and
 what the simulation measures.
 
 ### What keeps the gait in phase when the stride changes?
@@ -618,7 +618,7 @@ already there. No new transport, no new node, no new thread.
 
  InputMap move_* -> get_vector --.
  Viewport mouse position minus   +-> iso::screen_dir_to_tile (one inverse,
-   the viewport centre           |     ISO_SPEED_COMPENSATION inside it)
+   the viewport center           |     ISO_SPEED_COMPENSATION inside it)
                                  v
  SimHandle::set_input(Input::new(held).aiming(aim)) ==> Output<Input>::read
 
@@ -649,7 +649,7 @@ No new crate enters the workspace, and no new Godot node type is used.
 
 | Capability | Chosen | Alternatives considered | Why |
 | --- | --- | --- | --- |
-| Cursor to a world direction | `Viewport::get_mouse_position` minus the viewport centre, then the existing `iso` inverse | `CanvasItem::get_global_mouse_position`, `Camera2D::get_screen_center_position` plus a hand-built inverse, a `PhysicsDirectSpaceState2D` ray | The chosen route never reads the canvas transform, so godotengine/godot#81898 cannot bite it, and it reuses a function that already has tests. |
+| Cursor to a world direction | `Viewport::get_mouse_position` minus the viewport center, then the existing `iso` inverse | `CanvasItem::get_global_mouse_position`, `Camera2D::get_screen_center_position` plus a hand-built inverse, a `PhysicsDirectSpaceState2D` ray | The chosen route never reads the canvas transform, so godotengine/godot#81898 cannot bite it, and it reuses a function that already has tests. |
 | Angle comparison in the simulation | dot and perpendicular dot products on `Vec2` | `f32::atan2`, `glam`'s angle helpers, a fixed-point angle crate | IEEE 754-2019 clause 9.2 makes `atan2` optional and not required to be correctly rounded. Replay must be bit identical. Render output is never replayed, so the row lookup may use one `atan2` instead of sixteen dot products. |
 | Texture compression | BC7 through Godot's importer, already configured | ASTC, ETC2, Basis Universal, BC1, palette indexing | See the pose-count decision. None of them saves VRAM on this content. |
 | Gait phase across a clip change | one shared cycle length in `render` | per-clip `fps` as today, a cross fade, Unreal-style sync markers | Sprites cannot cross fade. Markers are authored data with no authoring tool here. |
@@ -798,7 +798,7 @@ records where the motion came from, which task T6 settles.
 ## Existing Code & Reuse
 
 - **`iso::screen_dir_to_tile`** already inverts the projection for a direction
-  and already normalises, so the cursor path reuses it whole. Two code paths
+  and already normalizes, so the cursor path reuses it whole. Two code paths
   used to convert the keys with different maths, so fixing one left the other
   wrong. One function stops that.
 - **`Facing` and `Facing::from_direction`** stay exactly as they are. `Facing`
@@ -917,7 +917,7 @@ Some((angle / step).round() as i32).map(|i| i.rem_euclid(count as i32) as usize)
   hold the same list in the same order.** A mismatch silently mislabels every
   row.
 - **Analog movement would need hysteresis on the stride.** A keyboard puts
-  travel at the centre of a stride quadrant, never near a boundary. A stick
+  travel at the center of a stride quadrant, never near a boundary. A stick
   could rest on one.
 - **A retargeted clip can fail quietly.** `bake_sprites.py` compares bind poses
   and warns past `BIND_POSE_TOLERANCE_DEG`, the only automatic guard on motion
@@ -929,7 +929,7 @@ Some((angle / step).round() as i32).map(|i| i.rem_euclid(count as i32) as usize)
 
 **`crates/game`**
 
-- `Input::aiming` normalises a long aim, ignores a non-finite one, and leaves
+- `Input::aiming` normalizes a long aim, ignores a non-finite one, and leaves
   `move_dir` untouched. `Input::new` still clamps and still zeroes.
 - A pointed aim turns the player and leaves every other entity turning the way
   it moves. A zero aim returns the player to movement facing. An entity without
@@ -977,7 +977,7 @@ This is the contract test between the pipeline and the game.
   is visibly slower. Turning while running does not hitch the legs.
 - The cursor on top of him returns him to movement facing, and alt-tab while
   moving and aiming leaves him still and facing the same way.
-- Aiming at each screen corner points him at that corner, in a maximised window
+- Aiming at each screen corner points him at that corner, in a maximized window
   and in a small one, at both 60 and 144 fps.
 
 Deliberately untested, per Out of Scope: any attack, a reticle, a gamepad stick,
@@ -1038,7 +1038,7 @@ its answer. T3 and T5 run in parallel once T2 lands.
 | T6 | Strafe clips and the four-way stride. **Blocked on a session with the human.** | Choose a supplier and buy or commission `strafe_left`, `strafe_right` and a working replacement for `walk_back`, by trying real candidates in the pipeline rather than picking from a table. Retarget onto the 24 bone humanoid rig, add the library entries, add `StrafeLeft` and `StrafeRight` to `Locomotion` and `Clip`, and widen `stride_of` to four. Re-bake and re-pack. | Every clip loops without a hop, starts on the same foot and is one whole cycle. Playing the game, travel in any direction relative to the cursor shows feet that push that way, and nothing moonwalks or slides sideways. | T4, T5 |
 
 T6 is deliberately last and deliberately not decided here. Meshy's public
-catalogue, at
+catalog, at
 `https://api.meshy.ai/web/public/animations/resources?category=WalkAndRun`, has
 backward walks and two backward diagonal runs, and no upright strafe at all: the
 nearest entries are crouched or hold a weapon. So the strafe pair needs a second

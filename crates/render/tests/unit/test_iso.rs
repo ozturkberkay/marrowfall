@@ -42,7 +42,7 @@ fn one_step_along_each_tile_axis_runs_down_the_screen() {
 
 /// Every key combination: the screen direction `Input.get_vector` reports, and
 /// the tile direction it has to become. The tile column holds the integer ratio
-/// the projection produces, normalised here, so no rounded literal hides a
+/// the projection produces, normalized here, so no rounded literal hides a
 /// wrong answer.
 fn key_combinations() -> [(&'static str, Vector2, Vec2); 8] {
     let d = FRAC_1_SQRT_2;

@@ -116,7 +116,7 @@ fn a_negative_centre_is_a_coordinate_and_not_a_flag() {
     let out = dir.path().join("p.png");
     run(&[
         "preview",
-        "--centre",
+        "--center",
         "-500",
         "-500",
         "--radius",

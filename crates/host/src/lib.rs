@@ -221,8 +221,8 @@ fn run(
 
         // Before the tick, so a tick never reads a chunk that arrived halfway
         // through it, and so collision and painting agree on the same window.
-        if let Some(centre) = sim.player_chunk() {
-            streamer.update(centre, &mut sim);
+        if let Some(center) = sim.player_chunk() {
+            streamer.update(center, &mut sim);
         }
 
         let mut ran = 0;

@@ -94,7 +94,7 @@ Everything that crosses between them is plain data.
 
 ### Two directions, two different transports
 
-The two directions do not want the same behaviour, so they do not use the same
+The two directions do not want the same behavior, so they do not use the same
 mechanism.
 
 **Into the simulation: a queue.**

@@ -61,7 +61,7 @@ fn a_long_aim_is_normalised_and_leaves_the_keys_alone() {
     assert_eq!(input.move_dir(), Vec2::new(1.0, 0.0));
 }
 
-/// Normalising a non-finite aim would spread NaN into the facing. Saying
+/// Normalizing a non-finite aim would spread NaN into the facing. Saying
 /// nothing instead leaves facing following movement.
 #[test]
 fn a_non_finite_aim_points_nowhere() {

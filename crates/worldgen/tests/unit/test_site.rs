@@ -221,11 +221,11 @@ fn every_kind_in_a_class_gets_placed() {
 #[test]
 fn sites_near_finds_everything_inside_its_radius_and_nothing_outside() {
     let world = always();
-    let centre = IVec2::new(1234, -567);
+    let center = IVec2::new(1234, -567);
     let radius = 1500;
-    let found = sites_near(&world, centre, radius);
+    let found = sites_near(&world, center, radius);
     for site in &found {
-        let offset = site.at - centre;
+        let offset = site.at - center;
         assert!(
             offset.x.abs() <= radius && offset.y.abs() <= radius,
             "{:?} is outside the radius",
@@ -235,12 +235,12 @@ fn sites_near_finds_everything_inside_its_radius_and_nothing_outside() {
     // Cross-check against a brute force over a wider block of cells.
     let spacing = world.rules().site_class(class_zero()).spacing;
     let reach = radius / spacing + 3;
-    let home = IVec2::new(centre.x.div_euclid(spacing), centre.y.div_euclid(spacing));
+    let home = IVec2::new(center.x.div_euclid(spacing), center.y.div_euclid(spacing));
     let mut expected = 0;
     for dy in -reach..=reach {
         for dx in -reach..=reach {
             if let Some(site) = site_at(&world, class_zero(), home + IVec2::new(dx, dy)) {
-                let offset = site.at - centre;
+                let offset = site.at - center;
                 if offset.x.abs() <= radius && offset.y.abs() <= radius {
                     expected += 1;
                 }

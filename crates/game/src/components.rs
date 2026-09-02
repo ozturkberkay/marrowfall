@@ -85,7 +85,7 @@ fn quantised_sign(value: f64, other: f64) -> i8 {
     }
 }
 
-/// Indexed `(y + 1) * 3 + (x + 1)`. The centre is unreachable: a zero
+/// Indexed `(y + 1) * 3 + (x + 1)`. The center is unreachable: a zero
 /// direction returns before this, and one sign is 0 only if both are.
 const BY_SIGN: [Facing; 9] = [
     Facing::North,

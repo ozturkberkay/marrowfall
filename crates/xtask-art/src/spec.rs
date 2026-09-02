@@ -343,7 +343,7 @@ impl Paths {
         self.root.join(format!("art/staging/{}", self.name))
     }
 
-    /// Reviewable artefacts, one per stage. Derived; gitignored.
+    /// Reviewable artifacts, one per stage. Derived; gitignored.
     pub fn preview(&self) -> PathBuf {
         self.root.join(format!("art/preview/{}", self.name))
     }

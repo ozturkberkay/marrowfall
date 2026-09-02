@@ -27,16 +27,16 @@ enum Command {
     ///
     /// Negative numbers are values here, not flags. A subcommand is its own
     /// command as far as the parser is concerned, so the setting has to be on
-    /// this variant: without it a negative `--centre` reads as an unknown short
+    /// this variant: without it a negative `--center` reads as an unknown short
     /// flag and half the world is unreachable.
     #[command(allow_negative_numbers = true)]
     Preview {
         /// World seed. Accepts decimal or `0x` hex.
         #[arg(long, value_parser = parse_seed, default_value_t = DEV_SEED)]
         seed: u64,
-        /// Tile at the centre of the image.
+        /// Tile at the center of the image.
         #[arg(long, num_args = 2, value_names = ["X", "Y"], default_values_t = [0, 0])]
-        centre: Vec<i32>,
+        center: Vec<i32>,
         /// Half-width in tiles.
         #[arg(long, default_value_t = 20_000)]
         radius: i32,
@@ -73,7 +73,7 @@ where
     match cli.command {
         Command::Preview {
             seed,
-            centre,
+            center,
             radius,
             step,
             sites,
@@ -84,8 +84,8 @@ where
             anyhow::ensure!(step > 0, "step must be positive, got {step}");
             let world = World::new(read_rules(&data)?, seed);
             let shot = Shot {
-                // clap guarantees two values for `centre`, so this cannot be short.
-                centre: IVec2::new(centre[0], centre[1]),
+                // clap guarantees two values for `center`, so this cannot be short.
+                center: IVec2::new(center[0], center[1]),
                 radius,
                 step,
                 sites,

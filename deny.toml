@@ -1,12 +1,12 @@
 # cargo-deny: dependency policy for the workspace.
 #
 # The point of running this is gdext: it is pre-1.0, pulls a wide tree, and the
-# art pipeline adds an HTTP and image stack on top. A licence or advisory
+# art pipeline adds an HTTP and image stack on top. A license or advisory
 # problem should surface in CI, not at release.
 
 [graph]
 # Apple Silicon is the development machine and the first target. The rest are
-# here so a platform-gated advisory or licence is caught before that platform
+# here so a platform-gated advisory or license is caught before that platform
 # ships; `aarch64-unknown-linux-gnu` is also what CI runs on.
 targets = [
     { triple = "aarch64-apple-darwin" },
@@ -24,10 +24,10 @@ yanked = "deny"
 [licenses]
 version = 2
 # Our own crates are GPL-3.0-or-later, which is deliberately absent from the
-# allow list below: that list governs dependencies we take on, not the licence
+# allow list below: that list governs dependencies we take on, not the license
 # we ship under. Skipped here because the crates are never published.
 private = { ignore = true }
-# Permissive licences only. MPL-2.0 is included for gdext, which is
+# Permissive licenses only. MPL-2.0 is included for gdext, which is
 # file-level copyleft and does not reach our own sources. CDLA-Permissive-2.0
 # covers webpki-roots, which is Mozilla's CA root list — data, not code.
 allow = [

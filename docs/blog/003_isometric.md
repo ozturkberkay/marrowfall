@@ -298,7 +298,7 @@ The four corners of a square grid become the four points of a diamond:
 **A square region always renders as a diamond**, the same shape as one tile,
 just 24 times bigger.
 
-One detail: `map_to_local` returns the **centre** of a tile, not a corner. So
+One detail: `map_to_local` returns the **center** of a tile, not a corner. So
 the drawn area extends half a tile in every direction beyond the anchors:
 
 ```text
@@ -320,14 +320,14 @@ The world is 3072 px wide. The window is 1280 px wide. Two knobs:
 
 ### Position
 
-`bridge.rs` asks for the centre of tile (24/2, 24/2) = (12,12):
+`bridge.rs` asks for the center of tile (24/2, 24/2) = (12,12):
 
 ```text
 pixel_x = (12 - 12) x 64 = 0
 pixel_y = (12 + 12) x 32 = 768
 ```
 
-The true centre of the drawn extent is (0, **736**). So the camera is **32 px
+The true center of the drawn extent is (0, **736**). So the camera is **32 px
 too low**, exactly half a tile height, because the real middle of 0..23 is
 11.5 and integer division rounds 24/2 up to 12.
 
@@ -501,7 +501,7 @@ tile_shape=ISOMETRIC, tile_layout=DIAMOND_DOWN, tile_size=(128,64)
    |  pixel_x = (1-0) x 64 = 64
    |  pixel_y = (1+0) x 32 = 32
    v
-draw that crop, centred at screen pixel (64, 32)
+draw that crop, centered at screen pixel (64, 32)
 ```
 
 `.done()` is not optional. Leave it off and nothing happens: you built a
@@ -566,7 +566,7 @@ pixel_x = (x - y) x 64
 pixel_y = (x + y) x 32
      |
      v
-drawn as a diamond, centred at that pixel
+drawn as a diamond, centered at that pixel
      |
      v
 Camera2D at (0, 768), zoom 0.4

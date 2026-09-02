@@ -142,12 +142,12 @@ const fn camera(view: View) -> &'static str {
 fn shared_rules(pose: &str) -> String {
     format!(
         "Full-body character reference for 3D reconstruction, in the style of a grim \
-         dark-fantasy game: HD painterly realism, muted and desaturated colours. \
+         dark-fantasy game: HD painterly realism, muted and desaturated colors. \
          Strictly orthographic with zero perspective or lens distortion. \
          POSE: {pose} \
          LIGHTING: even, flat, neutral light with minimal soft shadows, this is a \
-         reconstruction reference, so no dramatic or coloured lighting. \
-         FRAMING: the whole body inside the frame, centred, nothing cropped; head near \
+         reconstruction reference, so no dramatic or colored lighting. \
+         FRAMING: the whole body inside the frame, centered, nothing cropped; head near \
          the top edge and feet near the bottom. \
          BACKGROUND: a completely flat, uniform, neutral grey (#8A8A8A) fill, no \
          ground, no cast shadow, no gradient, no props. The reconstructor segments \
@@ -170,7 +170,7 @@ pub fn front_prompt(description: &str, pose: &str) -> String {
 pub fn view_prompt(view: View, description: &str, pose: &str) -> String {
     format!(
         "Using the attached image as reference, render the SAME character from {}. \
-         Keep the body, proportions, markings, colours and clothing identical to the \
+         Keep the body, proportions, markings, colors and clothing identical to the \
          reference, at the same scale and vertical centring.\n{}\nCHARACTER: {description}",
         camera(view),
         shared_rules(pose)

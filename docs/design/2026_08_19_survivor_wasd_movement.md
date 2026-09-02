@@ -32,7 +32,7 @@ boundary protocol staged in `crates/game/src/lib.rs` stays unproven.
   decoupled, and `art/animations/library.ron` records it as a broken loop.
 - **Collision and blocking terrain:** the field edge is a clamp, not a system,
   and flat ground occludes nothing, so depth interleaving waits for a wall.
-- **Analog movement:** a stick would need normalise then rescale, no caller.
+- **Analog movement:** a stick would need normalize then rescale, no caller.
 - **Camera limits, deadzone, lead and shake:** the field is a diamond, which a
   rectangular limit cannot express, and nothing needs the camera to lag.
 - **Per entity appearance:** every entity draws the survivor, because there is
@@ -105,7 +105,7 @@ fixed timestep exists to prevent.
 #### ✅ Option 1: A `Player` marker component, requested at spawn
 
 ```rust
-Spawn { at: centre, velocity: Some(Vec2::ZERO), player: true }
+Spawn { at: center, velocity: Some(Vec2::ZERO), player: true }
 for (_, v) in self.world.query_mut::<(&Player, &mut Velocity)>() { .. }
 ```
 
@@ -548,7 +548,7 @@ touching `Gd<T>`.
   `FileAccess::get_file_as_string` interprets it that way.
   <https://github.com/ron-rs/ron/blob/master/docs/grammar.md>
 - **IEEE 754-2019, clause 5.4.1:** addition, subtraction, multiplication,
-  division and `squareRoot` are correctly rounded, which is why normalising an
+  division and `squareRoot` are correctly rounded, which is why normalizing an
   input vector in `f32` replays bit identically. glam's `Vec2` is scalar, so
   no SIMD path can vary the result.
 - **Godot `Sprite2D`:** `region_enabled`, `region_rect`,
@@ -588,7 +588,7 @@ pub struct EntityView { /* .. */ pub locomotion: Locomotion }
 pub struct RenderSnapshot { /* .. */ pub player: Option<u64> }
 impl Facing { pub fn name(self) -> &'static str; }  // "s", "se", "e", ..
 impl Sim {
-    pub fn new(seed: u64) -> Self;    // terrain plus the survivor, centred
+    pub fn new(seed: u64) -> Self;    // terrain plus the survivor, centered
     pub fn tick(&mut self, input: Input, intents: &[Intent]);
 }
 ```
@@ -644,7 +644,7 @@ pub fn frame(atlas: &AnimationAtlas, row: usize, frame: usize) -> Option<&FrameR
 // (lib.rs:18-20), so this crate never picks its own glam.
 pub const TILE_WIDTH: f32 = 192.0;
 pub const TILE_HEIGHT: f32 = 96.0;
-pub fn tile_to_screen(tile: Vec2) -> Vector2;       // to that tile's centre
+pub fn tile_to_screen(tile: Vec2) -> Vector2;       // to that tile's center
 pub fn screen_dir_to_tile(screen: Vector2) -> Vec2; // a direction, or zero
 
 // draw.rs: what the frontend chooses, and which nodes exist.
@@ -668,7 +668,7 @@ pub fn reconcile(views: &[EntityView], drawn: impl IntoIterator<Item = u64>)
 ### Godot input actions
 
 Four actions, each bound to one physical keycode, authored through the
-editor's Input Map so `project.godot` carries the engine's own serialisation
+editor's Input Map so `project.godot` carries the engine's own serialization
 for 4.7 rather than a hand written blob: `move_up` W, `move_down` S,
 `move_left` A, `move_right` D.
 
@@ -849,7 +849,7 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   re-run the free, deterministic pack stage first; a gutter surviving mip
   level 3 needs roughly 16 px and real atlas area.
 - **`Gd<T>` is `!Send` and `!Sync`,** with off main thread access documented as
-  undefined behaviour in release: the compiler enforced backstop behind the
+  undefined behavior in release: the compiler enforced backstop behind the
   README's threading claim.
 - **Atlas rows run clockwise from south,** matching the bake's negative Z angle
   per index. A mirrored ring leaves south and north correct, so it shows only
@@ -876,7 +876,7 @@ self.camera.set_global_position(iso::tile_to_screen(target));
   which is the whole reason the snapshot publishes it. Holding into an edge
   diagonally still slides him along it.
 - `Facing::from_direction` returns the expected variant for all eight key
-  combinations in the Logic table, not just the sector centres in `FACINGS`
+  combinations in the Logic table, not just the sector centers in `FACINGS`
   (`test_sim.rs:217-226`). It stays `pub(crate)`, so the assertion goes through
   `Sim` the way the existing facing tests do. The four screen diagonals are the
   near boundary cases: short to long ratio exactly 1/3 against `SECTOR_EDGE`
@@ -993,8 +993,8 @@ everything in `render` depends on its answer.
 | #   | Task Name | Task Description | Success Criteria | Dependencies |
 | --- | --------- | ---------------- | ---------------- | ------------ |
 | T1  | Prove a `render` test target runs | Add `[[test]] name = "unit"` to `crates/render/Cargo.toml`, `tests/unit/mod.rs`, and one assertion on a `Vector2` field. Nothing else. | `cargo nextest run --package render` passes locally and in CI on a host with no Godot installed; the coverage gate still passes. | none |
-| T2  | Held input drives the player | Add `game::Input` beside `Intent`, the `Player` marker, `Facing::name`, `Spawn::player`, `PLAYER_SPEED`, `apply_input`, `keep_player_on_the_field`, `Locomotion` with `EntityView::locomotion` and `RenderSnapshot::player`, and make `Sim::new` spawn the survivor at the field centre. Change `tick` to take the input and update `host`'s single call site to pass a default. Fix the named existing tests and the `sim.rs` doc. | Every `crates/game` test in the Test Plan passes, including the eight screen diagonals; the per package coverage command in the Test Plan reports 100 percent for `game`; clippy is clean. | none |
+| T2  | Held input drives the player | Add `game::Input` beside `Intent`, the `Player` marker, `Facing::name`, `Spawn::player`, `PLAYER_SPEED`, `apply_input`, `keep_player_on_the_field`, `Locomotion` with `EntityView::locomotion` and `RenderSnapshot::player`, and make `Sim::new` spawn the survivor at the field center. Change `tick` to take the input and update `host`'s single call site to pass a default. Fix the named existing tests and the `sim.rs` doc. | Every `crates/game` test in the Test Plan passes, including the eight screen diagonals; the per package coverage command in the Test Plan reports 100 percent for `game`; clippy is clean. | none |
 | T3  | Input reaches the simulation | Add an inbound `Input` triple buffer to `crates/host` with `SimHandle::set_input`, read once per tick inside the catch up loop. Alias the `triple_buffer` writer on import so `game::Input` keeps its name. Update the module doc to say three transports. | The `crates/host` tests in the Test Plan pass, polling to a deadline; shutdown and alpha tests still pass. | T2 |
 | T4  | Sprite manifest crate | Create `crates/sprites` with the four serde types moved out of `pack.rs`, plus `Error`, `parse` with every invariant, `row_for`, `frame_at` and `frame`. Wire the `[[test]]` stanza and the workspace dependency, point `xtask-art` at it, and add the README row. | The `crates/sprites` tests pass, including every rejected invariant and the committed survivor manifest; `cargo art check` and all existing `xtask-art` tests still pass; no atlas or manifest file changes. | none |
-| T5  | The survivor is drawn and animates | Add the y sorted `Entities` node and zoom 1.0 to `main.tscn`, `iso.rs` and `draw.rs` with their tests, and the per entity `Sprite2D` lifecycle in `bridge.rs`: load the manifest through `FileAccess`, load one texture per `Clip`, and create, update and free nodes through `reconcile`. Correct the `bridge.rs` and `components.rs` docs. | The `crates/render` unit tests pass in CI; running the game shows the survivor at the field centre, feet on his tile, idle looping, drawn over the ground with no edge bleed; the coverage gate passes with no new exclusions. | T1, T2, T4 |
+| T5  | The survivor is drawn and animates | Add the y sorted `Entities` node and zoom 1.0 to `main.tscn`, `iso.rs` and `draw.rs` with their tests, and the per entity `Sprite2D` lifecycle in `bridge.rs`: load the manifest through `FileAccess`, load one texture per `Clip`, and create, update and free nodes through `reconcile`. Correct the `bridge.rs` and `components.rs` docs. | The `crates/render` unit tests pass in CI; running the game shows the survivor at the field center, feet on his tile, idle looping, drawn over the ground with no edge bleed; the coverage gate passes with no new exclusions. | T1, T2, T4 |
 | T6  | WASD moves him and the camera follows | Add the four input actions to `project.godot` bound to physical keycodes, sample them in `process` behind the `focused` gate, convert and hand them to `set_input`. Replace `frame_camera`'s one shot centring with a per frame `set_global_position` on the existing `camera` field, from the controlled entity's `lerp(alpha)`. | Each of the eight key combinations moves him the way it points on screen and shows the matching row; diagonals are not faster; he stops at every edge; the camera keeps him at the same screen point every frame at both 60 and 144 fps; releasing the keys returns him to idle; alt tabbing does not leave him walking. | T3, T5 |

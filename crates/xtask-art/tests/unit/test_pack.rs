@@ -17,18 +17,18 @@ fn stamped(w: u32, h: u32, rect: Rect) -> RgbaImage {
     })
 }
 
-/// A frame whose content is horizontally centred on the canvas, as the
+/// A frame whose content is horizontally centered on the canvas, as the
 /// bake camera always produces.
 fn frame(direction: &'static str, index: u32, rect: Rect) -> Frame {
     Frame {
         direction,
         index,
-        image: stamped(64, 64, centred(64, rect)),
+        image: stamped(64, 64, centered(64, rect)),
     }
 }
 
-/// Re-centres a rect on the canvas' rotation axis.
-fn centred(canvas: u32, rect: Rect) -> Rect {
+/// Re-centers a rect on the canvas' rotation axis.
+fn centered(canvas: u32, rect: Rect) -> Rect {
     Rect {
         x: canvas / 2 - rect.width / 2,
         ..rect
@@ -299,7 +299,7 @@ fn sprite_height_is_honoured_and_aspect_preserved() {
         image: stamped(
             256,
             256,
-            centred(
+            centered(
                 256,
                 Rect {
                     x: 0,
@@ -325,7 +325,7 @@ fn sprite_height_is_honoured_and_aspect_preserved() {
 #[test]
 fn anchor_follows_the_rotation_axis_not_the_crop_centre() {
     // An asymmetric silhouette straddling the axis: a limb swung out to
-    // one side makes the crop centre drift away from the rotation axis.
+    // one side makes the crop center drift away from the rotation axis.
     let frames = vec![Frame {
         direction: "s",
         index: 0,
@@ -347,7 +347,7 @@ fn anchor_follows_the_rotation_axis_not_the_crop_centre() {
     assert_ne!(
         layout.anchor.x,
         layout.cell_width / 2,
-        "anchor must track the rotation axis, not the crop centre"
+        "anchor must track the rotation axis, not the crop center"
     );
     assert_eq!(
         layout.anchor.y,
@@ -483,7 +483,7 @@ fn empty_clip_is_rejected() {
 }
 
 /// A full direction ring of frames whose content sits at an exact position on
-/// the canvas, not re-centred, so alignment failures can be provoked.
+/// the canvas, not re-centered, so alignment failures can be provoked.
 fn frames_at(x: u32, y: u32, width: u32, height: u32) -> Vec<Frame> {
     direction_names(8)
         .unwrap()
@@ -507,8 +507,8 @@ fn frames_at(x: u32, y: u32, width: u32, height: u32) -> Vec<Frame> {
 
 #[test]
 fn an_animation_whose_content_misses_the_rotation_axis_is_rejected() {
-    // The reference is centred on the axis; this one sits entirely to the
-    // right of it, which means the bake camera was not centred on the
+    // The reference is centered on the axis; this one sits entirely to the
+    // right of it, which means the bake camera was not centered on the
     // character and the sprite would not line up with its tile.
     let reference = frames_at(24, 20, 16, 30);
     let offset = frames_at(40, 20, 12, 30);

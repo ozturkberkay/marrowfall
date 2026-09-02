@@ -31,7 +31,7 @@ fn the_header_is_the_format_version_godot_expects() {
 
 #[test]
 fn coordinates_are_chunk_local_and_stay_inside_an_i16() {
-    // `TileMapLayer` serialises a coordinate as an i16 and wraps silently past
+    // `TileMapLayer` serializes a coordinate as an i16 and wraps silently past
     // 32767, which is why each chunk gets its own layer with local coordinates.
     let data = tiles::tile_map_data(&view());
     for record in data[2..].chunks_exact(12) {

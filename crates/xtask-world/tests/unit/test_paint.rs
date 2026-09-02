@@ -32,7 +32,7 @@ fn world() -> World {
 
 fn shot(radius: i32, step: i32) -> xtask_world::Shot {
     xtask_world::Shot {
-        centre: IVec2::ZERO,
+        center: IVec2::ZERO,
         radius,
         step,
         sites: false,
@@ -70,13 +70,13 @@ fn rendering_twice_gives_the_same_pixels() {
 
 #[test]
 fn the_picture_is_not_one_flat_colour() {
-    // The whole point is seeing structure. A single colour would mean the tier or
+    // The whole point is seeing structure. A single color would mean the tier or
     // the height never reached the pixels.
     let image = xtask_world::render(&world(), shot(600, 4));
     let first = image.as_raw()[..3].to_vec();
     assert!(
         image.as_raw().chunks(3).any(|px| px != first.as_slice()),
-        "every pixel was the same colour"
+        "every pixel was the same color"
     );
 }
 
@@ -84,18 +84,18 @@ fn the_picture_is_not_one_flat_colour() {
 fn the_outer_tiers_are_visibly_different_from_the_centre() {
     // The success criterion in prose: tier grows outward, and you can see it.
     let w = world();
-    let centre = xtask_world::render(&w, shot(64, 1));
+    let center = xtask_world::render(&w, shot(64, 1));
     let far = xtask_world::render(
         &w,
         xtask_world::Shot {
-            centre: IVec2::new(3000, 3000),
+            center: IVec2::new(3000, 3000),
             radius: 64,
             step: 1,
             sites: false,
         },
     );
     assert_ne!(
-        centre.into_raw(),
+        center.into_raw(),
         far.into_raw(),
         "the frontier looks identical to the home bubble"
     );
@@ -128,14 +128,14 @@ fn a_marker_lands_on_its_own_site() {
         sites: true,
         ..shot(600, 1)
     };
-    let sites = worldgen::sites_near(&w, s.centre, s.radius);
+    let sites = worldgen::sites_near(&w, s.center, s.radius);
     let site = sites
         .first()
         .expect("the fixture places sites near the origin");
     let image = xtask_world::render(&w, s);
     let bare = xtask_world::render(&w, shot(600, 1));
-    let px = (site.at.x - s.centre.x + s.radius) as u32;
-    let py = (site.at.y - s.centre.y + s.radius) as u32;
+    let px = (site.at.x - s.center.x + s.radius) as u32;
+    let py = (site.at.y - s.center.y + s.radius) as u32;
     assert_ne!(
         image.get_pixel(px, py),
         bare.get_pixel(px, py),
