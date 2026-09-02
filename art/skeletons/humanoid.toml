@@ -53,3 +53,113 @@ right_upper_leg = "RightUpLeg"
 right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
+
+# Every published rig limit, as data. `crates/xtask-art/src/check/rig.rs` is
+# the only reader, and `cargo art check --list-rules` prints it.
+#
+# Bone names are the Mixamo and HumanIK standard, with the spine numbered from
+# the bottom, so `Spine` is the lowest of the three. The committed rig still
+# carries the auto-rigger's own names and fails seven of these rules; the
+# rename lands with the new retarget.
+[profile]
+# The exact bone set. `head_end` and `headfront` fill no role, and they are
+# listed because they are part of this rig.
+bones = [
+    "Hips",
+    "Spine",
+    "Spine1",
+    "Spine2",
+    "Neck",
+    "Head",
+    "head_end",
+    "headfront",
+    "LeftShoulder",
+    "LeftArm",
+    "LeftForeArm",
+    "LeftHand",
+    "LeftUpLeg",
+    "LeftLeg",
+    "LeftFoot",
+    "LeftToeBase",
+    "RightShoulder",
+    "RightArm",
+    "RightForeArm",
+    "RightHand",
+    "RightUpLeg",
+    "RightLeg",
+    "RightFoot",
+    "RightToeBase",
+]
+# The ancestor of every other bone.
+single_root = "Hips"
+# Mesh objects a character file may hold. Read by the mesh gates, which run on
+# the character rather than on this skeleton.
+meshes = ["char1"]
+# In Blender, after the glTF Y-up import.
+up_axis = "z"
+# In glTF Y-up, which is the space Meshy's rigger states its facing in. The
+# same direction is minus Y in Blender, where the bake camera sits.
+facing_axis_gltf = "+z"
+# Which bone axis points from a joint to its child, and how far it may stray.
+child_axis = "y"
+child_axis_tolerance_degrees = 2.0
+# Rig height against `spec.subject.height_meters`.
+height_tolerance_percent = 5.0
+# Left against right, on segment lengths and on segment directions.
+mirror_tolerance_percent = 1.0
+mirror_tolerance_degrees = 1.0
+# How far the root chain may lean from the up axis. Wide on purpose: it catches
+# a rig lying down, not an A-pose, because the bind pose stays an art choice.
+max_bind_deviation_degrees = 75.0
+# The upper arm, measured below the horizontal plane.
+humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
+
+# The real hierarchy. Read by `rig.parents` and `rig.single_root`.
+[profile.parents]
+Spine = "Hips"
+Spine1 = "Spine"
+Spine2 = "Spine1"
+Neck = "Spine2"
+Head = "Neck"
+head_end = "Head"
+headfront = "Head"
+LeftShoulder = "Spine2"
+LeftArm = "LeftShoulder"
+LeftForeArm = "LeftArm"
+LeftHand = "LeftForeArm"
+LeftUpLeg = "Hips"
+LeftLeg = "LeftUpLeg"
+LeftFoot = "LeftLeg"
+LeftToeBase = "LeftFoot"
+RightShoulder = "Spine2"
+RightArm = "RightShoulder"
+RightForeArm = "RightArm"
+RightHand = "RightForeArm"
+RightUpLeg = "Hips"
+RightLeg = "RightUpLeg"
+RightFoot = "RightLeg"
+RightToeBase = "RightFoot"
+
+# The child each bone's `child_axis` must point at, the way Godot's
+# `SkeletonProfile` carries a tail beside every parent. A branch bone needs it:
+# `Hips` has three children and only one of them continues the body. Every row
+# here must also be a row of `[profile.parents]`, the other way around.
+[profile.tails]
+Hips = "Spine"
+Spine = "Spine1"
+Spine1 = "Spine2"
+Spine2 = "Neck"
+Neck = "Head"
+Head = "head_end"
+LeftShoulder = "LeftArm"
+LeftArm = "LeftForeArm"
+LeftForeArm = "LeftHand"
+LeftUpLeg = "LeftLeg"
+LeftLeg = "LeftFoot"
+LeftFoot = "LeftToeBase"
+RightShoulder = "RightArm"
+RightArm = "RightForeArm"
+RightForeArm = "RightHand"
+RightUpLeg = "RightLeg"
+RightLeg = "RightFoot"
+RightFoot = "RightToeBase"

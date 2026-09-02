@@ -307,6 +307,12 @@ def unfilled_roles(names: dict[str, str], bones: Iterable[str]) -> list[str]:
     )
 
 
+OTHER_READERS = frozenset({"profile", "aim_table"})
+"""Tables of a skeleton file that belong to another reader: `[profile]` to the
+Rust rig gates, `[aim_table]` to the transfer. Named one by one, so a
+misspelled table is still refused rather than dropped."""
+
+
 class SkeletonRoles(Frozen):
     """Which bone name fills each anatomical role, one map per convention.
 
@@ -322,7 +328,9 @@ class SkeletonRoles(Frozen):
 
     @classmethod
     def parse(cls, text: str) -> "SkeletonRoles":
-        return cls(**tomllib.loads(text))
+        """Reads the role tables out of a skeleton file."""
+        tables = tomllib.loads(text)
+        return cls(**{k: v for k, v in tables.items() if k not in OTHER_READERS})
 
     @model_validator(mode="after")
     def the_canonical_convention_must_be_declared(self) -> "SkeletonRoles":

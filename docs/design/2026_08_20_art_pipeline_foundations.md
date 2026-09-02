@@ -104,9 +104,16 @@ settled decision. Reaching 1,000 means deleting one of those three.
 - **Golden:** a committed expected result. Ours is text, not an image.
 - **Contact sheet:** one PNG holding one rendered frame per direction, so a
   whole animation is judged in one look.
-- **The `info` exemption:** a rule that a spec field switches off reports
-  `severity: info` with a skip message. An `info` rule needs no negative
+- **The `skipped` exemption:** a rule that a spec field switches off reports
+  `severity: skipped` with a message saying which field. It needs no negative
   fixture, because it cannot stop a build. The only exemption to rule one.
+  **`info` is a different thing and T2 separated the two:** every rule reports
+  its measurement, and `info` means measured and not a defect, either inside
+  its limit or under a rule with no limit worth failing, such as
+  `mesh.quads`. A rule that goes quiet when it passes cannot be told from a
+  rule that never ran. Both kinds live in one report, so a consumer reads the
+  severity and never the prose. Four severities: `error`, `warning`, `info`,
+  `skipped`.
 
 ## Key Decisions
 
@@ -116,7 +123,7 @@ design.
 
 | # | Measured fact | Where |
 |---|---|---|
-| 1 | Rig: elbows bent 24 deg at rest, arms 59 deg below horizontal against a spec of 40, 0.9 to 3.7 percent segment asymmetry, `Hips` +Y points out of the left hip at `(-0.980, -0.145, -0.136)`, `Head` pitched 30 deg, 2 of 24 bones fill no role, importer-invented tails 100x too long. | `audit_the_current_art_pipeline.md:45` |
+| 1 | Rig: elbows bent 24 deg at rest, arms 59 deg below horizontal against a spec of 40, 0.9 to 3.7 percent segment asymmetry, `Hips` +Y points out of the left hip at `(-0.980, -0.145, -0.136)`, `Head` pitched 30 deg, 2 of 24 bones fill no role, importer-invented tails 100x too long. **T2 re-measured every figure from the glTF node graph**: elbows 24.1 and 23.8, arms 59.1 and 59.3, asymmetry 0.95 to 3.68 percent, the `Hips` axis to three decimals, 2 of 24 roleless. Two are restated as rules rather than as a pose: `Hips` is 97.6 deg off the direction to its child, and `Head` is 26.0 deg off the direction to `head_end`, where its own node rotation is 27.6 deg. | `audit_the_current_art_pipeline.md:45`, `check/rig.rs` |
 | 2 | `rotation_difference` is blind to twist, so the shipped clips carry **our own rest twist unchanged**. `sole_children` leaves 7 bones uncorrected: `Hips`, `Spine`, `Head`, both hands, both toes. Output error: wrists 52.9 and 66.5 deg **out of their own rest**, `spine_lower` 9.9 deg. | audit, `retarget_animation.py:264` |
 | 3 | Legs and feet differ from Mixamo's by **171 to 175 deg of pure roll at rest**, and the current direction metric reads 5. A correct retarget preserves that difference. | audit line 74 |
 | 4 | The shipped verifier prints `left_hand 0.0 deg` on a clip whose left wrist is 52.9 deg out of rest, because `LIMB_CHAIN` names each segment after its distal bone and no terminal bone is measured. | audit section 5 |
@@ -388,19 +395,37 @@ mirror_tolerance_degrees = 1.0        # left and right segment directions
 humerus_below_horizontal = { target = 40, tolerance = 15 }
 max_bind_deviation_degrees = 75       # catches "lying down", not "A-pose"
 
-[profile.parents]
+[profile.parents]                     # where each bone hangs
 Spine = "Hips"
+
+[profile.tails]                       # the one child `child_axis` measures
+Hips = "Spine"
 
 [aim_table]                           # world direction per role, degrees XYZ
 hips = [ 90, 0, 0 ]
 left_arm = [ 0, 0, -90 ]
 ```
 
+**Two hierarchy tables, for two different questions.** `parents` says where a
+bone hangs. `tails` says which child its own axis must point at, and a branch
+bone needs it: `Hips` has three children and only `Spine` continues the body,
+so the mean of the three points down and would reject a correct rig. Godot's
+`SkeletonProfile` carries a tail beside every parent for the same reason. T2
+adds it, and validates that every `tails` row is also a `parents` row, so the
+two cannot drift.
+
 Axis rules borrowed verbatim from Godot's `SkeletonProfileHumanoid`, the only
 published machine-checkable rest contract
 (`research_humanoid_rig_standards.md:52`). The two axis fields are asserted in
 different spaces, which their names carry, and `rig.facing` ties the rig to
 the bake camera's forward of minus Y.
+
+**An axis is a choice of six, not a tolerance.** `rig.facing` and
+`rig.up_axis` name the closest of the six signed axes and compare that, so
+both accept anything inside 45 degrees of the declared one, by design: a lean
+is not an axis error. A yaw between the two is `rig.mirror_direction`'s to
+catch, because reflecting one side turns a yaw of 30 degrees into 60 degrees
+between the sides, measured against a limit of 1.0.
 
 | Field | What it does | Needed for |
 |---|---|---|
@@ -859,7 +884,7 @@ inside Blender, and Rust parses it.
 ```jsonc
 {
   "rule": "clip.swing",             // stable id, printed by --list-rules
-  "severity": "error",              // error | warning | info
+  "severity": "error",              // error | warning | info | skipped
   "subject": "LeftHand",            // bone, file, frame, object or direction
   "measured": 52.9, "limit": 2.0,
   "comparison": "le",              // le | lt | eq | ge  -- REQUIRED
@@ -877,6 +902,12 @@ at 8 le 8.
 Contract for callers:
 
 - Exit code is non-zero if and only if at least one `error` is present.
+- **The comparison decides the severity, never the caller.** A rule reports
+  every subject it resolves: `error` when the comparison fails, `info` with
+  the number when it holds, `skipped` when a spec field switched the rule off,
+  `warning` when a remote call was unavailable. Findings are built through the
+  `Rule` registry `--list-rules` prints, so a rule cannot report a limit, a
+  unit or a space that the printed list does not carry.
 - A missing input is an error, never a skip. A missing golden is an error. An
   unavailable remote call is a `warning`, never silence.
 - `measured_on` is mandatory and names the space. A rule with no space fails
@@ -909,6 +940,7 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `rig.humerus_angle` | 15 deg from the target of 40 | le |
 | `rig.world_height` | 5 percent of `spec.subject.height_meters` | le |
 | `rig.bind_deviation` | 75 deg | le |
+| `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
 | `mesh.holes`, `islands`, `self_intersect`, `mirror`, `printability` | set by T3 from `bare.glb` | le |
 | `mesh.non_manifold_post` | set by **T10**, the first task that produces `clean.glb` | le |
 | `mesh.cleanup_effective` | the pre-fixer count, over holes, islands and self-intersections only | **lt** |
@@ -1206,23 +1238,23 @@ so they are calibrated and carry no negative, per the Terminology exemption.
 | `mesh.mirror` | symmetrized `clean.glb`, 0.00 | `[art]` `bare.glb` before the fixer | T3. `model.glb` reads 3.02 percent |
 | `mesh.world_size` | through the node chain, 1.70 m | `[mut]` read from the local bbox, 170 m | 1.70 against a spec of 1.7 |
 | `mesh.facing` | `bare.glb`, +Z in glTF Y-up | `[synth]` the same mesh yawed **180**, facing away | toe-tip minus heel of the foot island, signed on Z |
-| `mesh.stray_object` | `clean.glb`, only `char1` | `[art]` `model.glb`, which carries `Icosphere` | the `meshes` allowlist |
+| `mesh.stray_object` | `clean.glb`, only `char1` | `[synth]` a second mesh node. **Corrected in T2:** the committed `model.glb` at HEAD holds 26 nodes, one mesh, `char1`, and one primitive, so it carries no `Icosphere` and cannot serve. T3 measures `bare.glb`, where the debris is | the `meshes` allowlist |
 | `mesh.budget` | `bare.glb` tris under 300,000 | `[synth]` 400,000 tris | `model.glb` reads 54,864 tris against the spec's 30,000 target. `bare.glb` in T3 |
 | `mesh.uv` | `bare.glb`, one tile in [0,1] | `[synth]` a UV at 1.4 | 0 out-of-bounds on `model.glb` |
 | `mesh.texture` | `bare.glb` has a base color image | `[synth]` the same GLB with materials stripped | rigging's own precondition |
 | `mesh.cleanup_effective` | a real run, holes 171 to 27 | `[synth]` a fixer stub that changes nothing, 8 lt 8 fails | the before and after pair. Non-manifold is excluded and owned by `non_manifold_post` |
-| `rig.bone_set` | renamed rig | `[art]` the current rig, which has `Spine02` and `neck` | the 24 committed names |
-| `rig.parents` | renamed rig | `[art]` the current rig, `Spine` above `Spine02` | the committed parent map |
-| `rig.single_root` | renamed rig | `[synth]` `LeftUpLeg` parented outside `Hips` | `humanoid.glb` |
-| `rig.child_axis` | synthetic conformant rig | `[art]` the current rig, whose `Hips` +Y points out of the left hip and is roughly perpendicular to its child direction | per bone, from joint positions |
-| `rig.mirror_length`, `rig.mirror_direction` | symmetrized rig | `[art]` the current rig, 3.7 percent and 1.45 deg | 3.7 and 1.45 now |
-| `rig.world_height` | `humanoid.glb`, 2.05 percent out | `[synth]` a rig scaled by 100 | 5 percent tolerance |
-| `rig.humerus_angle` | a conformant rig at 40 | `[art]` the current rig at 59, 19 out | target 40, tolerance 15 |
-| `rig.bind_deviation` | `humanoid.glb` | `[synth]` a rig lying on its side, 90 deg | the 75 deg band |
-| `rig.facing` | renamed rig faces minus Y in Blender | `[synth]` the rig yawed 180 | the bake camera's forward |
-| `rig.up_axis` | `humanoid.glb`, Z up | `[synth]` a Y-up rig with no import fix | `humanoid.glb` |
-| `rig.object_transform` | `humanoid.glb` | `[synth]` a rig carrying an action on the object | `humanoid.glb` |
-| `rig.names_standard` | renamed rig | `[art]` the current rig | the Mixamo name list |
+| `rig.bone_set` | `[synth]` a conformant rig, because the rename lands in T5 | `[art]` the current rig, which is missing `Spine1`, `Spine2` and `Neck`. Measured: 3 of 24 names absent | the 24 committed names, each present exactly once |
+| `rig.parents` | `[synth]` a conformant rig | `[art]` the current rig, `Spine` above `Spine02`. Measured: 4 bones hang wrong, `Spine`, `Head`, and both shoulders | the committed parent map |
+| `rig.single_root` | `humanoid.glb`, where every joint descends from `Hips` | `[synth]` `LeftUpLeg` parented outside `Hips`, which takes its whole branch with it, 4 bones | `humanoid.glb` |
+| `rig.child_axis` | synthetic conformant rig | `[art]` the current rig, whose `Hips` +Y points out of the left hip. Measured: `Hips` 97.6 deg and `Head` 26.0 deg, every other bone under 0.01 | per bone, from joint positions. `[synth]` a joint moved without its parent, for the metric itself |
+| `rig.mirror_length`, `rig.mirror_direction` | `[synth]` an exact mirror | `[art]` the current rig, worst 3.68 percent and 2.16 deg, both on the `Foot` segment. The 1.45 deg the audit gave is the `ForeArm` pair | measured now: length 0.95 to 3.68 percent over six segments a side, direction 0.08 to 2.16 deg |
+| `rig.world_height` | `humanoid.glb`, 2.05 percent out, confirmed at 2.049 | `[synth]` a rig scaled by 100 at the object node, which reads 9900 percent and trips nothing else | 5 percent tolerance, against `spec.subject.height_meters` |
+| `rig.humerus_angle` | a conformant rig at 40 | `[art]` the current rig at 59.1 left and 59.3 right, 19.1 and 19.4 out | target 40, tolerance 15 |
+| `rig.bind_deviation` | `humanoid.glb`, worst 4.1 deg up the root chain | `[synth]` a rig rolled 90 deg onto its side | the 75 deg band. Measured per step of the root chain, against the up axis, which is the only canonical direction that exists before the aim table |
+| `rig.facing` | the current rig already faces +Z in glTF, which is minus Y in Blender, 8.1 to 9.0 deg per foot | `[synth]` the rig yawed 180, and `[synth]` a foot pointing along the up axis, where the facing is undefined and reported as one | the bake camera's forward. Per foot, so one foot on backwards cannot average away |
+| `rig.up_axis` | `humanoid.glb`, 3.0 deg off Blender +Z | `[synth]` the same rig pitched 90 deg, which is the shape of an export with no axis conversion | `humanoid.glb`. The root chain end to end, named by the closest of six axes |
+| `rig.object_transform` | `humanoid.glb` and `model.glb`, whose bones carry a bind-pose action while the object carries none | `[synth]` a rig carrying an action on the object | both committed rigs read 0 channels above the skeleton |
+| `rig.names_standard` | `[synth]` a conformant rig | `[art]` the current rig, which names `Spine01`, `Spine02` and `neck` | the Mixamo name list. This rule reports the names nothing can map, and `bone_set` reports the roles that are missing |
 | `gltf.validator` | every shipped GLB | `[synth]` a GLB with an injected NaN | the four committed GLBs |
 | `source.posture` | `strafe_left.fbx`, head 34 to 37 | none, `info` only | the three Mixamo clips |
 | `source.fps_declared` | `source_fps` equals the file's rate | `[synth]` a `library.ron` with `source_fps` 24 against a 30 fps FBX | the three clips, read from the FBX |
@@ -1312,8 +1344,8 @@ so they are calibrated and carry no negative, per the Terminology exemption.
 committed art produces the same report twice. A stage that fails a gate leaves
 the report and does not advance the lock. With the network unavailable,
 `print/analyze` reports `warning` and the build continues. With
-`symmetry: false` the mirror rules report `info` and their negative controls
-still run.
+`symmetry: false` the mirror rules report `skipped` and their negative
+controls still run.
 
 **End to end, `cargo nextest --test e2e`:** T16 launches Godot headless, loads
 every atlas and manifest, and greps the log, because Godot exits 0 on a script
@@ -1394,7 +1426,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | --- | ---- | ---- | ----------- | ---------------- | ---- |
 | T1  | Harness, Finding, validator, diagnostics | 1.0 d | One tested function builds every `blender` argv in the documented order, `--python-use-system-env` and `--log-file` included. `findings.py` and `check/mod.rs` carry `Finding` with the required `comparison`, `attempt` and `measured_on`, writing `reports/<stage>.<item>.<attempt>.json`. Each script writes a sentinel Rust asserts. `check/validator.rs` runs the npm validator under Bun. Diagnostics: argv verbatim, the log, the `.blend` from the exception handler, partial frames. | A unit test fails if any flag or the order changes. A script raising outside its top level leaves no sentinel and fails. A rule with no `measured_on` or no `comparison` fails its own test. No gate can emit NaN. An injected NaN fails and the four committed GLBs pass. A deliberately failed bake leaves argv, log, `.blend` and partial frames. | none |
 | T1b | Isolate vendors | 1 d | From the human's review. Move `openai.rs`, `meshy.rs`, `mixamo.rs` and `chrome.rs` under `providers/`, with `chrome.rs` becoming `mixamo/session.rs`. Vendor URLs, ids and keys live only in their own module; `cli.rs` imports them. Generic HTTP helpers (`retry_after`, the env backoff) move to `http.rs`. `stages.rs` and `cli.rs` are the only callers, and no new one is added. No new traits: `MotionSource` in `library.rs` is already the seam. | A unit test greps `src/` and fails on any vendor host, id or key outside `providers/`. Scoped to `src/` because a test keeps its own copy of a literal on purpose: `test_mixamo_session.rs` rebuilds the Local Storage key from the origin, and importing `SITE_URL` there would move both sides together and the test could no longer fail. Every existing test passes unchanged. `cargo doc` links resolve. | T1 |
-| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`. `check/gltf_world.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig. Runs in CI with no Blender. `cargo art check` prints the itemized defect list. | T1, T1b |
+| T2  | Skeleton profile, rig and object check | 2 d | `[profile]` in `humanoid.toml`, `[profile.tails]` included. `check/gltf_world.rs`, `check/profile.rs` and `check/rig.rs` in Rust. Thirteen `rig.*` rules including `humerus_angle`, `facing`, `up_axis`, `bind_deviation` and `child_axis`, plus one height rule against `spec.subject.height_meters`. A `Rule` registry in `check/mod.rs` that every finding is built through, so `--list-rules` cannot advertise a limit a rule does not use. `spec.name` refused at load time when it holds a dot. | Every `rig.*` row rejects its negative fixture, seven of them being the current committed rig, on 22 subjects. Runs in CI with no Blender. `cargo art check` prints the itemized defect list. Every rule reports on good art too, at `info`, because a rule that goes quiet when it passes cannot be told from one that never ran, and `skipped` is added beside it so T10's switched-off rules are not the same word. | T1, T1b |
 | T3  | Mesh measurement in Rust, calibrated on `bare.glb` | 2 d | **First: download `bare.glb`, take it to world through the glTF node chain, then weld.** Report a merge histogram at 1e-6, 1e-5, 1e-4 and 1e-3 and pick the plateau. Then `check/mesh.rs`: holes, non-manifold, islands, self-intersections via `parry3d`'s `Bvh`, mirror distance, world size, budget, UV bounds, facing, texture. Map `print/analyze` into the report. Write every `bare.glb` limit into `[profile]`. | The weld distance is chosen from the histogram, not assumed. Every `bare.glb` limit in `[profile]` is a real number. Every `mesh.*` row except `non_manifold_post` rejects its negative fixture in CI with no Blender. | T1, T2 |
 | T4  | Aim table and role map | 1.5 d | Add `parents`, `optional`, `fingerprint` and `[aim_table]`. Implement the three table validations and the skip-unmapped-ancestor parent walk. Checked against a synthetic fixture, and the real rig is renamed in T5. | No second copy of the map exists. A missing row, a broken mirror pair, and an out-of-band aim each fail to load. | T2 |
 | T5  | The transfer, the rename, and the refit | 3.5 d | `transfer.py` with no `bpy`: quaternion swing-twist aim application projecting the **vector part** per fact 19, `swing_singular` raised at 180 degrees, roleless bones skipped, separate `ref_world_*` dicts, algebraic local matrices, rotation-only keys for non-root bones, typed errors, LINEAR and CONSTANT, no reference-frame key. Delete `rebase_action`, `sole_children`, `align_to_world`, `bind_pose_mismatch`, `bone_directions` and the twelve self-referential tests. **Rename the committed `humanoid.glb` bones and refit `idle.glb` and `run.glb` in this PR**, because the rename invalidates them and this is the first task with the new retarget. | The three numeric known-answer tests pass: 10 deg twist to 10.00 and 0.00, 30 deg swing to 0.00 and 30.00, `Offset(LeftUpLeg)` about 174 and not identity. The 180 degree case raises `swing_singular`. A rig with `head_end` is skipped, not raised on. Requirements 1, 2, 7, 8, 9, 10 each have a passing test and a rejected negative. The 1.5x scale test gives identical output bone lengths. | T1, T4 |
@@ -1402,7 +1434,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy. Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on all three axes. No sprite rate changes. | T5 |
 | T8  | Femur scale and floor snap | 1.5 d | Femur ratio replaces total height, with every location key scaled in the same operation. Snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`. | Requirement 4 holds. Travel matches the source within 2 percent. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
-| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **Measure the first real `clean.glb` and write `mesh.non_manifold_post`'s ceiling into `[profile]`**, because T3 has no `clean.glb` to read. | **A real 5-credit rigging call with a data URI succeeds**, or the short-lived upload fallback ships instead. `cleanup_effective` shows holes, islands and self-intersections strictly decreasing. `non_manifold_post`'s ceiling is a measured number and every later run stays inside it. Texture and UVs survive. The no-op stub is rejected at 8 lt 8. With `symmetry: false` the fixer skips it, the mirror rules report `info`, and their negative controls still run. | T3 |
+| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **Measure the first real `clean.glb` and write `mesh.non_manifold_post`'s ceiling into `[profile]`**, because T3 has no `clean.glb` to read. | **A real 5-credit rigging call with a data URI succeeds**, or the short-lived upload fallback ships instead. `cleanup_effective` shows holes, islands and self-intersections strictly decreasing. `non_manifold_post`'s ceiling is a measured number and every later run stays inside it. Texture and UVs survive. The no-op stub is rejected at 8 lt 8. With `symmetry: false` the fixer skips it, the mirror rules report `skipped`, and their negative controls still run. | T3 |
 | T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, `force = true`, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two called `concept` with `force = true`. `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
 | T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, every animation GLB, `pose_mode`, the Blender version and the script version into the right stages. Add `Model` to the version guard. Add `verdict` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. | T1 |

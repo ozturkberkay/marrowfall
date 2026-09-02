@@ -3,6 +3,7 @@
 // crash.
 #![allow(clippy::unwrap_used)]
 
+mod rigs;
 mod support;
 mod test_bake_stage;
 mod test_blender;
@@ -12,6 +13,7 @@ mod test_cli_commands;
 mod test_cli_fetch;
 mod test_cli_prompts;
 mod test_cli_run;
+mod test_gltf_world;
 mod test_http;
 mod test_library;
 mod test_lock;
@@ -25,7 +27,9 @@ mod test_openai_client;
 mod test_pack;
 mod test_pack_stage;
 mod test_preview;
+mod test_profile;
 mod test_providers;
+mod test_rig;
 mod test_spec;
 mod test_stages;
 mod test_stages_run;

@@ -147,6 +147,33 @@ fn the_comparison_decides_whether_a_measurement_holds() {
     }
 }
 
+/// A passing measurement and a rule a spec field switched off both belong in
+/// the report, and a consumer has to tell them apart by severity rather than
+/// by reading the message. `symmetry: false` is the case that needs it.
+#[test]
+fn a_measurement_that_passed_and_a_rule_that_was_switched_off_differ() {
+    let passed = Finding {
+        severity: Severity::Info,
+        ..a_finding()
+    };
+    let switched_off = Finding {
+        severity: Severity::Skipped,
+        measured: 0.0,
+        message: "spec.subject.symmetry is false".to_owned(),
+        ..a_finding()
+    };
+
+    assert_ne!(passed.severity, switched_off.severity);
+    assert_eq!(
+        serde_json::to_value(switched_off.severity).unwrap(),
+        "skipped"
+    );
+    // Neither stops a build, which is what `error` alone does.
+    let mut report = Report::new("mesh", "survivor", 1);
+    report.extend([passed, switched_off]).unwrap();
+    assert_eq!(report.exit_code(), 0);
+}
+
 /// The whole reason `comparison` is a required field: 8 le 8 passes a fixer
 /// that changed nothing, and 8 lt 8 does not.
 #[test]
@@ -160,7 +187,7 @@ fn a_fixer_that_changed_nothing_fails_the_strict_comparison() {
 #[test]
 fn a_report_is_non_zero_only_when_an_error_is_present() {
     let mut report = Report::new("bake", "survivor", 1);
-    for severity in [Severity::Warning, Severity::Info] {
+    for severity in [Severity::Warning, Severity::Info, Severity::Skipped] {
         report
             .add(Finding {
                 severity,
@@ -446,8 +473,13 @@ fn both_sides_spell_the_severities_and_comparisons_the_same() {
                 .collect(),
         )
     };
-    let severities = [Severity::Error, Severity::Warning, Severity::Info]
-        .map(|s| serde_json::to_value(s).unwrap());
+    let severities = [
+        Severity::Error,
+        Severity::Warning,
+        Severity::Info,
+        Severity::Skipped,
+    ]
+    .map(|s| serde_json::to_value(s).unwrap());
     let comparisons = [
         Comparison::Le,
         Comparison::Lt,
