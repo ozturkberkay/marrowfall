@@ -13,3 +13,5 @@ Should be executed by the `design-reviewer` subagent.
 - Ensure the design template (`docs/templates/design.md`) format and rules are
   followed. You can use previous design documents under `docs/design` as style
   exemplars.
+
+**CRITICAL:** Do not waste time with tiny nitpicks. Reviews are expensive.

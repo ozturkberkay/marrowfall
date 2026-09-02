@@ -8,6 +8,8 @@ be used:
 1. The main session creates the design document using the `/design` skill.
 2. Three `design-reviewer` agents review the design using the `/review-design` skill.
 3. The main session iterates until the review comes clean.
+   **IMPORTANT:** This step can get expensive due to token use! Do not waste
+   time with nitpicks, resolve the important findings and move on.
 4. The human reviews the design document and provides feedback until approval.
 5. The `engineer` agent implements the design using the `/implement-design` skill.
     a. Design is implemented as a series of stacked PRs, one per vertical task.
