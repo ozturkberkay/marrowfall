@@ -160,6 +160,28 @@ fn stale_frames_from_a_previous_shape_are_cleared_first() {
     );
 }
 
+/// The mesh sent to rigging lives beside the frames, and the paid rig record
+/// fingerprints it, so clearing it would report that stage stale after every
+/// bake.
+#[test]
+fn the_mesh_sent_to_rigging_survives_a_bake() {
+    let library = a_library();
+    let dir = a_baked_repo(true);
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let paths = Paths::new(dir.path(), "survivor");
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(paths.bare_glb(), b"glTF bare").unwrap();
+    std::fs::write(paths.clean_glb(), b"glTF clean").unwrap();
+
+    stages::bake(&a_spec("survivor"), &library, &paths, dir.path()).unwrap();
+
+    assert_eq!(std::fs::read(paths.bare_glb()).unwrap(), b"glTF bare");
+    assert_eq!(std::fs::read(paths.clean_glb()).unwrap(), b"glTF clean");
+}
+
 /// A bake that measured nothing is a bake whose two rules nobody read, and a
 /// gate that goes quiet cannot be told from one that never ran.
 #[test]

@@ -410,6 +410,55 @@ fn a_missing_blender_says_to_check_the_path() {
     assert!(error.contains("on PATH"), "got: {error}");
 }
 
+// --- the build the lock records -------------------------------------------
+
+/// A real input, not decoration: 4.5 and 5.2 do not render the same frames,
+/// so the fingerprint of every rendering stage carries it.
+#[test]
+fn the_blender_build_is_read_off_the_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = crate::support::a_version_only_blender(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    assert_eq!(blender::version().unwrap(), crate::support::BLENDER);
+}
+
+#[test]
+fn a_blender_that_cannot_be_asked_its_build_is_an_error() {
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", "definitely-not-installed-blender");
+
+    let error = format!("{:#}", blender::version().unwrap_err());
+    assert!(error.contains("on PATH"), "got: {error}");
+}
+
+/// Short is not empty: refusing a one-character build would report "printed
+/// nothing" about a build that printed something.
+#[test]
+fn a_one_character_build_is_still_a_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = a_stub(dir.path(), "echo 5");
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set("MARROWFALL_STUB_ENV", "/dev/null");
+
+    assert_eq!(blender::version().unwrap(), "5");
+}
+
+/// A build read as an empty string would fingerprint every machine the same.
+#[test]
+fn a_blender_that_prints_no_build_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let stub = a_stub(dir.path(), "exit 0");
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set("MARROWFALL_STUB_ENV", "/dev/null");
+
+    let error = format!("{:#}", blender::version().unwrap_err());
+    assert!(error.contains("printed nothing"), "got: {error}");
+}
+
 // --- the virtualenv lookup ------------------------------------------------
 
 #[test]

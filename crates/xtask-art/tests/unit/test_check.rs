@@ -428,6 +428,47 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
     }
 }
 
+/// A report says one thing overall, and a stored verdict is what says it. An
+/// error outranks a warning, a warning outranks a reading, and a skip
+/// measured nothing at all.
+#[test]
+fn a_report_reports_the_worst_thing_it_was_told() {
+    let mut report = Report::new("retarget", "run", 1);
+    assert_eq!(
+        report.worst(),
+        Severity::Skipped,
+        "nothing filed is nothing measured"
+    );
+
+    report.add(a_clip_finding()).unwrap();
+    assert_eq!(report.worst(), Severity::Info);
+    report
+        .add(Finding {
+            severity: Severity::Skipped,
+            ..a_clip_finding()
+        })
+        .unwrap();
+    assert_eq!(report.worst(), Severity::Info, "a skip is not worse");
+    report
+        .add(Finding {
+            severity: Severity::Warning,
+            ..a_clip_finding()
+        })
+        .unwrap();
+    assert_eq!(report.worst(), Severity::Warning);
+    report.add(a_finding()).unwrap();
+    assert_eq!(report.worst(), Severity::Error);
+}
+
+/// The name every file of one attempt shares, which a stored verdict points
+/// at rather than repeating the findings.
+#[test]
+fn an_artifact_set_names_its_own_stem() {
+    let artifacts = Artifacts::new(Path::new("/repo"), "retarget", "strafe_left", 2).unwrap();
+    assert_eq!(artifacts.stem(), "retarget.strafe_left.2");
+    assert!(artifacts.report().ends_with("retarget.strafe_left.2.json"));
+}
+
 // --- the record -----------------------------------------------------------
 
 #[test]

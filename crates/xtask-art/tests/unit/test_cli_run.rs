@@ -14,7 +14,7 @@ use xtask_art::spec::Paths;
 
 use crate::support::{
     EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_spec,
-    install_library, install_skeleton,
+    answers_its_version, inputs, install_library, install_skeleton,
 };
 
 fn options(from: Option<Stage>, only: Option<Stage>, retry: bool) -> RunOptions {
@@ -98,7 +98,7 @@ fn install_blender_stub(root: &std::path::Path, env: &mut EnvGuard) {
         &stub,
         format!(
             r#"#!/bin/sh
-out=""
+{version}out=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
   shift
@@ -121,7 +121,8 @@ cat {prepared:?} > "$MARROWFALL_REPORT"
 exit 0
 "#,
             prepared = prepared.display(),
-            cleaned = cleaned.display()
+            cleaned = cleaned.display(),
+            version = answers_its_version()
         ),
     )
     .unwrap();
@@ -171,6 +172,59 @@ async fn a_full_run_completes_every_stage_and_records_each_one() {
     }
     assert!(paths.assets().join("character.ron").exists());
     assert!(paths.assets().join("idle.png").exists());
+}
+
+/// A run that will reach the bake needs Blender, and it says so before the
+/// first paid stage rather than after three of them.
+#[tokio::test]
+async fn a_full_run_without_blender_stops_before_it_bills_anything() {
+    let server = MockServer::start().await;
+    let dir = a_working_repo(&server).await;
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri())
+        .set("MARROWFALL_BLENDER_BIN", "definitely-not-installed-blender");
+
+    let error = run(
+        dir.path(),
+        "survivor",
+        options(None, None, false),
+        true,
+        &mut std::io::empty(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("on PATH"), "got: {error}");
+    assert_eq!(server.received_requests().await.unwrap().len(), 0);
+}
+
+/// And `--only concept` never opens what the bake reads, so it does not.
+#[tokio::test]
+async fn only_the_concept_stage_runs_without_blender() {
+    let server = MockServer::start().await;
+    let dir = a_working_repo(&server).await;
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri())
+        .set("MARROWFALL_BLENDER_BIN", "definitely-not-installed-blender");
+
+    run(
+        dir.path(),
+        "survivor",
+        options(None, Some(Stage::Concept), false),
+        true,
+        &mut std::io::empty(),
+    )
+    .await
+    .unwrap();
+
+    let paths = Paths::new(dir.path(), "survivor");
+    assert!(
+        Lock::load(&paths.lock())
+            .unwrap()
+            .stages
+            .contains_key(&Stage::Concept)
+    );
 }
 
 #[tokio::test]
@@ -262,19 +316,24 @@ async fn editing_a_sprite_setting_does_not_invalidate_the_paid_stages() {
 
     let lock = Lock::load(&paths.lock()).unwrap();
     assert!(
-        lock.is_current(Stage::Concept, &spec, &library),
+        lock.is_current(Stage::Concept, &inputs(dir.path(), &spec, &library))
+            .unwrap(),
         "concept costs money"
     );
     assert!(
-        lock.is_current(Stage::Model, &spec, &library),
+        lock.is_current(Stage::Model, &inputs(dir.path(), &spec, &library))
+            .unwrap(),
         "model costs money"
     );
     assert!(
-        lock.is_current(Stage::Rig, &spec, &library),
+        lock.is_current(Stage::Rig, &inputs(dir.path(), &spec, &library))
+            .unwrap(),
         "rigging costs money"
     );
     assert!(
-        !lock.is_current(Stage::Pack, &spec, &library),
+        !lock
+            .is_current(Stage::Pack, &inputs(dir.path(), &spec, &library))
+            .unwrap(),
         "packing consumes sprite_height, so it must re-run"
     );
 }

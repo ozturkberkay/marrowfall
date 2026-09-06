@@ -3,17 +3,18 @@
 use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+use xtask_art::blender::Build;
 use xtask_art::check::profile::Profile;
 use xtask_art::cli::{
     Cli, Command, RunOptions, check, confirm_spend, new_character, repo_root, report_balance,
-    run_from_args, spend_prompt, status,
+    run_from_args, spend_prompt, stale_hint, status,
 };
-use xtask_art::lock::{Lock, Provider, Stage, StageRecord};
+use xtask_art::lock::{self, Inputs, Lock, Provider, Stage, StageRecord};
 use xtask_art::spec::{CharacterSpec, CharacterType, Paths};
 
 use crate::support::{
-    EnvGuard, a_concept_view, a_library, a_spec, install_library, install_skeleton,
-    repo_root as real_repo,
+    EnvGuard, a_concept_view, a_library, a_spec, a_version_only_blender, inputs, install_library,
+    install_scripts, install_skeleton, repo_root as real_repo,
 };
 
 use base64::Engine as _;
@@ -29,7 +30,22 @@ fn a_repo() -> tempfile::TempDir {
     // And every published limit is skeleton data, which the concept gate at
     // the first stage boundary already reads.
     install_skeleton(dir.path());
+    // And the scripts, because a fingerprint reads them before it can say a
+    // Blender stage is current.
+    install_scripts(dir.path());
     dir
+}
+
+/// A repo plus the one `blender` a status or a plan needs: the build it would
+/// render with, read without running anything.
+fn a_repo_with_blender() -> (tempfile::TempDir, EnvGuard) {
+    let dir = a_repo();
+    let mut env = EnvGuard::new();
+    env.set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
+    (dir, env)
 }
 
 // --- new ------------------------------------------------------------------
@@ -72,28 +88,42 @@ fn a_non_humanoid_template_has_no_animations() {
 #[test]
 fn status_reports_todo_done_and_stale() {
     let library = a_library();
-    let dir = a_repo();
-    let paths = Paths::new(dir.path(), "survivor");
+    let (dir, _env) = a_repo_with_blender();
+    let root = dir.path();
+    let paths = Paths::new(root, "survivor");
     let mut spec = a_spec("survivor");
     spec.save(&paths.spec()).unwrap();
 
     let mut lock = Lock::default();
-    lock.record(Stage::Concept, &spec, &library, StageRecord::default());
+    lock.record(
+        Stage::Concept,
+        &inputs(root, &spec, &library),
+        StageRecord::default(),
+    )
+    .unwrap();
     lock.save(&paths.lock()).unwrap();
-    status(dir.path(), "survivor", false).unwrap();
+    status(root, "survivor", false).unwrap();
 
     // Editing a field the concept stage consumed makes it stale.
     spec.subject.description = "a different character entirely".to_owned();
     spec.save(&paths.spec()).unwrap();
     let lock = Lock::load(&paths.lock()).unwrap();
-    assert!(!lock.is_current(Stage::Concept, &spec, &library));
-    assert!(lock.stages.contains_key(&Stage::Concept));
-    status(dir.path(), "survivor", false).unwrap();
+    assert!(
+        !lock
+            .is_current(Stage::Concept, &inputs(root, &spec, &library))
+            .unwrap()
+    );
+    assert_eq!(
+        lock::stale(&lock.states(&inputs(root, &spec, &library))),
+        vec![Stage::Concept],
+        "a recorded stage whose inputs moved is stale, and names itself"
+    );
+    status(root, "survivor", false).unwrap();
 }
 
 #[test]
 fn status_json_lists_every_stage() {
-    let dir = a_repo();
+    let (dir, _env) = a_repo_with_blender();
     let paths = Paths::new(dir.path(), "survivor");
     a_spec("survivor").save(&paths.spec()).unwrap();
     status(dir.path(), "survivor", true).unwrap();
@@ -101,9 +131,95 @@ fn status_json_lists_every_stage() {
 
 #[test]
 fn status_of_an_unknown_character_names_the_missing_file() {
-    let dir = a_repo();
+    let (dir, _env) = a_repo_with_blender();
     let error = status(dir.path(), "nobody", false).unwrap_err().to_string();
     assert!(error.contains("nobody"), "got: {error}");
+}
+
+/// This is the command a machine with no Blender runs, so the stage that
+/// renders says nothing can be told and every other stage still reports.
+#[test]
+fn status_without_blender_names_the_stage_it_cannot_judge() {
+    let library = a_library();
+    let dir = a_repo();
+    let root = dir.path();
+    let paths = Paths::new(root, "survivor");
+    let spec = a_spec("survivor");
+    spec.save(&paths.spec()).unwrap();
+
+    let mut lock = Lock::default();
+    for stage in Stage::all() {
+        lock.stages.insert(stage, StageRecord::default());
+    }
+    lock.save(&paths.lock()).unwrap();
+
+    let nothing_installed = root.join("empty");
+    std::fs::create_dir_all(&nothing_installed).unwrap();
+    let mut env = EnvGuard::new();
+    env.remove("MARROWFALL_BLENDER_BIN")
+        .set("PATH", nothing_installed.to_str().unwrap());
+
+    let blender = Build::detected();
+    let states = lock.states(&Inputs {
+        root,
+        spec: &spec,
+        library: &library,
+        blender: &blender,
+    });
+
+    assert_eq!(states[&Stage::Bake].word(), "unknown");
+    assert!(
+        states[&Stage::Bake].reason().unwrap().contains("blender"),
+        "got: {:?}",
+        states[&Stage::Bake]
+    );
+    assert_eq!(
+        states[&Stage::Concept].word(),
+        "stale",
+        "a stage that opens no tool still answers"
+    );
+    assert!(
+        !lock::stale(&states).contains(&Stage::Bake),
+        "and drops out of the --from hint"
+    );
+    // Both shapes print rather than die.
+    status(root, "survivor", false).unwrap();
+    status(root, "survivor", true).unwrap();
+}
+
+// --- what a stale record is told to do ------------------------------------
+
+/// The recommendation is never a command that spends: `cargo art run --from`
+/// does not ask before re-running a stage the lock already calls stale.
+#[test]
+fn the_hint_recommends_the_earliest_free_stage_and_names_the_paid_ones() {
+    let hint = stale_hint("survivor", &[Stage::Concept, Stage::Bake]).expect("a hint");
+
+    assert!(
+        hint.contains("`cargo art run survivor --from bake`"),
+        "got: {hint}"
+    );
+    assert!(
+        hint.contains("concept is paid: re-running it bills OpenAI images"),
+        "got: {hint}"
+    );
+    assert!(!hint.contains("--from concept"), "got: {hint}");
+}
+
+/// And with nothing free left there is no safe command, so it says that
+/// instead of printing one.
+#[test]
+fn the_hint_recommends_nothing_when_every_stale_stage_is_paid() {
+    let hint = stale_hint("survivor", &[Stage::Model, Stage::Rig]).expect("a hint");
+
+    assert!(hint.contains("bills Meshy credits"), "got: {hint}");
+    assert!(hint.contains("every stale stage is paid"), "got: {hint}");
+    assert!(!hint.contains("--from"), "got: {hint}");
+}
+
+#[test]
+fn nothing_stale_is_nothing_to_say() {
+    assert_eq!(stale_hint("survivor", &[]), None);
 }
 
 // --- check ----------------------------------------------------------------
@@ -606,7 +722,11 @@ async fn the_entry_point_dispatches_check_and_status() {
         .save(&Paths::new(dir.path(), "survivor").spec())
         .unwrap();
     let mut env = EnvGuard::new();
-    env.set("CARGO_MANIFEST_DIR", dir.path().to_str().unwrap());
+    env.set("CARGO_MANIFEST_DIR", dir.path().to_str().unwrap())
+        .set(
+            "MARROWFALL_BLENDER_BIN",
+            a_version_only_blender(dir.path()).to_str().unwrap(),
+        );
 
     run_from_args(["art", "check"]).await.unwrap();
     run_from_args(["art", "status", "survivor"]).await.unwrap();

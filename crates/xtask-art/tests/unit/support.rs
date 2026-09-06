@@ -6,12 +6,14 @@
 //! settings into each other.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
+use xtask_art::blender::Build;
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{Finding, Report, clip};
 use xtask_art::library::AnimationLibrary;
-use xtask_art::spec::{Bake, CharacterSpec, CharacterType, Remesh, Subject, Texture};
+use xtask_art::lock::Inputs;
+use xtask_art::spec::{Bake, CharacterSpec, CharacterType, Paths, Remesh, Subject, Texture, View};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -179,17 +181,35 @@ pub fn a_library() -> AnimationLibrary {
     AnimationLibrary::template()
 }
 
-/// Copies the committed skeleton profile into a temporary repo, because the
-/// stages that publish a limit to Blender read it from there.
+/// Copies the committed skeleton into a temporary repo: the profile, because
+/// the stages that publish a limit to Blender read it from there, and the
+/// canonical rig beside it, because every fingerprint of a Blender stage
+/// reads both.
 pub fn install_skeleton(root: &std::path::Path) {
     let skeletons = root.join("art/skeletons");
     std::fs::create_dir_all(&skeletons).expect("mkdir");
-    let name = format!("{}.toml", xtask_art::library::HUMANOID);
-    std::fs::copy(
-        repo_root().join("art/skeletons").join(&name),
-        skeletons.join(&name),
-    )
-    .expect("copying the committed skeleton profile");
+    for extension in ["toml", "glb"] {
+        let name = format!("{}.{extension}", xtask_art::library::HUMANOID);
+        std::fs::copy(
+            repo_root().join("art/skeletons").join(&name),
+            skeletons.join(&name),
+        )
+        .expect("copying the committed skeleton");
+    }
+}
+
+/// And the Blender scripts, which are the other half of what a fingerprint
+/// reads before it can say a bake is current.
+pub fn install_scripts(root: &std::path::Path) {
+    let to = root.join("tools/blender/src");
+    std::fs::create_dir_all(&to).expect("mkdir");
+    for entry in std::fs::read_dir(repo_root().join("tools/blender/src")).expect("the scripts") {
+        let from = entry.expect("a script").path();
+        if from.extension().is_some_and(|ext| ext == "py") {
+            std::fs::copy(&from, to.join(from.file_name().expect("a file name")))
+                .expect("copying a Blender script");
+        }
+    }
 }
 
 /// The mesh as the model stage downloads it: textured, unskinned, and
@@ -253,4 +273,109 @@ pub fn install_library(root: &std::path::Path) -> AnimationLibrary {
         std::fs::write(glb, b"glTF").expect("writing a stub animation");
     }
     library
+}
+
+// --- What a fingerprint reads off disk ------------------------------------
+
+/// The Blender build a test declares rather than looks up: nothing in this
+/// suite may need Blender installed.
+pub const BLENDER: &str = "Blender 4.5.3 LTS";
+
+/// And that build as a fingerprint reads it, which asks no binary anything.
+pub static A_BUILD: LazyLock<Build> = LazyLock::new(|| Build::stated(BLENDER));
+
+/// The first line of every `blender` stub: a command that fingerprints a
+/// Blender stage asks for the build before it runs anything.
+pub fn answers_its_version() -> String {
+    format!("case \"$1\" in --version) echo \"{BLENDER}\"; exit 0;; esac\n")
+}
+
+/// A `blender` that answers `--version` and refuses everything else, for a
+/// command that reads the build without running a script.
+pub fn a_version_only_blender(dir: &Path) -> PathBuf {
+    let stub = dir.join("blender-version.sh");
+    std::fs::write(
+        &stub,
+        format!("#!/bin/sh\n{}exit 1\n", answers_its_version()),
+    )
+    .expect("writing the stub");
+    std::fs::set_permissions(
+        &stub,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .expect("making the stub executable");
+    stub
+}
+
+/// Everything a fingerprint reads, over a tree a test built.
+pub fn inputs<'a>(
+    root: &'a Path,
+    spec: &'a CharacterSpec,
+    library: &'a AnimationLibrary,
+) -> Inputs<'a> {
+    Inputs {
+        root,
+        spec,
+        library,
+        blender: &A_BUILD,
+    }
+}
+
+/// A repo-shaped tree holding the real committed inputs a fingerprint reads,
+/// so a test can edit exactly one of them and read the pair.
+pub fn a_tree() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    install_skeleton(root);
+    install_scripts(root);
+
+    let library = a_library();
+    library.save(root).unwrap();
+    for name in library.animations.keys() {
+        let glb = library.glb(root, name);
+        std::fs::create_dir_all(glb.parent().unwrap()).unwrap();
+        std::fs::copy(
+            repo_root()
+                .join("art/animations")
+                .join(format!("{name}.glb")),
+            glb,
+        )
+        .unwrap();
+    }
+    let paths = Paths::new(root, "survivor");
+    std::fs::create_dir_all(paths.dir()).unwrap();
+    for view in View::ALL {
+        let png = paths.concept(view);
+        std::fs::create_dir_all(png.parent().unwrap()).unwrap();
+        std::fs::write(png, a_png()).unwrap();
+    }
+    // A stand-in, not the committed 4.8 MB mesh: only its bytes are read.
+    std::fs::write(paths.character_glb(), b"glTF the character").unwrap();
+    dir
+}
+
+/// Points the head's aim at another axis: one `[aim_table]` row, which is
+/// what the transfer reads to fit a clip.
+///
+/// The row is matched whole, because `head` also names a bone in the two
+/// convention tables above it.
+pub fn edit_an_aim_row(root: &Path) {
+    let path = root.join("art/skeletons/humanoid.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let row = "head = [0.0, 0.0, 1.0]";
+    assert_eq!(
+        text.matches(row).count(),
+        1,
+        "exactly one [aim_table] row to edit"
+    );
+    std::fs::write(&path, text.replace(row, "head = [0.0, 1.0, 0.0]")).unwrap();
+}
+
+/// Flips the last byte of a file: the smallest edit a content hash has to
+/// see, and one that leaves the name, the size and the date alone.
+pub fn flip_a_byte(path: &std::path::Path) {
+    let mut bytes = std::fs::read(path).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    std::fs::write(path, bytes).unwrap();
 }

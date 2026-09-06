@@ -60,6 +60,19 @@ pub enum Severity {
     Skipped,
 }
 
+impl Severity {
+    /// How bad this is, for picking the worst of a report. A skip is the
+    /// lowest, because it took no measurement.
+    const fn rank(self) -> u8 {
+        match self {
+            Self::Skipped => 0,
+            Self::Info => 1,
+            Self::Warning => 2,
+            Self::Error => 3,
+        }
+    }
+}
+
 /// Whether a character is declared bilaterally symmetric.
 ///
 /// Per character, not global: a monster can be asymmetric on purpose, and a
@@ -412,6 +425,16 @@ impl Report {
         &self.findings
     }
 
+    /// The worst thing this report says. A report with nothing in it says a
+    /// skip: nothing was measured.
+    pub fn worst(&self) -> Severity {
+        self.findings
+            .iter()
+            .map(|finding| finding.severity)
+            .max_by_key(|severity| severity.rank())
+            .unwrap_or(Severity::Skipped)
+    }
+
     pub fn has_errors(&self) -> bool {
         self.findings.iter().any(|f| f.severity == Severity::Error)
     }
@@ -587,6 +610,12 @@ impl Artifacts {
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The `<stage>.<item>.<attempt>` every file of this attempt shares.
+    /// A stored verdict names this rather than repeating the findings.
+    pub fn stem(&self) -> &str {
+        &self.stem
     }
 
     /// The findings themselves.

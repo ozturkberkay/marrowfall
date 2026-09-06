@@ -17,7 +17,7 @@ use crate::check::profile::Profile;
 use crate::check::{
     Artifacts, Finding, Report, Rule, Severity, Symmetry, clip, concept, gltf_mesh, mesh, source,
 };
-use crate::library::{Animation, AnimationLibrary, MotionSource};
+use crate::library::{Animation, AnimationLibrary, MotionSource, Verdict};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
 use crate::preview;
@@ -173,7 +173,7 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
 
 /// Measures the bare mesh, cleans it, and measures what the fixer wrote.
 ///
-/// Returns the file rigging is fed: `clean.glb`, or the bare mesh itself when
+/// Returns the file sent to rigging: `clean.glb`, or the bare mesh itself when
 /// the spec declares no cleanup. Both files are held to every file rule,
 /// because the one that gets rigged is the one that has to have passed. The
 /// fixer measures nothing, which is why this refuses a report it wrote
@@ -640,14 +640,17 @@ pub(crate) fn defects(report: &Report) -> String {
 }
 
 /// Fits a downloaded clip onto the skeleton's canonical rig, writing the
-/// animation GLB the bake reads.
+/// animation GLB the bake reads, and returns what its gates said.
+///
+/// The verdict is what `library.lock` stores: the vendor file is not
+/// committed, so nothing else records that an uncommitted input was measured.
 pub fn retarget(
     source: &Path,
     out: &Path,
     name: &str,
     animation: &Animation,
     repo_root: &Path,
-) -> Result<()> {
+) -> Result<Verdict> {
     let script = repo_root.join(BLENDER_SRC).join("retarget_animation.py");
     anyhow::ensure!(
         script.exists(),
@@ -715,7 +718,7 @@ pub fn retarget(
         defects(&report),
         artifacts.report().display()
     );
-    Ok(())
+    Ok(Verdict::of(&report, &artifacts))
 }
 
 /// Renders sprite frames via headless Blender. One invocation for every
@@ -748,11 +751,7 @@ pub fn bake(
         character.display()
     );
 
-    if paths.staging().exists() {
-        // Stale frames from a previous shape would be picked up by packing.
-        std::fs::remove_dir_all(paths.staging())
-            .with_context(|| format!("clearing {}", paths.staging().display()))?;
-    }
+    clear_frames(&paths.staging())?;
 
     let mut args = bake_args(paths, spec);
     args.push("--character".into());
@@ -805,6 +804,25 @@ pub fn bake(
         note: Some(format!("{frames} frames")),
         ..StageRecord::default()
     })
+}
+
+/// Drops the frames a previous bake left, and only those: packing would pick
+/// up a frame of an older shape, and the mesh sent to rigging lives here too.
+fn clear_frames(dir: &Path) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        // Nothing has been baked here yet.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", dir.display())),
+    };
+    for frame in entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+    {
+        std::fs::remove_file(&frame).with_context(|| format!("clearing {}", frame.display()))?;
+    }
+    Ok(())
 }
 
 /// Nothing but the concept stage retries, so every other report is the first

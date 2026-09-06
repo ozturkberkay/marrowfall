@@ -139,7 +139,7 @@ design.
 | 11 | `POST /print/analyze` costs **0 credits**. `POST /print/repair` is 10 credits and **strips textures**, and rigging refuses an untextured mesh. Meshy credits run about 0.013 USD each, from 20 to 30 credits at 0.25 to 0.40 USD. | Meshy API reference, `research_concept_and_model_stage.md:23` |
 | 12 | Rigging accepts `model_url` as a **URL or data URI** of a textured `.glb`, costs 5 credits, and `input_task_id` wins if both are sent. With `model_url` the character must face **+Z in glTF Y-up**. No body size limit is stated. The face limit of 300,000 is stated for `input_task_id`. | `reference.md:643,644,651` |
 | 13 | Meshy's extension returns `FINISHED` from `delete_small_pieces` having deleted nothing, because it measures piece volume in **local** space while its checker measures in **world** space. | `research_meshy_mesh_repair_options.md:54` |
-| 14 | `lock.rs` fingerprints no art file, and `LOCAL_PIPELINE_VERSION` covers only `Bake` and `Pack`. The rig can be replaced and every stage reports cached. `Stage::Concept` bills OpenAI, so `costs_credits()` is already true for it. | `lock.rs:72,237,243` |
+| 14 | `lock.rs` fingerprints no art file, and `LOCAL_PIPELINE_VERSION` covers only `Bake` and `Pack`. The rig can be replaced and every stage reports cached. `Stage::Concept` bills OpenAI, so `costs_credits()` is already true for it. **T13 closed this**: every stage now fingerprints the content of the files it opens, `Model` joined the version guard, and `Stage::is_versioned` is where that set lives. | `lock.rs:72,237,243` |
 | 15 | `--python-exit-code` catches only top-level exceptions. Raised from a `bpy.app.handlers` callback, `atexit`, `unregister` or a thread, Blender **exits 0**, so the success sentinel is the real gate. | `proof_python_exit_code_coverage.md` |
 | 16 | Blender ships no official Linux arm64 build and our CI runner is `ubuntu-24.04-arm`, so nothing in CI can call `bpy`. The npm `gltf-validator` is Dart compiled to JS, so it is architecture independent. | blender.org, `pr.yml:18`, Khronos npm README |
 | 17 | The hunched posture is in the Mixamo source: `strafe_left` is authored with the head 34 to 37 deg forward. Our output copies it faithfully. | audit |
@@ -842,7 +842,7 @@ crates/xtask-art/src/check/
 crates/xtask-art/src/
   spec.rs                   # + Subject::cleanup, Subject::symmetry
   lock.rs                   # + content hashes, + Model in the version guard
-  library.rs                # + Animation::source_fps, travels, + verdict
+  library.rs                # + Animation::source_fps, travels, + verdict, + fingerprint
   providers/                # NEW  one module per vendor, constants inside
     mod.rs                  # NEW  the contract, in one doc comment
     openai.rs
@@ -1112,8 +1112,8 @@ per fact 15.
 **Extended:**
 
 - `spec.rs` gains `cleanup` and `symmetry` on `Subject`.
-- `library.rs` gains `Animation::source_fps`, `Animation::travels` and
-  `Fetched::verdict`.
+- `library.rs` gains `Animation::source_fps`, `Animation::travels`,
+  `Fetched::verdict` and `Fetched::fingerprint`.
 - `stages.rs` gains a download inside `model` and a fixer before `rig()`.
 - `cli.rs` gains the concept retry loop and loses `should_pause`.
 - `lock.rs` gains content hashes and adds `Model` to the version guard.
@@ -2913,6 +2913,150 @@ larger, one image, one UV layer.
     asked, so overwriting it with an error would report a defect against a
     rule that never ran.
 
+### Corrections T13 made to this document
+
+1. **The fingerprint reads files and a process, so `lock::Inputs` exists and
+   three functions now return `Result`.** `fingerprint(stage, spec, library)`
+   had nowhere to put a repository root or a Blender build. Every caller
+   builds one `Inputs` (the root, the spec, the library, the build) and
+   `Lock::is_current`, `Lock::record` and `cli::plan` answer `Result`, because
+   a missing committed input is an error rather than a hash of nothing. The
+   build is a `blender::Build`, a cell that runs `blender --version` at most
+   once and only when something asks: `Bake` is the one stage that does, so
+   `cargo art status` still answers on a machine with no Blender and
+   `cargo art run --only concept` needs none either. `cli::plan` fingerprints
+   only the stages it selected, which is what makes that true. A `run` whose
+   plan does reach the bake reads the build before the loop starts, so a
+   missing Blender is reported before the first paid stage rather than after
+   three of them. `status` folds a build it cannot read into `State::Unknown`
+   for that one row, with the reason, and an unknown row is not stale, so it
+   drops out of the hint.
+
+2. **A whole-struct digest of `Subject` was the wrong way to cover a future
+   field.** The T13 row asks for `pose_mode`, which T12 has not added, so the
+   requirement became "a field added later is covered". `format!("{:?}",
+   subject)` does that in one line and also puts the description into the paid
+   rig's fingerprint and the height into the paid concept's, which is the one
+   thing the whole design forbids. So `fingerprint` destructures
+   `CharacterSpec`, `Subject` and `Bake`, and each arm claims the fields it
+   reads. Adding a field to any of the three is then a hard compile error,
+   `E0027 pattern does not mention field`, not a lint anyone can miss; only
+   the second step is a lint, because a field named in the pattern and claimed
+   by no arm is an unused binding and `-D warnings` is what turns that into a
+   decision. `Bake` is in it for the same reason: its five fields are split
+   between the bake and the pack, and digesting it whole would re-render every
+   frame to change a downscale target. `Remesh` and `Texture` stay
+   whole-struct, because only the model stage reads either one, which is what
+   the row asked for.
+
+3. **The bake was deleting the mesh the rig record names.** `stages::bake`
+   cleared `art/staging/<char>/` wholesale to drop stale frames, and
+   `bare.glb` and `clean.glb` live in that directory. With those two in the
+   rig's fingerprint, one bake made the paid rig stage read stale for good.
+   The bake now removes the frames it is about to rewrite, `*.png`, and
+   nothing else, which is all packing ever picks up. An existing test found
+   it (`editing_a_sprite_setting_does_not_invalidate_the_paid_stages`) and
+   `the_mesh_sent_to_rigging_survives_a_bake` is the test for the fix.
+
+4. **The rig record is machine-local, on purpose.** `bare.glb` and
+   `clean.glb` are what rigging is built from and neither is committed, so a
+   fresh clone reads both as absent and `cargo art status` calls the rig
+   stale. Nothing spends on that: while the committed `model.glb` is on disk
+   `cli::plan` skips every stage up to `download`. Four commands can pay
+   again, and each is typed by hand: `--from` or `--only` at `concept`,
+   `model` or `rig`, plus `--retry`.
+
+5. **The line between a required input and an absent one is who wrote it.**
+   The row asks for an error on a missing input a stage needs. Applied to
+   every input that would make `cargo art run` impossible on a new character:
+   the four concept views are the model stage's input and the concept stage
+   has not run yet. So the **committed** inputs are required, which is
+   `humanoid.glb`, `humanoid.toml` and the scripts under `tools/blender/src/`,
+   and everything the pipeline **produces** hashes as the literal word
+   `absent` until it exists: the concept views, the two staging meshes, and
+   every animation GLB including the three that happen to be committed.
+
+6. **`LOCAL_PIPELINE_VERSION` is not bumped.** T13 changed no bake and no
+   pack output, and the new content hashes already invalidate everything a
+   bump would: `Model` gains the four views, `Bake` gains `model.glb`, the
+   rig, the profile, the clips, the build and the scripts. `Pack` keeps its
+   recorded fingerprint, and there is nothing about its output for a bump to
+   express. The version stays at 3. `Stage::is_versioned` is where the set of
+   three lives now, and it carries the warning the guard needs: a bump re-runs
+   the model stage, and that spends Meshy credits.
+
+   `Pack` is also the one stage whose fingerprint is not over everything it
+   opens: it reads hundreds of staging PNGs and hashes none of them. That is
+   deliberate, and it is safe for two reasons that hold together, not one.
+   `Lock::record` clears every stage after the one it records, so a bake that
+   runs always re-packs; and `stages::bake` deletes the `*.png` it is about to
+   rewrite, so no frame of an older shape can be left for packing to pick up.
+   Break either and hashing the frames becomes the fix.
+
+7. **The committed `spec.lock` reports five stale stages, and is not
+   rewritten.** `Concept` was already stale before T13: the recorded
+   `57766a7c49b5516c` is not the digest of the current description plus pose
+   instruction, under either scheme. `Model`, `Rig`, `Download` and `Bake` are
+   stale because they now read files nothing hashed before, and `Pack` still
+   matches. No fingerprint in that file is edited: T15 regenerates the
+   survivor and rewrites all six, and a hand-written fingerprint would claim
+   work nobody did. `Lock::states` answers for every stage in pipeline order
+   and `cargo art status` prints what moved, because a reader told only
+   "stale" deletes the lock and with it the task ids a rig was paid for.
+
+8. **`Fetched` needed a fingerprint beside the verdict.** The criterion "an
+   `[aim_table]` row invalidates every `Fetched` record" cannot be met by a
+   verdict, which says what the gates found and not what fitted the clip. So
+   the record also carries `lock::blender_inputs`: the canonical rig, its
+   profile, the Blender build and every script, in one digest that `Bake`
+   pushes as well. One function, so a row edited in `humanoid.toml` cannot
+   invalidate the fit without also invalidating the bake. `fetch_plan` stays
+   pure by taking a `cli::OnDisk` of the two maps it reads, and a step that
+   wants a re-fetch names which of four reasons it is.
+
+9. **A failing verdict is never one this pipeline wrote.** `stages::retarget`
+   still refuses a clip whose gates found an error, so `cli::fetch` only ever
+   records a passing one. The failing branch in `fetch_plan` is real and
+   tested anyway, because `library.lock` is not gitignored, so it will be
+   committed once written and will then travel between machines, and reading
+   a failing record as cached would pass a clip nobody measured.
+   `Verdict` records the report name, the worst severity and every rule that
+   reported; the attempt number is the last segment of the report name, so it
+   is not stored twice.
+
+10. **`cargo art status` never recommends a command that spends.** The hint it
+    prints is the only thing that tells a reader what to do about a stale
+    record, and `cli::plan` returns `ConfirmSpend` only for a paid stage the
+    lock still calls **current**: a forced paid stage that is already stale
+    falls through to `Step::Run` and bills with no prompt. So the hint offers
+    the earliest stale stage that does not `costs_credits()`, and lists the
+    stale paid ones separately with what each would bill. Every paid stage
+    runs before every free one, so `--from` a free stage cannot reach a bill.
+    The better long-term fix is for `plan` to return `ConfirmSpend` for any
+    forced paid stage regardless of `done`, since the prompt is about spending
+    and not about caching. That is a change to T11's confirmation behavior and
+    to the tests that pin it, so T13 left it alone and made the hint safe
+    instead.
+
+11. **The bake fingerprints `model.glb`.** It is the file the bake hands
+    Blender as `--character`, and `cli::plan` judges every stage on its own,
+    so without it a `model.glb` arriving from a pull left `Bake` reading
+    `cached` with sprites of the previous mesh: fact 14's failure mode, moved
+    off the rig and onto the character. It hashes as derived, `absent` until
+    the download stage has produced it, so a character with no mesh yet can
+    still be planned.
+
+12. **Follow-up: a refused clip is left where the bake reads it.**
+    `stages::retarget` writes the fitted GLB to its final path and only then
+    refuses it for failing a gate, so a failed fetch leaves a clip the bake
+    will happily play, with nothing in `library.lock` to say it failed. The
+    next fetch reports it as `Changed` and refuses to replace it, and
+    `--force` is the only way past. **Owner: the retarget failure path in
+    `stages::retarget`**, which should write to a staging path and move it
+    into place only after the gates pass, or delete what it refuses. Left for
+    a later task: T13's fingerprints do not reach inside a stage, and no
+    fingerprint change can fix a file written before the refusal.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -2922,8 +3066,10 @@ larger, one image, one UV layer.
   stage writes, and `art/staging/<char>/bare.glb` is the mesh before rigging.
 - `crates/xtask-art/README.md`: the `model` stage now downloads and cleans,
   `check` is a new verb, the free and paid split changes, the concept retry
-  loop is documented, the stale `art/pipeline/` reference goes, and the three
-  stage boundaries the `source.*` and `clip.*` rules run at are named.
+  loop is documented, the stale `art/pipeline/` reference goes, the three
+  stage boundaries the `source.*` and `clip.*` rules run at are named, one
+  table says what each stage's fingerprint reads, and one section names every
+  command that can pay again and what needs Blender.
 - `README.md`: `cargo art check`, the two new spec fields, one line saying
   gates run at stage boundaries, and the E2E tier row changes from "nothing
   yet" to `render`.
@@ -3007,7 +3153,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **`bare.glb` could not be downloaded here either**, so the fixer is built and measured against a stand-in lifted out of `model.glb`, every `[profile.mesh]` row stays provisional, and the 5-credit call is left with its steps written down. | The fixer runs, and `cleanup_effective` shows the classes it counts strictly decreasing: holes 171 to 73 and pieces 7 to 2 on the stand-in. `non_manifold_post`'s ceiling is a measured 12 with 8 spare. The file rules run on both meshes, so texture and UVs are measured on the file that gets rigged, and **that file fails `mesh.self_intersect` at 1026 against 1000**: the honest signal correction 1 is about. The no-op stub is rejected. With `symmetry: false` the fixer skips the mirror, the three mirror rules report `skipped`, and their negative controls still run. **Blocked on a key: the recalibration on the real `bare.glb` and the real 5-credit rigging call by data URI**, whose exact steps are in `crates/xtask-art/README.md`. | T3 |
 | T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, a fresh set of views on each, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two generated again rather than reusing what failed (correction 13). `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
 | T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
-| T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, every animation GLB, `pose_mode`, the Blender version and the script version into the right stages. Add `Model` to the version guard. Add `verdict` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. | T1 |
+| T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, `model.glb`, every animation GLB, the two staging meshes, the Blender build and every script into the right stages, and destructure `CharacterSpec`, `Subject` and `Bake` so a field added later cannot be forgotten. Add `Model` to the version guard. Add `verdict` and `fingerprint` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. A replaced `model.glb` invalidates `Bake` and nothing paid. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. `cargo art status` reports without Blender and never recommends a command that spends. | T1 |
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.<clip>.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |
 | T15 | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, refit `idle.glb` and `run.glb`, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 |
 | T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15 |

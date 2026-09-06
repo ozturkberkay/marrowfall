@@ -9,7 +9,10 @@ use xtask_art::cli::{RunOptions, repo_root, run};
 use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
-use crate::support::{EnvGuard, a_concept_view, a_png, a_spec, install_library, install_skeleton};
+use crate::support::{
+    EnvGuard, a_concept_view, a_png, a_spec, a_version_only_blender, install_library,
+    install_scripts, install_skeleton,
+};
 
 #[test]
 fn the_workspace_is_found_by_walking_up_from_the_current_directory() {
@@ -84,9 +87,13 @@ async fn re_running_a_paid_stage_is_declined_when_the_answer_cannot_be_read() {
     a_spec("survivor").save(&paths.spec()).unwrap();
     install_library(dir.path());
     install_skeleton(dir.path());
+    install_scripts(dir.path());
 
     let mut env = EnvGuard::new();
-    env.with_api(&server.uri());
+    env.with_api(&server.uri()).set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
     // Concept completes, so asking for it again is a re-spend and prompts.
     run(
@@ -151,9 +158,13 @@ async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
     a_spec("survivor").save(&paths.spec()).unwrap();
     install_library(dir.path());
     install_skeleton(dir.path());
+    install_scripts(dir.path());
 
     let mut env = EnvGuard::new();
-    env.with_api(&server.uri());
+    env.with_api(&server.uri()).set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
     run(
         dir.path(),
@@ -230,9 +241,13 @@ async fn the_spend_prompt_is_asked_once_for_all_three_attempts() {
     a_spec("survivor").save(&paths.spec()).unwrap();
     install_library(dir.path());
     install_skeleton(dir.path());
+    install_scripts(dir.path());
 
     let mut env = EnvGuard::new();
-    env.with_api(&server.uri());
+    env.with_api(&server.uri()).set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
     // A first run that passes, so the concept stage is recorded and asking
     // for it again is a re-spend.
