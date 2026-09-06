@@ -7,9 +7,11 @@
 use std::path::Path;
 
 use xtask_art::check::aim::{self, AimTable};
+use xtask_art::check::gltf_world::Skeleton;
+use xtask_art::check::motion::Motion;
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{
-    Artifacts, Comparison, Finding, Report, Severity, clip, every_rule, mesh, rig,
+    Artifacts, Comparison, Finding, Report, Severity, clip, every_rule, gltf_clip, mesh, rig,
 };
 use xtask_art::library::HUMANOID;
 
@@ -50,8 +52,8 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        29,
-        "13 rig rules, the aim table, 13 mesh rules and 2 clip rules"
+        32,
+        "13 rig rules, the aim table, 13 mesh rules and 5 clip rules"
     );
     assert_eq!(
         ids.iter()
@@ -184,11 +186,31 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
     // until that one can be downloaded.
     let mesh_glb = committed_glb("art/characters/survivor/model.glb");
 
+    // `clip.swing` and `clip.twist` need the vendor file the motion was
+    // bought in, and that one may not be redistributed, so their subject here
+    // is the synthetic cross-rig pair. `clip.object_transform` runs on the
+    // committed clip against the committed rig.
+    let bones = table.bones(table.canonical()).unwrap().clone();
+    let pair = crate::clips::CrossRig::new(bones.clone());
+    let clip_glb = committed_glb("art/animations/run.glb");
     let findings = [
         rig::check_file(&rig_glb, &root, &profile, HEIGHT_METERS, 1).unwrap(),
         aim::check_file(&rig_glb, &root, &profile, &table, table.canonical(), 1).unwrap(),
         mesh::check_file(&mesh_glb, &root, &profile, HEIGHT_METERS, None, 1).unwrap(),
         a_recorded_retarget_report().findings().to_vec(),
+        clip::compare(
+            &gltf_clip::read(&pair.output_glb(), &bones).unwrap(),
+            &Motion::parse(&pair.source_motion()).unwrap(),
+            &bones,
+            &profile,
+            1,
+        ),
+        clip::object_transform(
+            &Skeleton::read(&clip_glb).unwrap(),
+            &Skeleton::read(&rig_glb).unwrap(),
+            &profile,
+            1,
+        ),
     ]
     .concat();
 

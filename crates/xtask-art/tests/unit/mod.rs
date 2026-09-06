@@ -3,6 +3,8 @@
 // crash.
 #![allow(clippy::unwrap_used)]
 
+mod clips;
+mod gltf_bytes;
 mod meshes;
 mod rigs;
 mod support;
@@ -15,6 +17,7 @@ mod test_cli_commands;
 mod test_cli_fetch;
 mod test_cli_prompts;
 mod test_cli_run;
+mod test_clip;
 mod test_gltf_mesh;
 mod test_gltf_world;
 mod test_http;

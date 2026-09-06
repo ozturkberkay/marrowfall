@@ -190,9 +190,11 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
     std::fs::write(root.join("tools/blender/src/retarget_animation.py"), "").unwrap();
     std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
 
+    // A real rig, because `clip.object_transform` reads the clip's own object
+    // nodes against this file's.
     let rig = AnimationLibrary::reference_rig(root, HUMANOID);
     std::fs::create_dir_all(rig.parent().unwrap()).unwrap();
-    std::fs::write(&rig, b"glTF").unwrap();
+    std::fs::write(&rig, crate::rigs::SyntheticRig::conformant().to_gltf()).unwrap();
     let skeleton = rig.with_extension("toml");
     std::fs::copy(
         crate::support::repo_root().join("art/skeletons/humanoid.toml"),
@@ -225,27 +227,44 @@ fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     stub
 }
 
-/// Blender as the fetch path uses it: it writes the clip, the report and the
-/// sentinel.
+/// Blender as the fetch path uses it: it writes the clip, the source motion
+/// beside it, the report and the sentinel.
+///
+/// The clip and the sidecar are the synthetic cross-rig pair, so the three
+/// file-side `clip.*` rules measure a real fit rather than a stub string.
 fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
+    let pair = crate::clips::CrossRig::new(a_convention());
+    std::fs::write(dir.join("fitted.glb"), pair.output_glb()).unwrap();
+    std::fs::write(dir.join("source.json"), pair.source_motion()).unwrap();
     a_stub(
         dir,
         "blender-stub.sh",
         &format!(
             r#"printf '%s\n' "$@" > "$MARROWFALL_STUB_ARGV"
-out=""
+out=""; motion=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
+  if [ "$1" = "--source-motion" ]; then motion="$2"; fi
   shift
 done
-mkdir -p "$(dirname "$out")"
-printf 'glTF fitted' > "$out"
+mkdir -p "$(dirname "$out")" "$(dirname "$motion")"
+cp "{clip}" "$out"
+cp "{source}" "$motion"
 {WRITES_A_REPORT}
 : > "$MARROWFALL_SENTINEL"
 exit 0
-"#
+"#,
+            clip = dir.join("fitted.glb").display(),
+            source = dir.join("source.json").display(),
         ),
     )
+}
+
+/// The canonical role to bone map, out of the committed skeleton file.
+fn a_convention() -> std::collections::BTreeMap<String, String> {
+    let table =
+        xtask_art::check::aim::AimTable::of(&crate::support::repo_root(), HUMANOID).unwrap();
+    table.bones(table.canonical()).unwrap().clone()
 }
 
 /// One finding as JSON, built through the rule registry so the stub cannot
@@ -444,7 +463,15 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
             .unwrap_err()
     );
 
-    assert!(error.contains("walk_back.glb"), "got: {error}");
+    // The clip gates are what report it: a missing input is an error with a
+    // stated reason, never a skip.
+    assert!(error.contains("left 3 defect(s)"), "got: {error}");
+    let report = std::fs::read_to_string(
+        dir.path()
+            .join("art/staging/reports/retarget.walk_back.1.json"),
+    )
+    .unwrap();
+    assert!(report.contains("walk_back.glb"), "got: {report}");
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }
 

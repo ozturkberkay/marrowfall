@@ -9,8 +9,12 @@
 //! object node above the skeleton, and joint translations 100x larger to
 //! match. A reader that skips the node chain measures the rig at 170 m.
 
+use std::collections::BTreeMap;
+
 use glam::{DMat4, DQuat, DVec3};
 use serde_json::{Value, json};
+
+use super::gltf_bytes::{Buffers, columns};
 
 /// The scale the armature object carries in every file of this family.
 pub const OBJECT_SCALE: f64 = 0.01;
@@ -304,6 +308,134 @@ impl SyntheticRig {
         document.to_string()
     }
 
+    /// Every bone's rest world rotation, in glTF Y-up.
+    ///
+    /// Composed the way the file itself is, so a fixture that turns one
+    /// bone's own axes is reported turned rather than as it was declared.
+    pub fn rest_rotations(&self) -> BTreeMap<String, DQuat> {
+        let mut world: Vec<DMat4> = Vec::with_capacity(self.joints.len());
+        for (index, joint) in self.joints.iter().enumerate() {
+            let above = self
+                .index_of(joint.parent.as_deref())
+                .map_or_else(base_object, |parent| world[parent]);
+            let parent = self
+                .index_of(joint.parent.as_deref())
+                .map_or_else(base_object, |parent| self.world(parent));
+            world.push(above * parent.inverse() * self.world(index) * joint.local_extra);
+        }
+        self.joints
+            .iter()
+            .zip(world)
+            .map(|(joint, world)| {
+                let (_, rotation, _) = world.to_scale_rotation_translation();
+                (joint.name.clone(), rotation)
+            })
+            .collect()
+    }
+
+    /// Bone to the bone above it, for the bones that have one. Declaration
+    /// order is parents first, so a caller can walk this in one pass.
+    pub fn hierarchy(&self) -> Vec<(String, Option<String>)> {
+        self.joints
+            .iter()
+            .map(|joint| {
+                let parent = self
+                    .index_of(joint.parent.as_deref())
+                    .map(|index| self.joints[index].name.clone());
+                (joint.name.clone(), parent)
+            })
+            .collect()
+    }
+
+    /// The rig as a GLB, with one clip laid on its joints.
+    ///
+    /// Every joint is written as translation, rotation and scale rather than
+    /// as a matrix, because glTF forbids a matrix on a node an animation
+    /// targets, and the fixtures animate whichever bone a test names.
+    pub fn to_glb(&self, clip: &Clip) -> Vec<u8> {
+        let mut buffers = Buffers::default();
+        let times: Vec<f32> = clip.seconds.iter().map(|at| *at as f32).collect();
+        let input = buffers.push_floats(&times, "SCALAR", times.len());
+        // A sampler's input accessor must state its range, or a validator
+        // refuses the file.
+        let mut channels = Vec::new();
+        let mut samplers = Vec::new();
+        let mut object = json!({ "name": "Armature", "children": self.children(None) });
+        if self.object_action {
+            // Its three parts, because glTF forbids a matrix on a node an
+            // animation targets. The keys hold one value, so the clip does not
+            // move: what the gate reads is the channel, not the motion.
+            let (scale, rotation, translation) = self.object.to_scale_rotation_translation();
+            object["translation"] = json!(translation.to_array());
+            object["rotation"] = json!([rotation.x, rotation.y, rotation.z, rotation.w]);
+            object["scale"] = json!(scale.to_array());
+            let held: Vec<f32> = std::iter::repeat_n(translation.as_vec3().to_array(), times.len())
+                .flatten()
+                .collect();
+            let output = buffers.push_floats(&held, "VEC3", times.len());
+            channels.push(json!({
+                "sampler": samplers.len(),
+                "target": { "node": 0, "path": "translation" },
+            }));
+            samplers.push(json!({ "input": input, "output": output, "interpolation": "LINEAR" }));
+        } else {
+            object["matrix"] = json!(columns(self.object));
+        }
+        let mut nodes = vec![object];
+        for (index, joint) in self.joints.iter().enumerate() {
+            let parent = self
+                .index_of(joint.parent.as_deref())
+                .map_or_else(base_object, |parent| self.world(parent));
+            let local = parent.inverse() * self.world(index) * joint.local_extra;
+            let (scale, rotation, translation) = local.to_scale_rotation_translation();
+            let mut node = json!({
+                "name": joint.name,
+                "translation": translation.to_array(),
+                "rotation": [rotation.x, rotation.y, rotation.z, rotation.w],
+                "scale": scale.to_array(),
+            });
+            let children = self.children(Some(&joint.id));
+            if !children.is_empty() {
+                node["children"] = json!(children);
+            }
+            nodes.push(node);
+            if let Some(keys) = clip.rotations.get(&joint.name) {
+                let values: Vec<f32> = keys
+                    .iter()
+                    .flat_map(|key| [key.x as f32, key.y as f32, key.z as f32, key.w as f32])
+                    .collect();
+                let output = buffers.push_floats(&values, "VEC4", keys.len());
+                channels.push(json!({
+                    "sampler": samplers.len(),
+                    "target": { "node": index + 1, "path": "rotation" },
+                }));
+                samplers.push(json!({
+                    "input": input,
+                    "output": output,
+                    "interpolation": clip.interpolation.as_str(),
+                }));
+            }
+        }
+        let mut accessors: Vec<Value> = buffers.accessors().to_vec();
+        accessors[input]["min"] = json!([times.first().copied().unwrap_or_default()]);
+        accessors[input]["max"] = json!([times.last().copied().unwrap_or_default()]);
+        let document = json!({
+            "asset": { "version": "2.0", "generator": "marrowfall test fixture" },
+            "scene": 0,
+            "scenes": [{ "nodes": [0] }],
+            "nodes": nodes,
+            "skins": [{
+                "name": "Armature",
+                "joints": (1..=self.joints.len()).collect::<Vec<usize>>(),
+            }],
+            "animations": [{ "name": "clip", "channels": channels, "samplers": samplers }],
+            "accessors": accessors,
+            "bufferViews": buffers.views(),
+            "buffers": [{ "byteLength": buffers.len() }],
+        });
+        buffers.wrap(&document)
+    }
+
     /// The node indices hanging off one bone, or off the object node. Node 0
     /// is the object, so a joint's node index is its own plus one.
     fn children(&self, parent: Option<&str>) -> Vec<usize> {
@@ -316,9 +448,34 @@ impl SyntheticRig {
     }
 }
 
-/// A matrix as glTF writes one: sixteen floats, column major.
-fn columns(matrix: DMat4) -> Vec<f64> {
-    matrix.to_cols_array().to_vec()
+/// One clip laid on a fixture rig: the key times, and each bone's own
+/// rotation at each of them.
+///
+/// A bone with no row keeps the rest rotation its node declares, which is
+/// what an undriven bone does in a real clip.
+pub struct Clip {
+    pub seconds: Vec<f64>,
+    pub rotations: BTreeMap<String, Vec<DQuat>>,
+    /// What every sampler declares. The retarget writes `LINEAR`, and
+    /// `CUBICSPLINE` is the one a reader must refuse rather than evaluate.
+    pub interpolation: Interpolation,
+}
+
+/// How a sampler reads between its keys, as glTF names it.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Interpolation {
+    #[default]
+    Linear,
+    CubicSpline,
+}
+
+impl Interpolation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Linear => "LINEAR",
+            Self::CubicSpline => "CUBICSPLINE",
+        }
+    }
 }
 
 /// One channel, on the object node, which is node 0.

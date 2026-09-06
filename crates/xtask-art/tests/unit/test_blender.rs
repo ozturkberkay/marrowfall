@@ -527,6 +527,55 @@ fn no_blender_script_applies_an_object_transform() {
     }
 }
 
+/// The one thing every glTF export must ask for.
+///
+/// `clip.twist` reads its rest term off the joints of the file it is handed,
+/// so the armature has to leave Blender at its rest position. That is the
+/// exporter's default, and a default can move: with the flag off, a correct
+/// `strafe_left` fit reads 113.884 degrees where it should read 11.411, and
+/// 20 of its 22 roles go red.
+const REST_POSITION: &str = "export_rest_position_armature=True";
+
+const EXPORT: &str = "export_scene.gltf(";
+
+#[test]
+fn every_gltf_export_asks_for_the_armature_at_its_rest_position() {
+    let exporting: Vec<(String, usize, usize)> = blender_scripts()
+        .iter()
+        .map(|(name, source)| {
+            let code = code_lines(source).join("\n");
+            (
+                name.clone(),
+                code.matches(EXPORT).count(),
+                code.matches(REST_POSITION).count(),
+            )
+        })
+        .filter(|(_, exports, _)| *exports > 0)
+        .collect();
+
+    // A rename that left nothing exporting would pass without proving
+    // anything: the retarget and the strip are the two that write a GLB.
+    assert_eq!(exporting.len(), 2, "found {exporting:#?}");
+    for (name, exports, at_rest) in exporting {
+        assert_eq!(
+            exports, at_rest,
+            "{name} exports {exports} time(s) and asks for the rest position \
+             {at_rest} time(s)"
+        );
+    }
+}
+
+/// The lint's own negative: an export that leaves the flag to the default.
+#[test]
+fn the_lint_catches_an_export_that_leaves_the_rest_position_out() {
+    let source = "bpy.ops.export_scene.gltf(\n    filepath=str(out),\n)\n";
+
+    let code = code_lines(source).join("\n");
+
+    assert_eq!(code.matches(EXPORT).count(), 1);
+    assert_eq!(code.matches(REST_POSITION).count(), 0);
+}
+
 /// The lint's own negative: the same scan over a script that has it back.
 #[test]
 fn the_lint_catches_the_call_coming_back() {

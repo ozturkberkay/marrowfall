@@ -27,7 +27,8 @@ evaluated once per source frame rather than once per bone per frame.
         --python tools/blender/src/retarget_animation.py -- \
         --source art/staging/downloads/walk_back.fbx \
         --rig art/skeletons/humanoid.glb --convention mixamo \
-        --out art/animations/local/walk_back.glb --name walk_back
+        --out art/animations/local/walk_back.glb --name walk_back \
+        --source-motion art/staging/reports/retarget.walk_back.1.source.json
 """
 
 import argparse
@@ -36,7 +37,7 @@ import sys
 
 import bpy
 from bake_sprites import action_fcurves, assign_action, scale_translation
-from clip import CONSTANT, LINEAR, Channel, defects
+from clip import CONSTANT, LINEAR, Channel, defects, source_motion
 from findings import Comparison, Finding, Severity, attempt, guard, write_report
 from framing import translation_scale
 from mathutils import Matrix
@@ -81,6 +82,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="How the source names its bones, a table in the rig's role map.",
     )
     parser.add_argument("--out", type=pathlib.Path, required=True)
+    parser.add_argument(
+        "--source-motion",
+        type=pathlib.Path,
+        required=True,
+        help=(
+            "Where to record the source clip's own world orientations. "
+            "`clip.swing` and `clip.twist` read them beside the output GLB, "
+            "because the vendor file is an FBX no Rust reader opens."
+        ),
+    )
     parser.add_argument(
         "--name", required=True, help="Library name, which the action is stored under."
     )
@@ -393,6 +404,9 @@ def export(out: pathlib.Path, armature: bpy.types.Object) -> None:
         export_animations=True,
         export_skins=True,
         export_materials="NONE",
+        # `clip.twist` reads its rest term off the delivered joints, so the
+        # armature must be exported at rest and not at the current frame.
+        export_rest_position_armature=True,
     )
 
 
@@ -402,6 +416,7 @@ def retarget(
     out: pathlib.Path,
     name: str,
     convention: str,
+    motion_path: pathlib.Path,
 ) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     skeleton = read_skeleton(rig_path)
@@ -439,11 +454,19 @@ def retarget(
     object_matrix = as_mat4(ours.matrix_world)
     frames = source_frames(action, source_path)
     poses = {}
+    source_world = {}
     for frame in frames:
         bpy.context.scene.frame_set(frame)
-        poses[frame] = transfer(
-            bones, object_matrix, pose_in_world(source, driven), offset
-        )
+        # Kept, not only passed on: `clip.swing` and `clip.twist` measure the
+        # exported GLB against this, and nothing downstream can reopen an FBX.
+        source_world[frame] = pose_in_world(source, driven)
+        poses[frame] = transfer(bones, object_matrix, source_world[frame], offset)
+    source_motion(
+        {role: rest_source[role] for role in driven},
+        source_world,
+        bpy.context.scene.render.fps,
+        bpy.context.scene.render.fps_base,
+    ).write(motion_path)
 
     stride = skeleton.stride_segment
     ratio = translation_scale(
@@ -471,7 +494,14 @@ def retarget(
 def main() -> None:
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
     args = parse_args(argv)
-    retarget(args.source, args.rig, args.out, args.name, args.convention)
+    retarget(
+        args.source,
+        args.rig,
+        args.out,
+        args.name,
+        args.convention,
+        args.source_motion,
+    )
 
 
 def save_blend(path: pathlib.Path) -> None:

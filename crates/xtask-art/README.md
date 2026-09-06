@@ -22,6 +22,15 @@ Today the committed survivor breaks seven of the `rig.*` rules, so `check`
 exits non-zero on it. The rig is regenerated later in the pipeline work, and
 the rules become required checks then.
 
+The `clip.*` rules run at the retarget boundary rather than here, because a
+clip is measured against the file its motion was bought in. That file is an
+FBX, so `retarget_animation.py` writes the source's own world orientations to
+`art/staging/reports/retarget.<clip>.1.source.json` and `check/clip.rs` reads
+that beside the GLB it just wrote. `clip.swing` is the angle between the two
+bones' own axes, absolute, and `clip.twist` is the roll between them read
+against the roll their two bind poses carry. Both are `[profile.clip]` limits,
+calibrated on a synthetic cross-rig pair.
+
 Every mesh rule measures **world space first, then welded**, and says so in
 its finding. glTF splits one vertex at every UV seam, so a naive read of the
 survivor counts 13,368 boundary edges on a mesh that has 171. The weld
