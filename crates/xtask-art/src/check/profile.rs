@@ -156,6 +156,23 @@ pub struct MeshLimits {
     pub printability_edges: f64,
 }
 
+/// The `[profile.clip]` table: what a fitted clip may differ from the file it
+/// was fitted from.
+///
+/// Both are angles in degrees, read against a per bone worst over the whole
+/// clip. Neither is a guess: the Test Plan carries what each was measured on.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipLimits {
+    /// How far the output bone's own axis may point from the source bone's.
+    /// The transfer drives this to zero by construction, so the limit is a
+    /// noise floor rather than a tolerance.
+    pub swing_degrees: f64,
+    /// How far the roll the clip carries may sit from the roll the two bind
+    /// poses call for.
+    pub twist_degrees: f64,
+}
+
 /// A target angle and how far from it is still acceptable.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -191,6 +208,8 @@ pub struct Profile {
     /// Every published mesh limit. The mesh gates run on the character, not
     /// on the skeleton, and they read these.
     pub mesh: MeshLimits,
+    /// Every published clip limit, read by the retarget's own gates.
+    pub clip: ClipLimits,
     /// Bone to its parent. Every bone but the root has a row.
     pub parents: BTreeMap<String, String>,
     /// Bone to the child its `child_axis` must point at.
@@ -384,6 +403,10 @@ impl Profile {
             ("mesh.mirror_percent", self.mesh.mirror_percent),
             ("mesh.triangles", self.mesh.triangles),
             ("mesh.printability_edges", self.mesh.printability_edges),
+            // A clip limit of zero would fail every correct clip: both are
+            // calibrated noise floors and neither is ever exactly reached.
+            ("clip.swing_degrees", self.clip.swing_degrees),
+            ("clip.twist_degrees", self.clip.twist_degrees),
         ] {
             ensure!(
                 value.is_finite() && value > 0.0,

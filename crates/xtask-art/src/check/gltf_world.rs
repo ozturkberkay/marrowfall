@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context as _, Result, bail, ensure};
-use glam::{DMat4, DVec3};
+use glam::{DMat4, DQuat, DVec3};
 
 use super::profile::Axis;
 
@@ -43,6 +43,32 @@ pub fn gltf_to_blender(v: DVec3) -> DVec3 {
 /// stated in glTF space while the up axis is stated in Blender space.
 pub fn blender_to_gltf(v: DVec3) -> DVec3 {
     DVec3::new(v.x, v.z, -v.y)
+}
+
+/// The same conversion, applied to a whole orientation rather than to one
+/// direction: a quarter turn about +X, on the world side.
+///
+/// A bone's own axes are unchanged by it, so this multiplies from the left.
+/// The clip gates need it because they read our output out of a glTF file and
+/// the vendor's motion out of a sidecar Blender wrote, and a twist about a
+/// bone's own axis is **not** invariant under a change of world frame. So both
+/// sides are brought into one space before either is measured.
+pub fn gltf_to_blender_rotation(rotation: DQuat) -> DQuat {
+    DQuat::from_rotation_x(std::f64::consts::FRAC_PI_2) * rotation
+}
+
+/// One matrix's rotation, with any scale divided out first.
+///
+/// `None` where there is no rotation to read: a collapsed axis, or a
+/// left-handed basis, which is a reflection and not a rotation at all.
+/// Reporting that beats turning it into a plausible quaternion.
+pub fn rotation_of(matrix: DMat4) -> Option<DQuat> {
+    let basis = glam::DMat3::from_cols(
+        matrix.x_axis.truncate().try_normalize()?,
+        matrix.y_axis.truncate().try_normalize()?,
+        matrix.z_axis.truncate().try_normalize()?,
+    );
+    (basis.determinant() > 0.0).then(|| DQuat::from_mat3(&basis).normalize())
 }
 
 /// One joint, with its full world transform.
@@ -127,12 +153,14 @@ pub fn world_nodes<'a>(document: &'a gltf::Document) -> Result<Vec<WorldNode<'a>
 }
 
 /// Every joint of one glTF file, in world space, plus what the object-level
-/// rule needs.
+/// rules need.
 #[derive(Debug, Clone)]
 pub struct Skeleton {
     joints: Vec<Joint>,
-    /// How many animation channels drive each node above the skeleton.
+    /// How many animation channels drive each node that is not a joint.
     object_channels: BTreeMap<String, usize>,
+    /// The own transform of every node that is not a joint, by name.
+    object_nodes: BTreeMap<String, DMat4>,
 }
 
 impl Skeleton {
@@ -182,6 +210,13 @@ impl Skeleton {
             bail!("joint {missing} is not in the scene, so it has no world transform");
         }
 
+        let mut object_nodes = BTreeMap::new();
+        for entry in &scene {
+            if !joints.contains(&entry.node.index()) {
+                object_nodes.insert(node_name(&entry.node), local(&entry.node));
+            }
+        }
+
         let mut object_channels = BTreeMap::new();
         for channel in document
             .animations()
@@ -195,6 +230,7 @@ impl Skeleton {
         Ok(Self {
             joints: found,
             object_channels,
+            object_nodes,
         })
     }
 
@@ -218,11 +254,22 @@ impl Skeleton {
         (step.length() > SHORTEST_SEGMENT_METERS).then(|| step.normalize())
     }
 
-    /// How many animation channels drive each node above the skeleton. An
+    /// How many animation channels drive each node that is not a joint. An
     /// object-level action is what makes `transform_apply` change the meaning
     /// of every location key, so the rig stage refuses one.
     pub fn object_channels(&self) -> &BTreeMap<String, usize> {
         &self.object_channels
+    }
+
+    /// The own transform of every node that is not a joint, by name.
+    ///
+    /// `transform_apply(scale=True)` moves the armature's 0.01 scale out of
+    /// this transform and into the bone rest geometry, leaving every location
+    /// key byte identical and 100x out of meaning. `clip.object_transform`
+    /// reads these against the committed rig's, which is where that move
+    /// shows.
+    pub fn object_nodes(&self) -> &BTreeMap<String, DMat4> {
+        &self.object_nodes
     }
 }
 

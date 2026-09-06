@@ -21,6 +21,8 @@
 use glam::{DMat4, DQuat, DVec2, DVec3};
 use serde_json::{Value, json};
 
+use super::gltf_bytes::{Buffers, FLOAT, UNSIGNED_INT, UNSIGNED_SHORT, columns, glb};
+
 /// The scale the node above the mesh carries in every file of this family.
 pub const OBJECT_SCALE: f64 = 0.01;
 
@@ -45,11 +47,6 @@ pub const ALLOWED: &str = "char1";
 /// glTF primitive modes, of the two this fixture writes.
 const TRIANGLES: u32 = 4;
 const LINES: u32 = 1;
-
-/// glTF accessor component types.
-const FLOAT: u32 = 5126;
-const UNSIGNED_SHORT: u32 = 5123;
-const UNSIGNED_INT: u32 = 5125;
 
 /// One mesh object of a fixture.
 #[derive(Debug, Clone)]
@@ -381,11 +378,11 @@ impl SyntheticMesh {
                 "name": "Armature",
                 "joints": (0..skin.joints()).collect::<Vec<usize>>(),
                 // One matrix, however many joints were declared.
-                "inverseBindMatrices": push_mat4(&mut out, &[half]),
+                "inverseBindMatrices": push_mat4(&mut out.buffers, &[half]),
             }));
         }
         for part in &self.parts {
-            let primitive = self.write_part(&mut out, part);
+            let primitive = self.write_part(&mut out.buffers, part);
             out.nodes.push(json!({
                 "name": part.name,
                 "mesh": out.meshes.len(),
@@ -419,15 +416,15 @@ impl SyntheticMesh {
             ],
             "textures": [{ "source": 0 }],
             "images": [{ "uri": "skin.png" }],
-            "accessors": out.accessors,
-            "bufferViews": out.views,
-            "buffers": [{ "byteLength": out.binary.len() }],
+            "accessors": out.buffers.accessors(),
+            "bufferViews": out.buffers.views(),
+            "buffers": [{ "byteLength": out.buffers.len() }],
         });
-        glb(&document.to_string(), &out.binary)
+        out.buffers.wrap(&document)
     }
 
     /// One primitive, with its accessors appended to the binary chunk.
-    fn write_part(&self, out: &mut Written, part: &Part) -> Value {
+    fn write_part(&self, out: &mut Buffers, part: &Part) -> Value {
         // The file stores 100x coordinates, and the node or the skin above
         // brings them back to meters.
         let local: Vec<DVec3> = part
@@ -512,12 +509,11 @@ impl Skin {
     }
 }
 
-/// The GLB under construction: one binary chunk and the tables that index it.
+/// The GLB under construction: the shared binary chunk, plus the two tables
+/// only a mesh fixture fills.
 #[derive(Default)]
 struct Written {
-    binary: Vec<u8>,
-    views: Vec<Value>,
-    accessors: Vec<Value>,
+    buffers: Buffers,
     nodes: Vec<Value>,
     meshes: Vec<Value>,
 }
@@ -564,7 +560,7 @@ pub fn a_mesh_whose_buffer_is_a_uri() -> Vec<u8> {
 }
 
 /// Appends one accessor of `f32` triples and returns its index.
-fn push_vec3(out: &mut Written, values: &[DVec3]) -> usize {
+fn push_vec3(out: &mut Buffers, values: &[DVec3]) -> usize {
     let floats: Vec<f32> = values
         .iter()
         .flat_map(|value| [value.x as f32, value.y as f32, value.z as f32])
@@ -578,162 +574,77 @@ fn push_vec3(out: &mut Written, values: &[DVec3]) -> usize {
             .copied()
             .fold(f32::NAN, pick)
     };
-    let view = push_view(out, &floats);
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": FLOAT,
-            "count": values.len(),
-            "type": "VEC3",
-            "min": (0..3).map(|part| fold(f32::min, part)).collect::<Vec<f32>>(),
-            "max": (0..3).map(|part| fold(f32::max, part)).collect::<Vec<f32>>(),
-        }),
-    )
+    let view = out.push_view(&floats);
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": FLOAT,
+        "count": values.len(),
+        "type": "VEC3",
+        "min": (0..3).map(|part| fold(f32::min, part)).collect::<Vec<f32>>(),
+        "max": (0..3).map(|part| fold(f32::max, part)).collect::<Vec<f32>>(),
+    }))
 }
 
-fn push_vec2(out: &mut Written, values: &[DVec2]) -> usize {
+fn push_vec2(out: &mut Buffers, values: &[DVec2]) -> usize {
     let floats: Vec<f32> = values
         .iter()
         .flat_map(|value| [value.x as f32, value.y as f32])
         .collect();
-    let view = push_view(out, &floats);
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": FLOAT,
-            "count": values.len(),
-            "type": "VEC2",
-        }),
-    )
+    let view = out.push_view(&floats);
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": FLOAT,
+        "count": values.len(),
+        "type": "VEC2",
+    }))
 }
 
 /// The skin weights, four per vertex.
-fn push_vec4(out: &mut Written, values: &[[f32; 4]]) -> usize {
+fn push_vec4(out: &mut Buffers, values: &[[f32; 4]]) -> usize {
     let floats: Vec<f32> = values.iter().flatten().copied().collect();
-    let view = push_view(out, &floats);
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": FLOAT,
-            "count": values.len(),
-            "type": "VEC4",
-        }),
-    )
+    let view = out.push_view(&floats);
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": FLOAT,
+        "count": values.len(),
+        "type": "VEC4",
+    }))
 }
 
 /// The skin's inverse bind matrices, sixteen floats each.
-fn push_mat4(out: &mut Written, values: &[DMat4]) -> usize {
+fn push_mat4(out: &mut Buffers, values: &[DMat4]) -> usize {
     let floats: Vec<f32> = values
         .iter()
         .flat_map(|matrix| matrix.to_cols_array().map(|part| part as f32))
         .collect();
-    let view = push_view(out, &floats);
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": FLOAT,
-            "count": values.len(),
-            "type": "MAT4",
-        }),
-    )
+    let view = out.push_view(&floats);
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": FLOAT,
+        "count": values.len(),
+        "type": "MAT4",
+    }))
 }
 
 /// One joint index per vertex, the same joint every time. `u16` pairs pack
 /// four to eight bytes, so the chunk stays four-byte aligned, and the index
 /// goes in the low half of the first pair.
-fn push_u16x4(out: &mut Written, vertices: usize, joint: u32) -> usize {
-    let view = push_view(out, &[joint, 0_u32].repeat(vertices));
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": UNSIGNED_SHORT,
-            "count": vertices,
-            "type": "VEC4",
-        }),
-    )
+fn push_u16x4(out: &mut Buffers, vertices: usize, joint: u32) -> usize {
+    let view = out.push_view(&[joint, 0_u32].repeat(vertices));
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": UNSIGNED_SHORT,
+        "count": vertices,
+        "type": "VEC4",
+    }))
 }
 
-fn push_u32(out: &mut Written, values: &[u32]) -> usize {
-    let view = push_view(out, values);
-    push_accessor(
-        out,
-        json!({
-            "bufferView": view,
-            "componentType": UNSIGNED_INT,
-            "count": values.len(),
-            "type": "SCALAR",
-        }),
-    )
-}
-
-fn push_accessor(out: &mut Written, accessor: Value) -> usize {
-    out.accessors.push(accessor);
-    out.accessors.len() - 1
-}
-
-/// Appends raw values to the binary chunk and returns the view index. Every
-/// value here is four bytes wide, so the chunk stays aligned by itself.
-fn push_view<T: bytes::AsBytes>(out: &mut Written, values: &[T]) -> usize {
-    let offset = out.binary.len();
-    for value in values {
-        out.binary.extend_from_slice(&value.as_bytes());
-    }
-    out.views.push(json!({
-        "buffer": 0,
-        "byteOffset": offset,
-        "byteLength": out.binary.len() - offset,
-    }));
-    out.views.len() - 1
-}
-
-/// The two four-byte types the fixtures write.
-mod bytes {
-    pub trait AsBytes {
-        fn as_bytes(&self) -> [u8; 4];
-    }
-
-    impl AsBytes for f32 {
-        fn as_bytes(&self) -> [u8; 4] {
-            self.to_le_bytes()
-        }
-    }
-
-    impl AsBytes for u32 {
-        fn as_bytes(&self) -> [u8; 4] {
-            self.to_le_bytes()
-        }
-    }
-}
-
-/// A matrix as glTF writes one: sixteen floats, column major.
-fn columns(matrix: DMat4) -> Vec<f64> {
-    matrix.to_cols_array().to_vec()
-}
-
-/// Wraps a JSON document and a binary blob in the GLB container. Each chunk
-/// is padded to four bytes, JSON with spaces and binary with zeros, which the
-/// container requires.
-fn glb(document: &str, binary: &[u8]) -> Vec<u8> {
-    let mut json = document.as_bytes().to_vec();
-    json.resize(json.len().next_multiple_of(4), b' ');
-    let mut bin = binary.to_vec();
-    bin.resize(bin.len().next_multiple_of(4), 0);
-
-    let mut out = Vec::new();
-    out.extend_from_slice(b"glTF");
-    out.extend_from_slice(&2_u32.to_le_bytes());
-    let total = 12 + 8 + json.len() + 8 + bin.len();
-    out.extend_from_slice(&(total as u32).to_le_bytes());
-    out.extend_from_slice(&(json.len() as u32).to_le_bytes());
-    out.extend_from_slice(b"JSON");
-    out.extend_from_slice(&json);
-    out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
-    out.extend_from_slice(b"BIN\0");
-    out.extend_from_slice(&bin);
-    out
+fn push_u32(out: &mut Buffers, values: &[u32]) -> usize {
+    let view = out.push_view(values);
+    out.push_accessor(json!({
+        "bufferView": view,
+        "componentType": UNSIGNED_INT,
+        "count": values.len(),
+        "type": "SCALAR",
+    }))
 }

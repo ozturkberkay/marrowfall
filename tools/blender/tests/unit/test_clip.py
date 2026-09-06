@@ -1,12 +1,40 @@
-"""The two rules the retarget reports on its own output.
+"""What the retarget reports about the clip it just wrote.
 
-Both are invariants the transfer holds by construction, so each one gets a
-negative here rather than only in a hand-run Blender mutation: a rule with no
-control that can fail in CI is a rule nobody has seen fail.
+The two counted rules are invariants the transfer holds by construction, so
+each one gets a negative here rather than only in a hand-run Blender mutation:
+a rule with no control that can fail in CI is a rule nobody has seen fail.
+
+The sidecar is the other half. `clip.swing` and `clip.twist` measure the
+delivered GLB against the vendor file, and Rust cannot open an FBX, so what
+this module records is the only way the source reaches those two rules.
 """
 
+import json
+from pathlib import Path
+
 import pytest
-from clip import CONSTANT, LINEAR, Channel, Defects, defects
+from clip import (
+    CONSTANT,
+    LINEAR,
+    Channel,
+    Defects,
+    SourceMotion,
+    defects,
+    source_motion,
+)
+from pydantic import ValidationError
+from transfer import IDENTITY, Mat4
+
+QUARTER_TURN: Mat4 = (
+    (0.0, 0.0, 1.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0, 0.0),
+    (0.0, 0.0, 0.0, 1.0),
+)
+"""A quarter turn about +Y, written out."""
+
+TURNED = (0.7071067811865476, 0.0, 0.7071067811865475, 0.0)
+"""The same rotation as `w, x, y, z`, which is what the sidecar carries."""
 
 FRAMES = range(1, 22)
 """What a bought Mixamo clip spans: frames 1 to 21."""
@@ -123,3 +151,107 @@ def test_a_channel_knows_whether_it_is_a_straight_line(
     channel = a_channel(interpolations=interpolations, extrapolation=extrapolation)
 
     assert channel.straight is straight
+
+
+# --- the source motion sidecar ---------------------------------------------
+
+
+def test_the_sidecar_carries_each_role_s_rotation_at_each_frame() -> None:
+    motion = source_motion(
+        rest={"hips": IDENTITY},
+        frames={1: {"hips": QUARTER_TURN}, 2: {"hips": IDENTITY}},
+        fps=24.0,
+        fps_base=1.0,
+    )
+
+    assert motion.rest == {"hips": (1.0, 0.0, 0.0, 0.0)}
+    assert len(motion.frames) == 2
+    assert motion.frames[0].rotations["hips"] == pytest.approx(TURNED)
+
+
+def test_the_first_frame_of_the_source_sits_at_zero_seconds() -> None:
+    """A Mixamo clip runs frames 1 to 21 and a Meshy one starts at 0, so the
+    sidecar counts from the clip's own start rather than from frame 1."""
+    motion = source_motion(
+        rest={"hips": IDENTITY},
+        frames={7: {"hips": IDENTITY}, 8: {"hips": IDENTITY}},
+        fps=20.0,
+        fps_base=1.0,
+    )
+
+    assert [frame.seconds for frame in motion.frames] == [0.0, 0.05]
+
+
+def test_the_frames_come_out_in_order_whatever_order_they_went_in() -> None:
+    motion = source_motion(
+        rest={"hips": IDENTITY},
+        frames={3: {"hips": IDENTITY}, 1: {"hips": IDENTITY}, 2: {"hips": IDENTITY}},
+        fps=10.0,
+        fps_base=1.0,
+    )
+
+    assert [frame.seconds for frame in motion.frames] == pytest.approx([0.0, 0.1, 0.2])
+
+
+def test_a_clip_with_no_frame_is_refused() -> None:
+    with pytest.raises(ValueError, match="no frame"):
+        source_motion(rest={"hips": IDENTITY}, frames={}, fps=24.0, fps_base=1.0)
+
+
+def test_a_rate_that_is_not_positive_is_refused() -> None:
+    """The rate turns frames into seconds, and the Rust side aligns the two
+    clips on those seconds."""
+    with pytest.raises(ValueError, match="rate is positive"):
+        source_motion(rest={"hips": IDENTITY}, frames={1: {}}, fps=0.0, fps_base=1.0)
+
+
+def test_a_scene_rate_with_a_fractional_base_is_refused() -> None:
+    """Blender stores 29.97 as 30 over 1.001. Nothing here has been measured
+    on such a rate, so it is refused rather than fitted."""
+    with pytest.raises(ValueError, match="29.970 fps.*fractional rate"):
+        source_motion(
+            rest={"hips": IDENTITY},
+            frames={1: {"hips": IDENTITY}},
+            fps=30.0,
+            fps_base=1.001,
+        )
+
+
+def test_a_base_of_no_length_is_refused_rather_than_divided_by() -> None:
+    with pytest.raises(ValueError, match="rate is positive"):
+        source_motion(
+            rest={"hips": IDENTITY},
+            frames={1: {"hips": IDENTITY}},
+            fps=24.0,
+            fps_base=0.0,
+        )
+
+
+def test_a_frame_that_leaves_a_role_out_is_refused() -> None:
+    """A role missing from one frame would leave that frame unmeasured."""
+    with pytest.raises(ValidationError, match="disagrees with the rest pose"):
+        source_motion(
+            rest={"hips": IDENTITY, "head": IDENTITY},
+            frames={1: {"hips": IDENTITY}},
+            fps=24.0,
+            fps_base=1.0,
+        )
+
+
+def test_a_source_motion_built_by_hand_with_no_frame_is_refused() -> None:
+    with pytest.raises(ValidationError, match="no frame"):
+        SourceMotion(rest={"hips": (1.0, 0.0, 0.0, 0.0)}, frames=())
+
+
+def test_the_sidecar_is_written_where_the_runner_asked(tmp_path: Path) -> None:
+    motion = source_motion(
+        rest={"hips": IDENTITY},
+        frames={1: {"hips": IDENTITY}},
+        fps=24.0,
+        fps_base=1.0,
+    )
+    path = tmp_path / "reports" / "retarget.run.1.source.json"
+
+    motion.write(path)
+
+    assert json.loads(path.read_text())["rest"] == {"hips": [1.0, 0.0, 0.0, 0.0]}

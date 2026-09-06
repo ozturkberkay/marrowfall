@@ -234,6 +234,33 @@ triangles = 300000           # model.glb reads 54,864
 # Meshy's own count, which adds boundary and non-manifold edges together.
 printability_edges = 200     # model.glb is recorded at 179
 
+# Every published clip limit. Read by `crates/xtask-art/src/check/clip.rs`.
+#
+# Both are calibrated, not assumed. The calibration asset is a synthetic
+# cross-rig pair in `crates/xtask-art/tests/unit/clips.rs`: a second rig whose
+# legs sit 174 degrees of pure roll from ours, exactly the difference fact 3
+# measures against Mixamo, driven by a hand-built motion. On that pair both
+# expected values are 0 and what the rules read is the `f32` the GLB stores.
+#
+# The real pair was measured by hand as well, in Blender 5.2.1, on the three
+# Mixamo clips under `art/staging/downloads/`. That directory is gitignored, so
+# no test can open those files and CI cannot re-derive these numbers.
+[profile.clip]
+# Worst per bone over the clip. The synthetic pair reads 4.3e-6 and the three
+# Mixamo clips read 4.1e-5 to 7.1e-5, all of it `f32` storage rather than
+# maths. The pre-rename shipped output reads 97.797 on the hips, so this limit
+# clears the worst real reading by 142x and sits 9,780x under the defect it
+# exists to catch.
+swing_degrees = 0.01
+# Worst per bone over the clip. The synthetic pair reads 3.5e-6, because two
+# rigs whose bones differ by a roll agree exactly and only the file rounds. The
+# three Mixamo clips read 11.411, which is not a defect: our A-pose forearm
+# rests 62.5 degrees from Mixamo's T-posed one, and aiming both at one table
+# gives that swing a roll of its own. 15.0 leaves 3.589 degrees, 31 percent,
+# over the worst real reading. T15 regenerates the rig closer to the 40 degree
+# target and can retighten it.
+twist_degrees = 15.0
+
 # The real hierarchy. Read by `rig.parents` and `rig.single_root`.
 [profile.parents]
 Spine = "Hips"

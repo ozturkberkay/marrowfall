@@ -4,9 +4,9 @@
 //! numbers. Nothing in this file compares the reader against a second run of
 //! the same maths, because that is how a wrong transform ships green.
 
-use glam::DVec3;
+use glam::{DQuat, DVec3};
 use xtask_art::check::gltf_world::{
-    SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, gltf_to_blender,
+    SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, gltf_to_blender, gltf_to_blender_rotation,
 };
 use xtask_art::check::profile::Axis;
 
@@ -136,6 +136,42 @@ fn the_two_space_conversions_are_each_others_inverse() {
     for v in [DVec3::X, DVec3::Y, DVec3::Z, DVec3::new(1.0, 2.0, 3.0)] {
         about(blender_to_gltf(gltf_to_blender(v)), v.to_array());
     }
+}
+
+/// The rotation conversion, pinned against the vector one above.
+///
+/// A bone keeps its own axis labels across the conversion, so wherever
+/// `gltf_to_blender` sends a bone's +Y, the converted orientation must point
+/// its +Y. Without this the clip gates could carry any conversion at all:
+/// both sides of their fixture pass through this one function, and a wrong
+/// one cancels there.
+#[test]
+fn the_rotation_conversion_moves_a_bone_s_own_axes_the_way_the_vector_one_does() {
+    let turned = DQuat::from_rotation_z(0.7) * DQuat::from_rotation_x(-1.3);
+
+    for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
+        about(
+            gltf_to_blender_rotation(turned) * axis,
+            gltf_to_blender(turned * axis).to_array(),
+        );
+    }
+}
+
+/// A quarter turn about +X, written out: `sin(45), 0, 0, cos(45)`. This is
+/// the sign, and `Rx(-90)` would pass every clip test on its own.
+#[test]
+fn an_unturned_bone_converts_to_the_quarter_turn_itself() {
+    let quarter = gltf_to_blender_rotation(DQuat::IDENTITY);
+
+    let half = std::f64::consts::FRAC_1_SQRT_2;
+    about(
+        DVec3::new(quarter.x, quarter.y, quarter.z),
+        [half, 0.0, 0.0],
+    );
+    assert!(
+        (quarter.w - half).abs() < CLOSE_ENOUGH,
+        "measured {quarter}"
+    );
 }
 
 /// Two joints asked to sit at the same place land a fraction of a nanometer

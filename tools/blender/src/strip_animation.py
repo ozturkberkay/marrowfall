@@ -66,6 +66,9 @@ def strip(path: pathlib.Path) -> None:
         export_animations=True,
         export_skins=True,
         export_materials="NONE",
+        # `clip.twist` reads its rest term off the delivered joints, so the
+        # armature must be exported at rest and not at the current frame.
+        export_rest_position_armature=True,
     )
 
 

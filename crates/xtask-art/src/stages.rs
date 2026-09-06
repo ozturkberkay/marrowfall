@@ -12,8 +12,9 @@ use std::path::Path;
 use anyhow::{Context as _, Result};
 
 use crate::blender::{self, BLENDER_SRC};
-use crate::check::Artifacts;
+use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
+use crate::check::{Artifacts, clip};
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -311,31 +312,46 @@ pub fn retarget(
         rig.display()
     );
 
+    // Not a `Stage`: the retarget runs inside the fetch path and the lock
+    // keeps its six stages. It still gets its own report.
+    let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
     let args = vec![
         OsString::from("--source"),
         source.into(),
         OsString::from("--rig"),
-        rig.into(),
+        rig.clone().into(),
         OsString::from("--convention"),
         animation.source.bone_convention().into(),
         OsString::from("--out"),
         out.into(),
         OsString::from("--name"),
         name.into(),
+        OsString::from("--source-motion"),
+        artifacts.source_motion().into(),
     ];
-    // Not a `Stage`: the retarget runs inside the fetch path and the lock
-    // keeps its six stages. It still gets its own report.
-    let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
-    let report = blender::run(&script, &args, &artifacts, repo_root)
+    let mut report = blender::run(&script, &args, &artifacts, repo_root)
         .with_context(|| format!("retargeting {}", source.display()))?
         .with_context(|| format!("the retarget of {name} wrote no report"))?;
-    let off = report.off_registry(&Profile::of(repo_root, skeleton)?);
+    let profile = Profile::of(repo_root, skeleton)?;
+    let off = report.off_registry(&profile);
     anyhow::ensure!(
         off.is_empty(),
         "the retarget of {name} reported findings the rule list does not \
          carry, so nothing published what they were read against: {}",
         off.join("; ")
     );
+    // Blender counted what only an action carries. These three read the file
+    // it exported, which is where a wrong export would otherwise hide.
+    report.extend(clip::check_files(
+        out,
+        &artifacts.source_motion(),
+        &rig,
+        repo_root,
+        &profile,
+        &AimTable::of(repo_root, skeleton)?,
+        FIRST_ATTEMPT,
+    )?)?;
+    report.write(repo_root)?;
     anyhow::ensure!(
         !report.has_errors(),
         "the retarget of {name} left {} defect(s), listed in {}",

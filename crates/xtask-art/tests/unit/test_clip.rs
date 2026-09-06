@@ -1,0 +1,752 @@
+//! The three clip rules that read the delivered file.
+//!
+//! Every case runs on the synthetic cross-rig pair in `clips.rs`, whose two
+//! expected values are hand-computed rather than measured: a correct fit
+//! reads 0 on both, because the rotation between the two rigs is a pure twist
+//! about each bone's own axis at rest and at every frame alike. What the
+//! rules read on the built file is the `f32` a GLB stores, and that is the
+//! calibration `[profile.clip]` carries.
+
+use std::collections::BTreeMap;
+
+use glam::DQuat;
+
+use xtask_art::check::aim::AimTable;
+use xtask_art::check::clip::{OBJECT_TRANSFORM, RULES, SWING, TWIST};
+use xtask_art::check::gltf_world::Skeleton;
+use xtask_art::check::motion::{Frame, Motion};
+use xtask_art::check::profile::Profile;
+use xtask_art::check::{Comparison, Finding, Report, Severity, gltf_clip};
+
+use super::clips::{CrossRig, LEG_ROLL_DEGREES};
+use super::rigs::SyntheticRig;
+use super::support::repo_root;
+
+/// The 22 roles the canonical convention maps, which is the subject count
+/// both rules are pinned to.
+const ROLES: usize = 22;
+
+const ATTEMPT: u32 = 1;
+
+fn profile() -> Profile {
+    Profile::of(&repo_root(), "humanoid").expect("the humanoid profile")
+}
+
+/// Role to bone, out of the committed skeleton file, so the fixture measures
+/// the real role set rather than one of its own.
+fn bones() -> BTreeMap<String, String> {
+    let table = AimTable::of(&repo_root(), "humanoid").expect("the humanoid aim table");
+    table
+        .bones(table.canonical())
+        .expect("the canonical convention")
+        .clone()
+}
+
+/// Both rules on one cross-rig pair.
+fn measure(pair: &CrossRig) -> Vec<Finding> {
+    let bones = bones();
+    let output = gltf_clip::read(&pair.output_glb(), &bones).expect("the output clip");
+    let source = Motion::parse(&pair.source_motion()).expect("the source motion");
+    xtask_art::check::clip::compare(&output, &source, &bones, &profile(), ATTEMPT)
+}
+
+/// The worst measurement one rule reports, with its subject.
+fn worst<'a>(findings: &'a [Finding], rule: &str) -> &'a Finding {
+    findings
+        .iter()
+        .filter(|finding| finding.rule == rule)
+        .max_by(|a, b| a.measured.total_cmp(&b.measured))
+        .unwrap_or_else(|| panic!("{rule} reported nothing"))
+}
+
+fn subjects<'a>(findings: &'a [Finding], rule: &str) -> Vec<&'a str> {
+    findings
+        .iter()
+        .filter(|finding| finding.rule == rule)
+        .map(|finding| finding.subject.as_str())
+        .collect()
+}
+
+fn errors(findings: &[Finding]) -> Vec<&Finding> {
+    findings
+        .iter()
+        .filter(|finding| finding.severity == Severity::Error)
+        .collect()
+}
+
+fn correct() -> CrossRig {
+    CrossRig::new(bones())
+}
+
+// --- calibration -----------------------------------------------------------
+
+#[test]
+fn a_correct_fit_across_two_rigs_is_quiet_on_both_rules() {
+    let findings = measure(&correct());
+
+    assert_eq!(errors(&findings), Vec::<&Finding>::new());
+    assert_eq!(findings.len(), ROLES * 2);
+}
+
+#[test]
+fn the_maths_alone_gives_the_zero_the_fixture_was_built_to_give() {
+    // The known answer, without a file in the way: a pure twist about each
+    // bone's own axis cannot move where the bone points, and it is the same
+    // twist at rest as at every frame. Both are 0, so what is left here is
+    // `f64` rounding.
+    let pair = correct();
+    let source = Motion::parse(&pair.source_motion()).expect("the source motion");
+    let findings = xtask_art::check::clip::compare(
+        &pair.output_motion(),
+        &source,
+        &bones(),
+        &profile(),
+        ATTEMPT,
+    );
+
+    assert!(worst(&findings, SWING.id).measured < 1e-9);
+    assert!(worst(&findings, TWIST.id).measured < 1e-9);
+}
+
+#[test]
+fn what_the_file_costs_is_the_whole_calibration() {
+    // The same pair through a GLB. Measured: 4.3e-6 degrees of swing and
+    // 3.5e-6 of twist, all of it the `f32` a glTF accessor stores. Pinned an
+    // order tighter, so a change that costs digits is a failing test rather
+    // than a widened limit.
+    let findings = measure(&correct());
+
+    assert!(
+        worst(&findings, SWING.id).measured < 1e-5,
+        "{:?}",
+        worst(&findings, SWING.id)
+    );
+    assert!(
+        worst(&findings, TWIST.id).measured < 1e-5,
+        "{:?}",
+        worst(&findings, TWIST.id)
+    );
+}
+
+#[test]
+fn a_pure_ten_degree_twist_splits_to_ten_and_zero() {
+    // The same numeric known answer `test_transfer.py` pins on the Python
+    // side, so the two implementations answer to one external number rather
+    // than to each other.
+    let findings = one_bone(DQuat::from_rotation_y(10.0_f64.to_radians()));
+
+    assert!((worst(&findings, TWIST.id).measured - 10.0).abs() < 1e-9);
+    assert!(worst(&findings, SWING.id).measured < 1e-9);
+}
+
+#[test]
+fn a_pure_thirty_degree_swing_splits_to_thirty_and_zero() {
+    let findings = one_bone(DQuat::from_rotation_x(30.0_f64.to_radians()));
+
+    assert!((worst(&findings, SWING.id).measured - 30.0).abs() < 1e-9);
+    assert!(worst(&findings, TWIST.id).measured < 1e-9);
+}
+
+/// Two clips of one bone that rest alike and differ by `by` at their one
+/// frame, so both rules read `by` alone.
+fn one_bone(by: DQuat) -> Vec<Finding> {
+    let role = "hips";
+    let bones = BTreeMap::from([(role.to_owned(), "Hips".to_owned())]);
+    let motion = |rotation: DQuat| {
+        Motion::new(
+            BTreeMap::from([(role.to_owned(), DQuat::IDENTITY)]),
+            vec![Frame {
+                seconds: 0.0,
+                rotations: BTreeMap::from([(role.to_owned(), rotation)]),
+            }],
+        )
+        .expect("a one bone motion")
+    };
+    xtask_art::check::clip::compare(
+        &motion(by),
+        &motion(DQuat::IDENTITY),
+        &bones,
+        &profile(),
+        ATTEMPT,
+    )
+}
+
+#[test]
+fn the_published_limits_are_the_ones_this_task_calibrated() {
+    let profile = profile();
+
+    assert_eq!(profile.clip.swing_degrees, 0.01);
+    assert_eq!(profile.clip.twist_degrees, 15.0);
+}
+
+#[test]
+fn the_two_rigs_really_are_a_cross_rig_pair() {
+    // Without this the fixture could be one rig against itself, and both
+    // rules would be quiet for the wrong reason.
+    let pair = correct();
+    let bones = bones();
+    let output = gltf_clip::read(&pair.output_glb(), &bones).expect("the output clip");
+    let source = Motion::parse(&pair.source_motion()).expect("the source motion");
+
+    let apart = |role: &str| {
+        let relative = source.rest(role).expect("a source rest").inverse()
+            * output.rest(role).expect("an output rest");
+        (2.0 * relative.y.atan2(relative.w).to_degrees()).abs()
+    };
+    assert!((apart("left_upper_leg") - LEG_ROLL_DEGREES).abs() < 1e-3);
+    assert!((apart("right_leg") - LEG_ROLL_DEGREES).abs() < 1e-3);
+}
+
+// --- what a combined metric would read -------------------------------------
+
+#[test]
+fn one_combined_orientation_angle_would_reject_this_correct_fit() {
+    // The reason there are two rules. A combined angle reads the legs' rest
+    // roll, which a correct fit preserves, so it must fail every correct clip
+    // or be widened past the defect it exists to catch.
+    let pair = correct();
+    let bones = bones();
+    let output = gltf_clip::read(&pair.output_glb(), &bones).expect("the output clip");
+    let source = Motion::parse(&pair.source_motion()).expect("the source motion");
+
+    let out = output.frames()[0].rotations["left_upper_leg"];
+    let src = source.frames()[0].rotations["left_upper_leg"];
+    let combined = 2.0 * src.dot(out).abs().min(1.0).acos().to_degrees();
+
+    assert!(
+        (combined - LEG_ROLL_DEGREES).abs() < 1e-3,
+        "a combined angle reads {combined} on a correct fit"
+    );
+    assert!(combined > profile().clip.swing_degrees);
+}
+
+#[test]
+fn a_twist_read_against_the_source_s_own_rest_would_reject_it_too() {
+    // The other mutation: subtracting the source's rest twist rather than the
+    // roll between the two rest poses leaves the whole convention difference
+    // in the number.
+    let pair = correct();
+    let bones = bones();
+    let output = gltf_clip::read(&pair.output_glb(), &bones).expect("the output clip");
+    let source = Motion::parse(&pair.source_motion()).expect("the source motion");
+
+    let twist = |rotation: glam::DQuat| 2.0 * rotation.y.atan2(rotation.w).to_degrees();
+    let out = output.frames()[0].rotations["left_upper_leg"];
+    let src = source.frames()[0].rotations["left_upper_leg"];
+    // A rotation and its negation are the same rotation, hence the wrap.
+    let apart = (twist(out) - twist(src) + 180.0).rem_euclid(360.0) - 180.0;
+    let against_the_source_rest = apart.abs();
+
+    assert!(
+        (against_the_source_rest - LEG_ROLL_DEGREES).abs() < 1e-3,
+        "a twist against the source's own rest reads {against_the_source_rest}"
+    );
+    assert!(against_the_source_rest > profile().clip.twist_degrees);
+}
+
+// --- clip.twist ------------------------------------------------------------
+
+#[test]
+fn a_ninety_degree_twist_injected_in_the_bone_s_own_frame_is_rejected() {
+    // The design's negative, `q @ Quaternion((0, 1, 0), radians(90))` on
+    // `LeftUpLeg`.
+    let findings = measure(&correct().rolled("left_upper_leg", 90.0));
+
+    let twist = worst(&findings, TWIST.id);
+    assert_eq!(twist.subject, "left_upper_leg");
+    assert!((twist.measured - 90.0).abs() < 1e-3, "{}", twist.measured);
+    assert_eq!(twist.severity, Severity::Error);
+}
+
+#[test]
+fn the_same_injection_leaves_the_swing_quiet_which_is_what_proves_it_is_a_twist() {
+    // A yaw would move where a downward thigh points and fire `clip.swing`
+    // instead, and then the fixture would prove nothing about the twist.
+    let findings = measure(&correct().rolled("left_upper_leg", 90.0));
+
+    let swing = worst(&findings, SWING.id);
+    assert!(swing.measured < profile().clip.swing_degrees, "{swing:?}");
+    assert_eq!(errors(&findings).len(), 1);
+}
+
+#[test]
+fn a_thigh_rolled_the_other_way_reads_the_same_size_and_is_rejected() {
+    // The rule reports how far the roll is out, not which way. Without the
+    // magnitude a roll of minus 90 reads as minus 90, holds against a limit
+    // of 15, and files a broken clip as information.
+    let findings = measure(&correct().rolled("left_upper_leg", -90.0));
+
+    let twist = worst(&findings, TWIST.id);
+    assert_eq!(twist.subject, "left_upper_leg");
+    assert!((twist.measured - 90.0).abs() < 1e-3, "{}", twist.measured);
+    assert_eq!(twist.severity, Severity::Error);
+}
+
+#[test]
+fn a_re_rolled_thigh_just_past_the_limit_is_rejected_either_way_round() {
+    // The limit is load-bearing rather than decoration: 16 degrees fails and
+    // 14 holds, either side of the 15 the profile publishes, and a roll the
+    // other way sits the same distance out.
+    let past = measure(&correct().rolled("left_upper_leg", 16.0));
+    let past_the_other_way = measure(&correct().rolled("left_upper_leg", -16.0));
+    let inside = measure(&correct().rolled("right_upper_leg", 14.0));
+
+    assert_eq!(errors(&past).len(), 1);
+    assert_eq!(errors(&past_the_other_way).len(), 1);
+    assert_eq!(errors(&inside).len(), 0);
+}
+
+// --- clip.swing ------------------------------------------------------------
+
+#[test]
+fn a_swing_injected_into_one_bone_is_rejected_and_names_it() {
+    let findings = measure(&correct().swung("left_hand", 3.0));
+
+    let swing = worst(&findings, SWING.id);
+    assert_eq!(swing.subject, "left_hand");
+    assert!((swing.measured - 3.0).abs() < 1e-3, "{}", swing.measured);
+    assert_eq!(swing.severity, Severity::Error);
+}
+
+#[test]
+fn a_clip_read_one_frame_out_of_the_source_is_rejected() {
+    // The mutation that reads the sidecar for the wrong frame. Every bone
+    // moves between two frames, so the whole clip goes red rather than one
+    // bone.
+    let findings = measure(&correct().source_off_by_one());
+
+    assert!(
+        errors(&findings).len() > ROLES,
+        "only {} finding(s) failed",
+        errors(&findings).len()
+    );
+    assert!(worst(&findings, SWING.id).measured > 1.0);
+}
+
+// --- alignment and gaps ----------------------------------------------------
+
+#[test]
+fn a_clip_one_frame_short_of_its_source_is_undefined_on_every_role() {
+    let findings = measure(&correct().without_the_last_frame());
+
+    assert_eq!(errors(&findings).len(), ROLES * 2);
+    assert!(
+        worst(&findings, SWING.id)
+            .message
+            .contains("7 frame(s) and the source has 8"),
+        "{}",
+        worst(&findings, SWING.id).message
+    );
+}
+
+#[test]
+fn two_clips_read_at_different_rates_are_undefined_rather_than_measured() {
+    // Fact 6's shape: a 30 fps clip sampled in a 24 fps scene runs 0.8 to
+    // 16.8, so the two sides drift apart frame by frame.
+    let findings = measure(&correct().source_at_rate(30.0 / 24.0));
+
+    assert_eq!(errors(&findings).len(), ROLES * 2);
+    assert!(worst(&findings, TWIST.id).message.contains("tolerance"));
+}
+
+#[test]
+fn a_rate_a_millionth_out_still_aligns() {
+    // The tolerance is a tenth of a millisecond, so the f32 a GLB stores its
+    // key times in cannot push a correct clip off its own source.
+    let findings = measure(&correct().source_at_rate(1.0 + 1e-6));
+
+    assert_eq!(errors(&findings), Vec::<&Finding>::new());
+}
+
+#[test]
+fn a_role_the_source_does_not_drive_is_reported_and_never_dropped() {
+    let findings = measure(&correct().source_without("left_toe"));
+
+    assert_eq!(findings.len(), ROLES * 2);
+    let named = errors(&findings);
+    assert_eq!(named.len(), 2);
+    assert!(named[0].message.contains("drives no left_toe"), "{named:?}");
+}
+
+#[test]
+fn a_role_the_clip_has_no_bone_for_is_reported_and_never_dropped() {
+    let findings = measure(&correct().output_without("right_hand"));
+
+    assert_eq!(findings.len(), ROLES * 2);
+    let named = errors(&findings);
+    assert_eq!(named.len(), 2);
+    assert!(
+        named[0].message.contains("no bone for the right_hand role"),
+        "{named:?}"
+    );
+}
+
+#[test]
+fn a_bone_pointing_exactly_opposite_the_source_reports_the_singular_case() {
+    // Half a turn of swing is the one place a twist does not exist. A gate
+    // cannot raise, so it says so and never returns a NaN.
+    let findings = measure(&correct().swung("left_foot", 180.0));
+
+    let twist = findings
+        .iter()
+        .find(|finding| finding.rule == TWIST.id && finding.subject == "left_foot")
+        .expect("a left_foot twist");
+    assert_eq!(twist.severity, Severity::Error);
+    assert!(twist.measured.is_finite());
+    assert!(
+        twist
+            .message
+            .contains("swing is 180.000 degrees, twist undefined"),
+        "{}",
+        twist.message
+    );
+}
+
+#[test]
+fn every_subject_is_reported_even_when_the_measurement_holds() {
+    let findings = measure(&correct());
+
+    for rule in [SWING.id, TWIST.id] {
+        let reported = subjects(&findings, rule);
+        assert_eq!(reported.len(), ROLES);
+        assert!(reported.contains(&"left_toe"), "terminals included");
+        assert!(reported.contains(&"right_hand"), "terminals included");
+    }
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.severity == Severity::Info)
+    );
+}
+
+#[test]
+fn no_finding_is_ever_a_nan() {
+    for pair in [
+        correct(),
+        correct().swung("left_foot", 180.0),
+        correct().source_without("hips"),
+        correct().without_the_last_frame(),
+    ] {
+        for finding in measure(&pair) {
+            assert!(finding.measured.is_finite(), "{finding:?}");
+            assert!(finding.limit.is_finite(), "{finding:?}");
+        }
+    }
+}
+
+// --- clip.object_transform -------------------------------------------------
+
+#[test]
+fn a_clip_that_carries_the_rig_s_own_object_transform_holds() {
+    let findings = object_transform(&correct());
+
+    assert_eq!(errors(&findings), Vec::<&Finding>::new());
+    assert_eq!(subjects(&findings, OBJECT_TRANSFORM.id), ["Armature"]);
+}
+
+#[test]
+fn a_clip_whose_object_scale_was_applied_is_rejected() {
+    // What `transform_apply(scale=True)` leaves: the 0.01 moves out of the
+    // object and into the rest geometry, and every location key keeps its
+    // bytes while its meaning changes 100x.
+    let findings = object_transform(&correct().with_the_object_scale_applied());
+
+    assert_eq!(errors(&findings).len(), 1);
+    assert!(
+        errors(&findings)[0].message.contains("where the rig has"),
+        "{:?}",
+        errors(&findings)[0]
+    );
+}
+
+#[test]
+fn a_clip_whose_armature_object_is_animated_is_rejected() {
+    // What the static reading cannot see: an action on the object moves the
+    // whole clip while every node's own transform still matches the rig's.
+    let findings = object_transform(&correct().with_an_animated_object_node());
+
+    assert_eq!(errors(&findings).len(), 1);
+    assert_eq!(errors(&findings)[0].subject, "Armature");
+    assert!(
+        errors(&findings)[0].message.contains("drive Armature"),
+        "{:?}",
+        errors(&findings)[0]
+    );
+}
+
+#[test]
+fn the_committed_clip_reports_the_armature_and_the_skin_carrier_and_nothing_else() {
+    // The subject list is pinned. `strip_animation.py` weights a tiny
+    // triangle to the root bone so the armature exports at all, so the
+    // carrier is a node the file really has and a subject on purpose.
+    let findings = xtask_art::check::clip::object_transform(
+        &Skeleton::read(&crate::support::committed_glb("art/animations/run.glb")).expect("a clip"),
+        &Skeleton::read(&crate::support::committed_glb("art/skeletons/humanoid.glb"))
+            .expect("the rig"),
+        &profile(),
+        ATTEMPT,
+    );
+
+    assert_eq!(
+        subjects(&findings, OBJECT_TRANSFORM.id),
+        ["Armature", "skin_carrier"]
+    );
+    assert_eq!(errors(&findings), Vec::<&Finding>::new());
+}
+
+/// `clip.object_transform` on one pair, against the conformant rig as the
+/// committed one.
+fn object_transform(pair: &CrossRig) -> Vec<Finding> {
+    let rig = SyntheticRig::conformant().to_gltf();
+    xtask_art::check::clip::object_transform(
+        &Skeleton::from_slice(&pair.output_glb()).expect("the clip"),
+        &Skeleton::from_slice(rig.as_bytes()).expect("the rig"),
+        &profile(),
+        ATTEMPT,
+    )
+}
+
+// --- the printed rule list -------------------------------------------------
+
+/// `--list-rules` prints the registry, and a finding is built through it, so
+/// neither can advertise a limit, a unit or a space the other does not carry.
+#[test]
+fn a_finding_carries_exactly_what_the_rule_list_advertises() {
+    let profile = profile();
+    let findings = [
+        measure(&correct()),
+        measure(&correct().rolled("left_upper_leg", 90.0)),
+        object_transform(&correct()),
+    ]
+    .concat();
+
+    for finding in &findings {
+        let rule = RULES
+            .iter()
+            .find(|rule| rule.id == finding.rule)
+            .unwrap_or_else(|| panic!("{} is not in the rule list", finding.rule));
+        assert_eq!(finding.measured_on, rule.space, "{}", rule.id);
+        // An undefined measurement carries its own unit and comparison, and
+        // says so, which is the one documented exception.
+        if finding.unit != "undefined measurements" {
+            assert_eq!(finding.unit, rule.unit, "{}", rule.id);
+            assert_eq!(finding.comparison, rule.comparison, "{}", rule.id);
+            assert_eq!(finding.limit, (rule.limit)(&profile), "{}", rule.id);
+        }
+    }
+}
+
+/// The comparison decides the severity, so no rule can file its own broken
+/// measurement as information.
+#[test]
+fn the_severity_of_every_finding_follows_from_its_own_comparison() {
+    let findings = [
+        measure(&correct()),
+        measure(&correct().swung("left_hand", 3.0)),
+        object_transform(&correct().with_the_object_scale_applied()),
+    ]
+    .concat();
+
+    for finding in &findings {
+        assert_eq!(
+            finding.severity == Severity::Error,
+            !finding.holds(),
+            "{finding:#?}"
+        );
+    }
+}
+
+#[test]
+fn a_report_that_loosens_a_clip_limit_is_refused() {
+    // The mutation the runner has to see: the same rule id with a limit
+    // nobody published, which is how a wide threshold would slip in.
+    let mut finding = worst(&measure(&correct()), SWING.id).clone();
+    finding.limit = 90.0;
+    let mut report = Report::new("retarget", "run", ATTEMPT);
+    report.add(finding).expect("a well formed finding");
+
+    let off = report.off_registry(&profile());
+
+    assert_eq!(off.len(), 1);
+    assert!(off[0].contains("limit"), "{off:?}");
+}
+
+#[test]
+fn a_report_that_flips_a_clip_comparison_is_refused() {
+    let mut finding = worst(&measure(&correct()), TWIST.id).clone();
+    finding.comparison = Comparison::Ge;
+    let mut report = Report::new("retarget", "run", ATTEMPT);
+    report.add(finding).expect("a well formed finding");
+
+    let off = report.off_registry(&profile());
+
+    assert_eq!(off.len(), 1);
+    assert!(off[0].contains("comparison"), "{off:?}");
+}
+
+#[test]
+fn two_bind_poses_pointing_opposite_leave_the_swing_measurable() {
+    // The other half of the singular case, and the reason the two rules are
+    // reported separately: with no roll between the two bind poses there is
+    // no twist to read, and where the bone points is still a real number.
+    let findings = measure(&correct().source_resting_opposite("right_foot"));
+
+    let named = |rule: &str| {
+        findings
+            .iter()
+            .find(|finding| finding.rule == rule && finding.subject == "right_foot")
+            .unwrap_or_else(|| panic!("{rule} reported nothing on right_foot"))
+    };
+    assert_eq!(named(SWING.id).severity, Severity::Info);
+    assert!(named(SWING.id).measured < profile().clip.swing_degrees);
+    assert_eq!(named(TWIST.id).severity, Severity::Error);
+    assert!(
+        named(TWIST.id).message.contains("at rest"),
+        "{}",
+        named(TWIST.id).message
+    );
+}
+
+// --- what each reader refuses ----------------------------------------------
+
+/// The error a reader gives, so a test can name the reason rather than the
+/// fact that something went wrong.
+fn refused(bytes: &[u8]) -> String {
+    format!(
+        "{:#}",
+        gltf_clip::read(bytes, &bones()).expect_err("this file cannot be read")
+    )
+}
+
+#[test]
+fn a_file_with_no_skin_holds_no_skeleton_to_measure() {
+    let error = refused(&crate::meshes::a_scene_with_no_mesh());
+
+    assert!(error.contains("no skin"), "got: {error}");
+}
+
+#[test]
+fn a_rig_with_no_animation_holds_no_clip() {
+    let error = refused(SyntheticRig::conformant().to_gltf().as_bytes());
+
+    assert!(error.contains("no animation"), "got: {error}");
+}
+
+#[test]
+fn a_cubic_sampler_is_refused_rather_than_read_as_a_straight_line() {
+    // A cubic sampler stores two tangents beside every value, so its output
+    // is three times as long and reading it as `LINEAR` would measure the
+    // tangents as poses.
+    let error = refused(&correct().with_cubic_keys().output_glb());
+
+    assert!(error.contains("CUBICSPLINE"), "got: {error}");
+}
+
+#[test]
+fn a_key_that_is_no_rotation_is_refused_rather_than_normalized_into_a_nan() {
+    let error = refused(&correct().with_a_key_that_is_no_rotation().output_glb());
+
+    assert!(error.contains("no rotation at all"), "got: {error}");
+}
+
+#[test]
+fn a_source_motion_that_is_not_a_rotation_is_refused() {
+    let error = format!(
+        "{:#}",
+        Motion::parse(
+            r#"{"rest": {"hips": [0.0, 0.0, 0.0, 0.0]},
+                "frames": [{"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
+        )
+        .expect_err("a quaternion of no length")
+    );
+
+    assert!(error.contains("no rotation at all"), "got: {error}");
+}
+
+#[test]
+fn a_source_motion_with_no_frame_is_refused() {
+    let error = format!(
+        "{:#}",
+        Motion::parse(r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "frames": []}"#)
+            .expect_err("a clip with no frame")
+    );
+
+    assert!(error.contains("no frame"), "got: {error}");
+}
+
+#[test]
+fn a_source_motion_whose_frame_leaves_a_role_out_is_refused() {
+    let error = format!(
+        "{:#}",
+        Motion::parse(
+            r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0], "head": [1.0, 0.0, 0.0, 0.0]},
+                "frames": [{"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
+        )
+        .expect_err("a frame with a hole in it")
+    );
+
+    assert!(error.contains("rest pose carries"), "got: {error}");
+}
+
+#[test]
+fn a_source_motion_that_runs_backwards_is_refused() {
+    let error = format!(
+        "{:#}",
+        Motion::parse(
+            r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "frames": [
+                 {"seconds": 1.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}},
+                 {"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
+        )
+        .expect_err("frames out of order")
+    );
+
+    assert!(error.contains("backwards"), "got: {error}");
+}
+
+#[test]
+fn a_clip_that_is_not_on_disk_is_three_errors_and_never_a_skip() {
+    let root = repo_root();
+    let findings = xtask_art::check::clip::check_files(
+        &root.join("art/animations/local/never_fetched.glb"),
+        &root.join("art/staging/reports/retarget.never_fetched.1.source.json"),
+        &root.join("art/skeletons/humanoid.glb"),
+        &root,
+        &profile(),
+        &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
+        ATTEMPT,
+    )
+    .expect("the gate itself runs");
+
+    assert_eq!(errors(&findings).len(), 3);
+    assert!(
+        findings[0]
+            .message
+            .contains("never_fetched.glb cannot be read"),
+        "{:?}",
+        findings[0]
+    );
+}
+
+#[test]
+fn a_clip_on_disk_with_no_source_motion_beside_it_is_still_reported() {
+    let root = repo_root();
+    let findings = xtask_art::check::clip::check_files(
+        &crate::support::committed_glb("art/animations/run.glb"),
+        &root.join("art/staging/reports/retarget.no_such_source.1.source.json"),
+        &root.join("art/skeletons/humanoid.glb"),
+        &root,
+        &profile(),
+        &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
+        ATTEMPT,
+    )
+    .expect("the gate itself runs");
+
+    // The two comparison rules cannot run, and the object transform still
+    // can: it needs no source at all, and the committed clip holds the same
+    // armature and skin carrier the committed rig does.
+    assert_eq!(errors(&findings).len(), 2);
+    assert_eq!(
+        subjects(&findings, OBJECT_TRANSFORM.id),
+        ["Armature", "skin_carrier"]
+    );
+}

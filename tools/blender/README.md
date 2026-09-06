@@ -21,7 +21,7 @@ under `crates/xtask-art/src/check/`.
 | Module | `bpy` | What it is |
 | --- | --- | --- |
 | `transfer.py` | no | the retarget maths: world matrices in, local poses out |
-| `clip.py` | no | the two counts the retarget reports on its own output |
+| `clip.py` | no | the two counts the retarget reports, and the source motion sidecar |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
 | `framing.py` | no | the bake's camera geometry and frame sampling |
 | `findings.py` | no | the Finding record, the report, and the success sentinel |
@@ -50,6 +50,28 @@ travel reads as 231.599 m. World matrices are composed instead, as
 `matrix_world.inverted()`. A unit test reads every script here and fails on
 the call, because the last caller was deleted and nothing else would notice
 it coming back.
+
+## Why one script writes a sidecar
+
+`clip.swing` and `clip.twist` measure the delivered GLB against the file the
+motion was bought in. That file is an FBX, the Rust `gltf` reader cannot open
+one, and there is no Blender in CI. So `retarget_animation.py` writes the
+source clip's own world orientations to
+`art/staging/reports/retarget.<clip>.1.source.json`, and
+`crates/xtask-art/src/check/clip.rs` reads that beside the GLB. The record
+itself is built in `clip.py`, with no `bpy`, so it is unit tested like
+everything else here.
+
+## Why every export asks for the rest position
+
+`clip.twist` reads its rest term off the joints of the file it is handed, so
+the armature has to leave Blender at its rest position rather than at whatever
+frame the scene is on. The exporter does that by default, and a default can
+move, so `retarget_animation.py` and `strip_animation.py` both state
+`export_rest_position_armature=True`. With it off, a correct `strafe_left` fit
+reads 113.884 degrees where it should read 11.411 and 20 of its 22 roles go
+red. A unit test reads every script here and fails on an export that leaves
+the flag out.
 
 ## Running one by hand
 

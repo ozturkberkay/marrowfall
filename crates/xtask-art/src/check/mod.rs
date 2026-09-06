@@ -11,9 +11,11 @@
 
 pub mod aim;
 pub mod clip;
+pub mod gltf_clip;
 pub mod gltf_mesh;
 pub mod gltf_world;
 pub mod mesh;
+pub mod motion;
 pub mod profile;
 pub mod rig;
 pub mod validator;
@@ -459,6 +461,16 @@ impl Artifacts {
     /// Blender's own log, at debug level.
     pub fn log(&self) -> PathBuf {
         self.path("log")
+    }
+
+    /// The source clip's own world orientations, written by the retarget.
+    ///
+    /// `clip.swing` and `clip.twist` measure the delivered GLB against the
+    /// file the motion was bought in. That file is an FBX, no Rust reader
+    /// opens one, and CI has no Blender, so Blender records what it read and
+    /// the Rust gate reads the pair.
+    pub fn source_motion(&self) -> PathBuf {
+        self.path("source.json")
     }
 
     /// The scene as it stood when the script raised.
