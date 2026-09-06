@@ -1,4 +1,5 @@
-//! The thirteen mesh gates.
+//! The fifteen mesh gates: thirteen read off one file, two off the pair the
+//! fixer produced.
 //!
 //! Every rule here has three columns, per the design's test plan: a positive
 //! fixture, a negative fixture it must reject, and a calibration that proves
@@ -20,7 +21,7 @@ use std::path::{Path, PathBuf};
 use glam::DQuat;
 use xtask_art::check::gltf_mesh::{Surface, WELD_METERS};
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Comparison, Finding, Report, Severity, mesh};
+use xtask_art::check::{Comparison, Finding, Report, Severity, Symmetry, mesh};
 use xtask_art::library::HUMANOID;
 
 use crate::meshes::{ALLOWED, HEIGHT_METERS, SyntheticMesh};
@@ -50,6 +51,7 @@ fn findings_with(file: &Path, printability: Option<&str>) -> Vec<Finding> {
         &repo_root(),
         &profile(),
         HEIGHT_METERS,
+        Symmetry::Enforced,
         printability,
         1,
     )
@@ -59,7 +61,15 @@ fn findings_with(file: &Path, printability: Option<&str>) -> Vec<Finding> {
 /// Every finding for a hand-built mesh.
 fn findings_of(fixture: &SyntheticMesh) -> Vec<Finding> {
     let surface = Surface::from_slice(&fixture.to_glb()).expect("a readable fixture");
-    mesh::check("fixture.glb", &surface, &profile(), HEIGHT_METERS, None, 1)
+    mesh::check(
+        "fixture.glb",
+        &surface,
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Enforced,
+        None,
+        1,
+    )
 }
 
 fn errors(findings: &[Finding]) -> Vec<&Finding> {
@@ -259,7 +269,7 @@ fn every_rule_reports_on_good_art_and_on_bad() {
         findings_with(&committed_glb(CALIBRATION), Some(RECORDED)),
         findings_of(&SyntheticMesh::figure().without_a_face().repeated(67)),
     ] {
-        for rule in mesh::RULES {
+        for rule in mesh::FILE_RULES {
             assert!(
                 findings.iter().any(|finding| finding.rule == rule.id),
                 "{} reported nothing at all",
@@ -572,12 +582,19 @@ fn a_file_that_holds_no_mesh_is_an_error_and_not_a_skip() {
     assert_eq!(rules, ["mesh.holes", "mesh.printability"]);
 }
 
+/// A name nothing writes, because `bare.glb` is on disk the moment anyone
+/// runs the model stage and a test that passes only on a fresh checkout
+/// proves nothing.
 #[test]
 fn a_missing_file_is_an_error_and_not_a_skip() {
-    let findings = findings_for(&under_repo("art/staging/survivor/bare.glb"));
+    let findings = findings_for(&under_repo("art/staging/survivor/never_downloaded.glb"));
 
     assert_eq!(errors(&findings).len(), 1);
-    assert!(errors(&findings)[0].message.contains("bare.glb"));
+    assert!(
+        errors(&findings)[0]
+            .message
+            .contains("never_downloaded.glb")
+    );
 }
 
 // --- the remote rule ------------------------------------------------------
@@ -652,8 +669,57 @@ fn every_rule_is_listed_once_under_its_own_family() {
     let ids: BTreeSet<&str> = mesh::RULES.iter().map(|rule| rule.id).collect();
 
     assert_eq!(ids.len(), mesh::RULES.len(), "a rule id is listed twice");
-    assert_eq!(mesh::RULES.len(), 13);
+    assert_eq!(mesh::RULES.len(), 15);
+    assert_eq!(
+        mesh::FILE_RULES.len() + mesh::CLEANUP_RULES.len(),
+        mesh::RULES.len(),
+        "every rule is measured somewhere, and on one file or on the pair"
+    );
     assert!(ids.iter().all(|id| id.starts_with("mesh.")));
+}
+
+/// The two rules the file the fixer wrote is **not** read against, out of
+/// the thirteen every other mesh file is. Both would be read against
+/// something that is not true of a cleaned file.
+#[test]
+fn the_cleaned_mesh_is_read_against_every_file_rule_but_two() {
+    let dropped: Vec<&str> = mesh::FILE_RULES
+        .iter()
+        .filter(|rule| !mesh::CLEANED_RULES.iter().any(|kept| kept.id == rule.id))
+        .map(|rule| rule.id)
+        .collect();
+
+    assert_eq!(dropped, ["mesh.non_manifold", "mesh.printability"]);
+}
+
+/// `mesh.non_manifold`'s ceiling is calibrated on the mesh as it arrived,
+/// and filling a hole raises that count on purpose. After the fixer it is
+/// `mesh.non_manifold_post`'s, which is read against a ceiling of its own,
+/// so the reading is dropped here rather than failed twice.
+#[test]
+fn a_cleaned_mesh_is_not_held_to_the_ceiling_the_mesh_arrived_under() {
+    let over = SyntheticMesh::figure()
+        .with_three_faces_on_one_edge()
+        .repeated(11);
+
+    let whole = findings_of(&over);
+    let cleaned = mesh::only(&mesh::CLEANED_RULES, whole.clone());
+
+    assert_eq!(rejected(&whole, "mesh.non_manifold"), ["fixture.glb"]);
+    assert!(
+        !cleaned
+            .iter()
+            .any(|finding| finding.rule == "mesh.non_manifold"),
+        "{cleaned:#?}"
+    );
+    // And the remote rule, which asks about a task a local file has none of.
+    assert!(
+        !cleaned
+            .iter()
+            .any(|finding| finding.rule == "mesh.printability"),
+        "{cleaned:#?}"
+    );
+    assert_eq!(cleaned.len(), 11);
 }
 
 /// `--list-rules` prints the registry, and a finding is built through it, so
@@ -825,4 +891,235 @@ fn no_recorded_response_says_that_nobody_asked() {
 
     assert_eq!(remote.severity, Severity::Warning);
     assert!(remote.message.contains(mesh::NO_RESPONSE), "{remote:#?}");
+}
+
+// --- what the fixer left behind -------------------------------------------
+
+/// The pair the two post-cleanup rules read: the mesh the fixer was given,
+/// beside the mesh it wrote.
+fn cleanup_findings(before: &SyntheticMesh, after: &SyntheticMesh) -> Vec<Finding> {
+    let (before, after) = (
+        Surface::from_slice(&before.to_glb()).expect("a readable fixture"),
+        Surface::from_slice(&after.to_glb()).expect("a readable fixture"),
+    );
+    mesh::check_cleanup(
+        "clean.glb",
+        mesh::Fixed::Cleaned {
+            before: &before,
+            after: &after,
+        },
+        &profile(),
+        1,
+    )
+}
+
+/// What the fixer is given: holes, debris and crossing faces, all at once.
+fn a_mesh_worth_cleaning() -> SyntheticMesh {
+    SyntheticMesh::figure()
+        .without_a_face()
+        .plus_debris()
+        .plus_an_overlapping_box()
+}
+
+/// Both rules report on both sides of the declaration, so neither can go
+/// quiet on a character that switched the fixer off.
+#[test]
+fn every_post_cleanup_rule_reports_whether_or_not_the_fixer_ran() {
+    for findings in [
+        cleanup_findings(&a_mesh_worth_cleaning(), &SyntheticMesh::figure()),
+        mesh::check_cleanup("bare.glb", mesh::Fixed::Declined, &profile(), 1),
+    ] {
+        for rule in mesh::CLEANUP_RULES {
+            assert!(
+                findings.iter().any(|finding| finding.rule == rule.id),
+                "{} reported nothing at all",
+                rule.id
+            );
+        }
+        assert_eq!(findings.len(), 2, "a ceiling and a before-and-after");
+    }
+}
+
+/// The positive: a fixer that removed defects of both counted classes. Each
+/// pair is in the message, and their sum is what is read.
+#[test]
+fn a_cleanup_that_took_every_class_down_holds() {
+    let findings = cleanup_findings(&a_mesh_worth_cleaning(), &SyntheticMesh::figure());
+
+    assert_eq!(broken(&findings), Vec::<String>::new(), "{findings:#?}");
+    let effective = finding(&findings, "mesh.cleanup_effective");
+    assert_eq!(effective.comparison, Comparison::Lt);
+    assert_eq!(
+        (effective.measured, effective.limit),
+        (1.0, 6.0),
+        "3 holes and 3 pieces, down to one whole piece"
+    );
+    assert_eq!(
+        effective.message,
+        "the fixer took holes 3 to 0, islands 3 to 1"
+    );
+}
+
+/// Crossing faces are not counted, and the reason is measured: mirroring a
+/// mesh copies the crossings of the half it keeps. `mesh.self_intersect` is
+/// the gate that owns them, and it still fires on this fixture.
+#[test]
+fn a_fixer_that_left_more_crossing_faces_than_it_found_is_still_effective() {
+    let crossing = SyntheticMesh::figure().plus_an_overlapping_box();
+
+    let findings = cleanup_findings(&a_mesh_worth_cleaning(), &crossing);
+
+    let effective = finding(&findings, "mesh.cleanup_effective");
+    assert_eq!(effective.severity, Severity::Info, "{effective:#?}");
+    assert!(
+        !effective.message.contains("self-intersections"),
+        "{effective:#?}"
+    );
+    assert_eq!(
+        measured(
+            &findings_of(&crossing),
+            "mesh.self_intersect",
+            "fixture.glb"
+        ),
+        14.0,
+        "and the rule that owns them still counts them"
+    );
+}
+
+/// The negative the design names: a fixer stub that wrote its input back. It
+/// reads the same number it was given, and `lt` refuses it. Under `le` this
+/// is the gate that cannot fail.
+#[test]
+fn a_fixer_that_changed_nothing_is_refused() {
+    let stub = a_mesh_worth_cleaning();
+    let findings = cleanup_findings(&stub, &stub);
+
+    assert_eq!(rejected(&findings, "mesh.cleanup_effective"), ["clean.glb"]);
+    let effective = finding(&findings, "mesh.cleanup_effective");
+    assert_eq!((effective.measured, effective.limit), (6.0, 6.0));
+    assert_eq!(
+        effective.message,
+        "the fixer took holes 3 to 3, islands 3 to 3"
+    );
+}
+
+/// A class the fixer was given nothing to remove in cannot go down, and a
+/// fixer that fixed the other one is still a fixer that worked. This is what
+/// one reading per class would refuse.
+#[test]
+fn a_class_that_arrived_clean_does_not_refuse_a_fixer_that_worked() {
+    let arrived = SyntheticMesh::figure().plus_debris();
+
+    let findings = cleanup_findings(&arrived, &SyntheticMesh::figure());
+
+    let effective = finding(&findings, "mesh.cleanup_effective");
+    assert!(effective.message.contains("holes 0 to 0"), "{effective:#?}");
+    assert_eq!(effective.severity, Severity::Info, "{effective:#?}");
+}
+
+/// And the ceiling on what filling holes leaves behind. Fourteen edges each
+/// carrying three faces, against a limit of 20 minus the figure's own 0.
+#[test]
+fn a_cleaned_mesh_over_the_post_cleanup_ceiling_is_rejected() {
+    let findings = cleanup_findings(
+        &a_mesh_worth_cleaning(),
+        &SyntheticMesh::figure()
+            .with_three_faces_on_one_edge()
+            .repeated(21),
+    );
+
+    assert_eq!(rejected(&findings, "mesh.non_manifold_post"), ["clean.glb"]);
+    assert_eq!(
+        measured(&findings, "mesh.non_manifold_post", "clean.glb"),
+        21.0
+    );
+}
+
+/// One under the ceiling passes, which is what makes the test above a test
+/// of the limit rather than of the direction of the comparison.
+#[test]
+fn a_cleaned_mesh_one_edge_inside_the_post_cleanup_ceiling_is_accepted() {
+    let findings = cleanup_findings(
+        &a_mesh_worth_cleaning(),
+        &SyntheticMesh::figure()
+            .with_three_faces_on_one_edge()
+            .repeated(20),
+    );
+
+    assert_eq!(
+        rejected(&findings, "mesh.non_manifold_post"),
+        Vec::<String>::new()
+    );
+}
+
+/// `cleanup: false` is a declaration and not a measurement, so both rules
+/// say so rather than reporting a zero that would read as a clean mesh.
+#[test]
+fn a_spec_that_declines_the_cleanup_switches_both_rules_off() {
+    let findings = mesh::check_cleanup("bare.glb", mesh::Fixed::Declined, &profile(), 1);
+
+    for finding in &findings {
+        assert_eq!(finding.severity, Severity::Skipped, "{finding:#?}");
+        assert_eq!(
+            finding.message,
+            "spec.subject.cleanup is false, so no fixer ran and nothing was \
+             written to measure"
+        );
+    }
+    assert_eq!(errors(&findings).len(), 0);
+}
+
+/// A fixer that emptied the mesh leaves zero non-manifold edges, which reads
+/// as a perfect result. Both rules say there was nothing to measure instead.
+#[test]
+fn a_fixer_that_left_no_triangle_is_undefined_rather_than_a_clean_mesh() {
+    let findings = cleanup_findings(
+        &a_mesh_worth_cleaning(),
+        &SyntheticMesh::figure().made_of_lines(),
+    );
+
+    assert_eq!(findings.len(), 2);
+    for finding in &findings {
+        assert_eq!(finding.severity, Severity::Error, "{finding:#?}");
+        assert_eq!(finding.unit, "undefined measurements", "{finding:#?}");
+        assert!(finding.message.contains("no triangle"), "{finding:#?}");
+    }
+}
+
+// --- what a character that declines symmetry reports -----------------------
+
+/// `symmetry: false` switches the mirror rule off, on the declaration and
+/// never on a number: a monster can be asymmetric on purpose.
+#[test]
+fn a_character_that_declines_symmetry_skips_the_mirror_rule() {
+    let surface = Surface::from_slice(&SyntheticMesh::figure().lopsided(0.02).to_glb()).unwrap();
+
+    let findings = mesh::check(
+        "fixture.glb",
+        &surface,
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Declined,
+        None,
+        1,
+    );
+
+    let mirror = finding(&findings, "mesh.mirror");
+    assert_eq!(mirror.severity, Severity::Skipped, "{mirror:#?}");
+    assert_eq!(
+        mirror.message,
+        "spec.subject.symmetry is false, so this character is not mirrored \
+         and nothing reads it against its own reflection"
+    );
+    assert_eq!(errors(&findings), Vec::<&Finding>::new(), "{findings:#?}");
+}
+
+/// And the negative control still runs: the same fixture under a spec that
+/// asks for symmetry is still rejected, so the proof the rule works does not
+/// leave with the flag.
+#[test]
+fn the_same_lopsided_mesh_is_still_rejected_when_symmetry_is_enforced() {
+    let findings = findings_of(&SyntheticMesh::figure().lopsided(0.02));
+
+    assert_eq!(rejected(&findings, "mesh.mirror"), ["fixture.glb"]);
 }

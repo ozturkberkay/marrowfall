@@ -20,6 +20,7 @@ under `crates/xtask-art/src/check/`.
 
 | Module | `bpy` | What it is |
 | --- | --- | --- |
+| `cleanup.py` | no | what the mesh fixer does, in which order, and which pieces are debris |
 | `transfer.py` | no | the retarget maths: world matrices in, local poses out |
 | `plant.py` | no | where a foot touches the ground: contact, the lock, the leg solve |
 | `clip.py` | no | what the retarget reports: the two counts, the frame grid, where the fit ended up, and the source motion sidecar |
@@ -29,11 +30,12 @@ under `crates/xtask-art/src/check/`.
 | `findings.py` | no | the Finding record, the rule, the report, and the success sentinel |
 | `actions.py` | yes | the F-curve edits the retarget and the bake both make |
 | `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
+| `mesh_clean.py` | yes | welds, drops debris, fills holes and mirrors the bare mesh |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
 | `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
 
-The seven `bpy`-free modules are unit tested by `uv run pytest` at 100
+The eight `bpy`-free modules are unit tested by `uv run pytest` at 100
 percent coverage, with no Blender anywhere. That split is not tidiness: `bpy`
 only exists inside Blender, so a module that imports it cannot be tested at
 all.
@@ -139,6 +141,36 @@ source clip's own world orientations to
 itself is built in `clip.py`, with no `bpy`, so it is unit tested like
 everything else here.
 
+## Why the fixer measures nothing
+
+`mesh_clean.py` welds `bare.glb` at the distance the gates weld at, drops
+every object `[profile] meshes` does not name, drops the pieces under
+`[profile.cleanup] smallest_island_cubic_meters`, fills what holes are left,
+and mirrors the result when `spec.subject.symmetry` says so. It reports no
+finding at all: rule three above is that a fixer is never trusted by its own
+return code, so `crates/xtask-art/src/check/mesh.rs` reads the mesh it was
+given beside the mesh it wrote.
+
+**World space comes first**, before anything measures a size. Meshy's own
+repair extension returned FINISHED having deleted nothing, because it measured
+piece volume in local space while its checker measured world space, and this
+asset family carries a 100x node scale. Then the weld, because glTF splits a
+vertex at every UV seam and an unwelded survivor reads 13,368 boundary edges
+where it has 171. Then the debris, before the holes are filled, because a hole
+in a piece about to be deleted is not worth closing. `cleanup.ordered_steps`
+is that order, as data, and the flag that adds the mirror to the end.
+
+Measured on the stand-in described in correction 1 of T10 in the design, the
+fixer takes holes 171 to 73, pieces 7 to 2 and the worst mirror distance 3.021
+percent of width to 0.000, and it keeps the texture and the one UV layer.
+
+The mirror costs what it costs. It copies the crossing faces of the half it
+keeps, 905 to 1026, and leaves 33 more boundary edges and a second piece.
+Correction 13 measures the three ways of taking that back, and takes none:
+mirroring before the fill is worse, a weld of the seam alone recovers 6
+percent of it, and no mirror threshold between 0.5 mm and 5 mm holds every
+gate.
+
 ## Why every export asks for the rest position
 
 `clip.twist` reads its rest term off the joints of the file it is handed, so
@@ -147,8 +179,9 @@ frame the scene is on. The exporter does that by default, and a default can
 move, so `retarget_animation.py` and `strip_animation.py` both state
 `export_rest_position_armature=True`. With it off, a correct `strafe_left` fit
 reads 113.884 degrees where it should read 11.411 and 20 of its 22 roles go
-red. A unit test reads every script here and fails on an export that leaves
-the flag out.
+red. A unit test reads every script here and fails on an export that carries
+an armature and leaves the flag out. `mesh_clean.py` exports no armature at
+all, `export_skins=False`, so it is the one export with no pose to get wrong.
 
 ## Running one by hand
 

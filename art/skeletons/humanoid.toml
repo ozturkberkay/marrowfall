@@ -225,6 +225,9 @@ humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 # Meshy key on this machine could download it. **T10 downloads `bare.glb` and
 # recalibrates these rows.**
 #
+# The one row measured after the fixer, `non_manifold_post`, is calibrated on a
+# stand-in: the same mesh lifted out of `model.glb` unskinned, cleaned locally.
+#
 # Measured welded at 1e-5 m in world space, with the headroom each limit
 # leaves. The plateau that chose 1e-5 is in the design document. The last two
 # rows are not calibrations at all: one is Meshy's stated rigging limit and
@@ -233,12 +236,37 @@ humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 holes = 200                  # boundary edges. model.glb reads 171
 non_manifold_edges = 10      # edges shared by 3+ faces. model.glb reads 8
 islands = 8                  # connected pieces. model.glb reads 7
+# The one row the fixer moves the wrong way: mirroring a mesh copies the
+# crossings of the half it keeps, so the cleaned stand-in reads 1026 against
+# this 1000 and **fails today**. Recalibrate it on the real pair, not on the
+# bare mesh alone, or raise it with the headroom written down.
 self_intersections = 1000    # faces that meet. model.glb reads 861
 mirror_percent = 3.5         # of the width. model.glb reads 3.021
 # Meshy's stated limit for rigging, not a calibration.
 triangles = 300000           # model.glb reads 54,864
 # Meshy's own count, which adds boundary and non-manifold edges together.
 printability_edges = 200     # model.glb is recorded at 179
+# After the fixer, which is its own ceiling: filling a hole closes it with a
+# face that can meet two others, so this rises where `non_manifold_edges` is
+# read before any of that. PROVISIONAL, on the stand-in described above, and
+# wider than the 25 percent the row above leaves because the count it is set
+# from was not read on `bare.glb` at all.
+non_manifold_post = 20       # the stand-in's clean.glb reads 12, so 8 spare
+
+# What the fixer runs on. Read by `crates/xtask-art/src/stages.rs`, which puts
+# every one of them on Blender's argv, so no script holds a copy.
+#
+# Not ceilings: the fixer measures nothing. The weld distance is not here
+# either, because `check/gltf_mesh.rs` already owns it and two copies of one
+# distance drift apart.
+[profile.cleanup]
+# An island under this is debris the rigger would be paid to skin. About a
+# 1 cm cube: `tools/blender/tests/unit/test_cleanup.py` measures one at
+# exactly 1e-6.
+smallest_island_cubic_meters = 1e-6
+# How far a vertex may sit from its own reflection and still be mirrored onto
+# it. 1 mm on a 1.7 m body.
+symmetrize_meters = 0.001
 
 # Every published clip limit. Read by `crates/xtask-art/src/check/clip.rs`.
 #

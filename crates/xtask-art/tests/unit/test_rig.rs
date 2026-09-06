@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use glam::{DQuat, DVec3};
 use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Comparison, Finding, Report, Rule, Severity, rig};
+use xtask_art::check::{Comparison, Finding, Report, Rule, Severity, Symmetry, rig};
 use xtask_art::library::HUMANOID;
 
 use crate::rigs::{HEIGHT_METERS, HUMERUS_BELOW_HORIZONTAL, SyntheticRig};
@@ -71,14 +71,28 @@ fn under_repo(file: &str) -> PathBuf {
 
 /// Every finding for one file, at the height the survivor's spec asks for.
 fn findings_for(file: &Path) -> Vec<Finding> {
-    rig::check_file(file, &repo_root(), &profile(), HEIGHT_METERS, 1)
-        .expect("the rig rules run without a Blender")
+    rig::check_file(
+        file,
+        &repo_root(),
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Enforced,
+        1,
+    )
+    .expect("the rig rules run without a Blender")
 }
 
 /// Every finding for a hand-built rig.
 fn findings_of(fixture: &SyntheticRig) -> Vec<Finding> {
     let skeleton = Skeleton::from_slice(fixture.to_gltf().as_bytes()).expect("valid glTF");
-    rig::check("fixture.gltf", &skeleton, &profile(), HEIGHT_METERS, 1)
+    rig::check(
+        "fixture.gltf",
+        &skeleton,
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Enforced,
+        1,
+    )
 }
 
 fn errors(findings: &[Finding]) -> Vec<&Finding> {
@@ -947,4 +961,35 @@ fn a_rule_that_holds_is_information_and_never_a_warning() {
             .any(|finding| finding.comparison == Comparison::Le),
         "the angle rules read at most"
     );
+}
+
+/// `symmetry: false` switches both rig mirror rules off, on the declaration
+/// and never on a number. The rig they run on is the committed one, which
+/// breaks both when the flag is on, so this cannot pass by accident.
+#[test]
+fn a_character_that_declines_symmetry_skips_both_rig_mirror_rules() {
+    let findings = rig::check_file(
+        &committed_glb(COMMITTED[0]),
+        &repo_root(),
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Declined,
+        1,
+    )
+    .unwrap();
+
+    for rule in ["rig.mirror_length", "rig.mirror_direction"] {
+        let reported: Vec<&Finding> = findings.iter().filter(|f| f.rule == rule).collect();
+        assert_eq!(reported.len(), 6, "{rule} still reports every segment");
+        for finding in reported {
+            assert_eq!(finding.severity, Severity::Skipped, "{finding:#?}");
+            assert_eq!(
+                finding.message,
+                "spec.subject.symmetry is false, so this character is not mirrored \
+                 and nothing reads it against its own reflection"
+            );
+        }
+    }
+    // And nothing else changed: the rig's other defects are still defects.
+    assert_eq!(broken(&findings), ["rig.child_axis", "rig.humerus_angle"]);
 }

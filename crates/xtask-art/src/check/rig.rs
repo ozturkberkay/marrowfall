@@ -26,7 +26,7 @@ use super::gltf_world::{
     SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, degrees_between, gltf_to_blender,
 };
 use super::profile::{Axis, LEFT, Profile, RIGHT};
-use super::{Comparison, Finding, Rule, relative_to};
+use super::{Comparison, Finding, NOT_MIRRORED, Rule, Symmetry, relative_to};
 
 /// The stage these findings belong to, which names their report file.
 pub const STAGE: &str = "rig";
@@ -171,11 +171,19 @@ pub fn check_file(
     repo_root: &Path,
     profile: &Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     attempt: u32,
 ) -> Result<Vec<Finding>> {
     let subject = relative_to(file, repo_root);
     match Skeleton::read(file) {
-        Ok(skeleton) => Ok(check(&subject, &skeleton, profile, height_meters, attempt)),
+        Ok(skeleton) => Ok(check(
+            &subject,
+            &skeleton,
+            profile,
+            height_meters,
+            symmetry,
+            attempt,
+        )),
         // Under `bone_set`, because a file that cannot be read holds none of
         // the bones the profile requires.
         Err(error) => Ok(vec![BONE_SET.undefined(
@@ -192,6 +200,7 @@ pub fn check(
     skeleton: &Skeleton,
     profile: &Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     attempt: u32,
 ) -> Vec<Finding> {
     let rig = Measured {
@@ -199,6 +208,7 @@ pub fn check(
         skeleton,
         profile,
         height_meters,
+        symmetry,
         attempt,
     };
     [
@@ -225,6 +235,7 @@ struct Measured<'a> {
     skeleton: &'a Skeleton,
     profile: &'a Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     attempt: u32,
 }
 
@@ -422,8 +433,21 @@ impl<'a> Measured<'a> {
         rule: &Rule,
         measure: impl Fn(DVec3, DVec3) -> (f64, String),
     ) -> Vec<Finding> {
-        self.profile
-            .mirror_pairs()
+        let pairs = self.profile.mirror_pairs();
+        if self.symmetry == Symmetry::Declined {
+            return pairs
+                .into_iter()
+                .map(|pair| {
+                    rule.skipped(
+                        self.profile,
+                        &pair.segment,
+                        self.attempt,
+                        NOT_MIRRORED.to_owned(),
+                    )
+                })
+                .collect();
+        }
+        pairs
             .into_iter()
             .filter_map(|pair| {
                 let sides = [&pair.left, &pair.right].map(|(bone, tail)| {

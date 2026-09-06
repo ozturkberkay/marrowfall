@@ -661,3 +661,115 @@ async fn an_unparseable_command_line_is_an_error_rather_than_a_process_exit() {
         .to_string();
     assert!(error.contains("no-such-command"), "got: {error}");
 }
+
+/// The four combinations of the two flags, on the one command a reviewer
+/// runs by hand. Each rule reports either way: what changes is whether it
+/// measured or says which declaration switched it off.
+#[test]
+fn check_reports_every_rule_under_all_four_declarations() {
+    for (cleanup, symmetry, measured) in [
+        (true, true, 2),
+        (true, false, 2),
+        (false, true, 0),
+        (false, false, 0),
+    ] {
+        let dir = a_repo();
+        crate::support::install_skeleton(dir.path());
+        let paths = Paths::new(dir.path(), "survivor");
+        let mut spec = a_spec("survivor");
+        spec.subject.cleanup = cleanup;
+        spec.subject.symmetry = symmetry;
+        spec.save(&paths.spec()).unwrap();
+        std::fs::create_dir_all(paths.staging()).unwrap();
+        std::fs::write(paths.bare_glb(), crate::support::a_bare_mesh()).unwrap();
+        std::fs::write(paths.clean_glb(), crate::support::a_cleaned_mesh()).unwrap();
+
+        check(dir.path(), None, false).unwrap();
+
+        let mesh = a_report(dir.path(), "mesh");
+        let mirror = finding_of(&mesh, "mesh.mirror");
+        assert_eq!(
+            mirror.severity == xtask_art::check::Severity::Skipped,
+            !symmetry,
+            "symmetry {symmetry}: {mirror:#?}"
+        );
+        // The file rules read the cleaned mesh only where a fixer wrote one.
+        assert_eq!(
+            dir.path()
+                .join("art/staging/reports/cleaned.survivor.1.json")
+                .exists(),
+            cleanup,
+            "cleanup {cleanup}"
+        );
+        let pair = a_report(dir.path(), "cleanup");
+        assert_eq!(pair.findings().len(), 2);
+        assert_eq!(
+            pair.findings()
+                .iter()
+                .filter(|finding| finding.severity != xtask_art::check::Severity::Skipped)
+                .count(),
+            measured,
+            "cleanup {cleanup}: {pair:#?}"
+        );
+    }
+}
+
+/// And a character whose fixer has not run yet is unbuilt rather than
+/// broken: the rig stage is what runs it.
+#[test]
+fn check_says_when_a_character_has_no_cleaned_mesh_on_disk_yet() {
+    let dir = a_repo();
+    crate::support::install_skeleton(dir.path());
+    let paths = Paths::new(dir.path(), "survivor");
+    a_spec("survivor").save(&paths.spec()).unwrap();
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(paths.bare_glb(), crate::support::a_bare_mesh()).unwrap();
+
+    check(dir.path(), None, false).unwrap();
+
+    for stage in ["cleaned", "cleanup"] {
+        assert!(
+            !dir.path()
+                .join(format!("art/staging/reports/{stage}.survivor.1.json"))
+                .exists(),
+            "nothing to measure leaves no {stage} report"
+        );
+    }
+}
+
+/// And a character with no mesh at all, whatever it declares: a pair of
+/// skips would read as a cleanup that was measured and found switched off.
+#[test]
+fn check_says_nothing_about_the_cleanup_of_a_character_with_no_mesh() {
+    let dir = a_repo();
+    crate::support::install_skeleton(dir.path());
+    let mut spec = a_spec("survivor");
+    spec.subject.cleanup = false;
+    spec.save(&Paths::new(dir.path(), "survivor").spec())
+        .unwrap();
+
+    check(dir.path(), None, false).unwrap();
+
+    assert!(
+        !dir.path()
+            .join("art/staging/reports/cleanup.survivor.1.json")
+            .exists(),
+        "no mesh on disk leaves no report"
+    );
+}
+
+fn a_report(root: &std::path::Path, stage: &str) -> xtask_art::check::Report {
+    xtask_art::check::Report::read(
+        &root.join(format!("art/staging/reports/{stage}.survivor.1.json")),
+    )
+    .unwrap_or_else(|error| panic!("reading the {stage} report: {error:#}"))
+}
+
+fn finding_of(report: &xtask_art::check::Report, rule: &str) -> xtask_art::check::Finding {
+    report
+        .findings()
+        .iter()
+        .find(|finding| finding.rule == rule)
+        .unwrap_or_else(|| panic!("{rule} reported nothing"))
+        .clone()
+}

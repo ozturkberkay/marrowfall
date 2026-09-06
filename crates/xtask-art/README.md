@@ -12,15 +12,22 @@ cargo art check                           # validate the specs, measure the art
 cargo art check --list-rules              # every gate: limit, comparison, unit, space
 ```
 
-`check` reads the art on disk and prints one line per defect. It measures two
-files per character: the rigged `art/characters/<name>/model.glb` against the
-thirteen `rig.*` rules, and `art/staging/<name>/bare.glb`, the mesh before
-rigging, against the thirteen `mesh.*` rules. A file that is not there yet is
-reported as unbuilt, never as passing.
+`check` reads the art on disk and prints one line per defect, one report per
+rule set. It measures three files per character: the rigged
+`art/characters/<name>/model.glb` against the thirteen `rig.*` rules,
+`art/staging/<name>/bare.glb`, the mesh before rigging, against the thirteen
+`mesh.*` file rules, and `art/staging/<name>/clean.glb`, what the fixer wrote,
+against eleven of those thirteen plus the two that read the pair. A file that
+is not there yet is reported as unbuilt, never as passing.
 
-Today the committed survivor breaks seven of the `rig.*` rules, so `check`
-exits non-zero on it. The rig is regenerated later in the pipeline work, and
-the rules become required checks then.
+The cleaned file drops two of the thirteen. `mesh.non_manifold`'s ceiling is
+calibrated before the fixer and filling a hole raises that count on purpose,
+so afterwards it is `mesh.non_manifold_post`'s. `mesh.printability` asks Meshy
+about a model task, and a file written locally has none.
+
+Today the committed survivor breaks five of the `rig.*` rules, on 14 subjects
+between them, so `check` exits non-zero on it. The rig is regenerated later in
+the pipeline work, and the rules become required checks then.
 
 The `clip.*` and `source.*` rules run at their own stage boundaries rather
 than here, because each one needs something `check` does not have.
@@ -81,6 +88,76 @@ The bake scales nothing: the retarget already sized every length, so a clip
 whose own rig is not this character's size is refused there rather than
 rescaled a second time.
 
+## Cleaning the mesh before rigging
+
+Two spec flags decide what happens to the geometry, and both are off unless a
+spec says otherwise:
+
+```ron
+subject: Subject(
+    kind: Humanoid,
+    cleanup: true,   # weld, drop debris and fill holes before rigging
+    symmetry: true,  # mirror it, and hold the mirror rules to it
+),
+```
+
+`cleanup` runs `tools/blender/src/mesh_clean.py` between the model stage and
+the rigging call, on `bare.glb`, and writes `clean.glb`. It runs there and
+nowhere else: `model.glb` is already skinned, and editing geometry under a
+skin desyncs the weights. `symmetry` decides whether that fixer mirrors the
+mesh, and whether `mesh.mirror`, `rig.mirror_length` and `rig.mirror_direction`
+measure or report `skipped` on the declaration. A monster can be asymmetric on
+purpose, so this is per character.
+
+Rigging is then sent the mesh **by value**, as a `data:model/gltf-binary`
+URI, with no `input_task_id`: that field wins if both are sent, so with it
+there Meshy would rig the mesh it generated and everything the fixer did
+would be discarded. The survivor's cleaned mesh is 4.19 MB, which is 5.59 MB
+of base64. Meshy states no body size limit for `model_url`, so that number is
+what the first real call has to check.
+
+The fixer measures nothing. `check/mesh.rs` reads the mesh it was given
+beside the mesh it wrote and reports `mesh.cleanup_effective`, which is
+strictly less than the defects it started with, and `mesh.non_manifold_post`,
+which is the ceiling for what filling a hole leaves behind.
+
+**Today the survivor's cleaned mesh fails `mesh.self_intersect`**, 1026 faces
+against a provisional 1000, because mirroring copies the crossings of the half
+it keeps. So `cargo art check` exits non-zero and the rig stage refuses to
+spend on it. That row is one of the ones the recalibration below is for.
+
+### Still waiting on a Meshy key
+
+Every `[profile.mesh]` limit is calibrated on the rigged `model.glb`, or on a
+stand-in lifted out of it, because no key on this machine could download
+`bare.glb`. With a working key, in this order and for no credits until the
+last step:
+
+```sh
+export MESHY_API_KEY=...
+# 0 credits: the model task is already paid for, and its GLB is the bare mesh.
+id=$(grep -A4 'Model: StageRecord' art/characters/survivor/spec.lock | grep 'id:' | cut -d'"' -f2)
+task=https://api.meshy.ai/openapi/v1/multi-image-to-3d/$id
+url=$(curl -sH "Authorization: Bearer $MESHY_API_KEY" $task | jq -r .model_urls.glb)
+curl -sL "$url" -o art/staging/survivor/bare.glb
+
+cargo art check survivor          # the pre-cleanup set, on the real mesh
+```
+
+Then replace every `[profile.mesh]` row marked provisional with what that run
+read, plus its published headroom, and drop the marker. Run the fixer and
+measure what it wrote:
+
+```sh
+cargo art run survivor --only rig   # 5 credits: cleans, then rigs by data URI
+cargo art check survivor            # mesh.non_manifold_post, on the real clean.glb
+```
+
+`mesh.non_manifold_post` and `mesh.self_intersect` are the two rows that can
+only be set from that pair: the first is what filling holes left behind, and
+the second is the one the fixer makes worse. The rigging call is the 5 credits,
+and it is the first proof that a data URI of this size is accepted at all.
+
 Every mesh rule measures **world space first, then welded**, and says so in
 its finding. glTF splits one vertex at every UV seam, so a naive read of the
 survivor counts 13,368 boundary edges on a mesh that has 171. The weld
@@ -135,14 +212,14 @@ shared by the last two stages rather than one block per stage.
 
 The pipeline is Rust. `tools/blender/src/` holds the only Python in the repo,
 because `bpy` is Python-only and Blender is the one tool that cannot be driven
-any other way: `bake_sprites.py`, `check_source.py`, `retarget_animation.py`
-and `strip_animation.py` run inside Blender, and `clip.py`, `findings.py`,
-`framing.py`, `skeleton.py`, `source.py` and `transfer.py` are the `bpy`-free
-modules they import. `cargo art` shells out to
-`blender --background --python …` for those four, and does everything else
-itself. Every published limit those scripts report against is passed to them
-as `--limit RULE=NUMBER`, read off the same rule list `--list-rules` prints,
-so no script holds a second copy of a number.
+any other way: `bake_sprites.py`, `check_source.py`, `mesh_clean.py`,
+`retarget_animation.py` and `strip_animation.py` run inside Blender, and
+`cleanup.py`, `clip.py`, `findings.py`, `framing.py`, `skeleton.py`,
+`source.py` and `transfer.py` are the `bpy`-free modules they import.
+`cargo art` shells out to `blender --background --python …` for those five,
+and does everything else itself. Every published limit those scripts report
+against is passed to them as `--limit RULE=NUMBER`, read off the same rule
+list `--list-rules` prints, so no script holds a second copy of a number.
 
 ## Shared animations
 

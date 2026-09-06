@@ -182,3 +182,53 @@ fn every_body_plan_states_a_pose_and_only_humanoids_can_be_rigged() {
     assert!(!CharacterType::Quadruped.can_be_rigged());
     assert!(!CharacterType::Other.can_be_rigged());
 }
+
+/// The two flags the fixer reads. Off by default, so a spec written before
+/// them still loads and nothing edits geometry it was not asked to.
+#[test]
+fn a_spec_that_declares_neither_flag_loads_with_both_off() {
+    let ron = r#"CharacterSpec(
+        name: "old",
+        subject: Subject(
+            kind: Humanoid,
+            description: "written before the fixer existed",
+            height_meters: 1.7,
+            skeleton: "humanoid",
+        ),
+        animations: ["idle"],
+        remesh: Remesh(target: 30000, quads: true),
+        texture: Texture(pbr: true, resolution: K2),
+        bake: Bake(directions: 8, render_size: 256, sprite_height: 160,
+                   forearm_roll: 0.0, trim_start: 0.0),
+    )"#;
+
+    let spec: CharacterSpec = ron::from_str(ron).unwrap();
+
+    assert!(!spec.subject.cleanup, "no fixer runs unless a spec asks");
+    assert!(!spec.subject.symmetry);
+}
+
+/// A monster can be asymmetric on purpose, so only the body plan Meshy
+/// auto-rigs is cleaned and mirrored by default.
+#[test]
+fn the_template_turns_the_fixer_on_for_a_humanoid_and_off_for_the_rest() {
+    let humanoid = CharacterSpec::template("survivor", CharacterType::Humanoid);
+    assert!((humanoid.subject.cleanup, humanoid.subject.symmetry) == (true, true));
+
+    for kind in [CharacterType::Quadruped, CharacterType::Other] {
+        let spec = CharacterSpec::template("thing", kind);
+        assert!(
+            !spec.subject.cleanup && !spec.subject.symmetry,
+            "{kind:?} is not a humanoid"
+        );
+    }
+}
+
+/// The committed survivor, which is what T15 regenerates through the fixer.
+#[test]
+fn the_committed_survivor_declares_both() {
+    let root = xtask_art::cli::repo_root().unwrap();
+    let spec = CharacterSpec::load(&Paths::new(&root, "survivor").spec()).unwrap();
+
+    assert!((spec.subject.cleanup, spec.subject.symmetry) == (true, true));
+}

@@ -12,8 +12,8 @@ use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::motion::Motion;
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{
-    Artifacts, Comparison, Finding, Report, Severity, clip, every_rule, gltf_clip, mesh, rig,
-    source,
+    Artifacts, Comparison, Finding, Report, Severity, Symmetry, clip, every_rule, gltf_clip, mesh,
+    rig, source,
 };
 use xtask_art::library::HUMANOID;
 
@@ -54,8 +54,8 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        49,
-        "13 rig rules, the aim table, 13 mesh rules, 6 source rules, 13 clip \
+        51,
+        "13 rig rules, the aim table, 15 mesh rules, 6 source rules, 13 clip \
          rules and the 3 foot contact ones"
     );
     assert_eq!(
@@ -69,6 +69,8 @@ fn every_family_reaches_the_printed_rule_list() {
         "rig.child_axis",
         "rig.aim_table",
         "mesh.holes",
+        "mesh.non_manifold_post",
+        "mesh.cleanup_effective",
         "source.child_axis",
         "source.wander",
         "clip.interpolation",
@@ -340,9 +342,35 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
     let clip_glb = committed_glb("art/animations/run.glb");
     let run_keys = gltf_clip::keys(&std::fs::read(&clip_glb).unwrap()).unwrap();
     let findings = [
-        rig::check_file(&rig_glb, &root, &profile, HEIGHT_METERS, 1).unwrap(),
+        rig::check_file(
+            &rig_glb,
+            &root,
+            &profile,
+            HEIGHT_METERS,
+            Symmetry::Enforced,
+            1,
+        )
+        .unwrap(),
         aim::check_file(&rig_glb, &root, &profile, &table, table.canonical(), 1).unwrap(),
-        mesh::check_file(&mesh_glb, &root, &profile, HEIGHT_METERS, None, 1).unwrap(),
+        mesh::check_file(
+            &mesh_glb,
+            &root,
+            &profile,
+            HEIGHT_METERS,
+            Symmetry::Enforced,
+            None,
+            1,
+        )
+        .unwrap(),
+        // No committed file is a fixer's output, so what the pair of
+        // post-cleanup rules reports here is the declaration that switches
+        // them off. `test_mesh.rs` measures a real before and after.
+        mesh::check_cleanup(
+            "art/staging/survivor/bare.glb",
+            mesh::Fixed::Declined,
+            &profile,
+            1,
+        ),
         a_recorded_report("retarget.run.1").findings().to_vec(),
         a_recorded_report("fetch.run.1").findings().to_vec(),
         a_recorded_report("bake.survivor.1").findings().to_vec(),
@@ -989,4 +1017,93 @@ fn every_mapped_child_comes_off_the_profile_s_own_tails() {
     assert_eq!(children["hips"], "spine_lower");
     assert_eq!(children["neck"], "head");
     assert!(!children.contains_key("head"), "no role fills `head_end`");
+}
+
+// --- the one limit the profile does not publish ---------------------------
+
+/// `mesh.cleanup_effective` is read against the same count before the fixer
+/// ran, so the registry cannot hold its findings to a published number. It
+/// still holds them to everything else, which is what makes this an
+/// exemption rather than a hole.
+#[test]
+fn the_one_rule_with_no_published_limit_carries_its_own() {
+    let profile = profile();
+    let mut report = Report::new(mesh::STAGE, "survivor", 1);
+    report
+        .add(mesh::CLEANUP_EFFECTIVE.against(
+            "clean.glb",
+            75.0,
+            178.0,
+            1,
+            "the fixer took holes 171 to 73, islands 7 to 2".to_owned(),
+        ))
+        .unwrap();
+
+    assert!(!mesh::CLEANUP_EFFECTIVE.publishes_a_limit(&profile));
+    assert_eq!(report.off_registry(&profile), Vec::<String>::new());
+    for rule in every_rule().filter(|rule| rule.id != mesh::CLEANUP_EFFECTIVE.id) {
+        assert!(
+            rule.publishes_a_limit(&profile),
+            "{} publishes no limit either",
+            rule.id
+        );
+    }
+}
+
+/// And the exemption is per rule and not per shape: the same freedom on a
+/// rule that does publish a limit is a finding read against a number nobody
+/// printed.
+#[test]
+fn a_limit_of_its_own_on_any_other_rule_is_named_back() {
+    let mut report = Report::new(mesh::STAGE, "survivor", 1);
+    report
+        .add(mesh::HOLES.against("clean.glb", 4.0, 5.0, 1, "four".to_owned()))
+        .unwrap();
+
+    let off = report.off_registry(&profile());
+    assert_eq!(off.len(), 1, "{off:#?}");
+    assert!(off[0].contains("limit"), "{off:#?}");
+}
+
+/// The column `--list-rules` prints for it: the word `before`, where every
+/// other rule prints the number its profile publishes.
+#[test]
+fn the_rule_with_no_published_limit_prints_before_where_a_number_goes() {
+    let profile = profile();
+
+    assert_eq!(mesh::CLEANUP_EFFECTIVE.printed_limit(&profile), "before");
+    assert_eq!(mesh::HOLES.printed_limit(&profile), "200");
+}
+
+/// And [`Rule::measured`] on it files the `NaN` its limit function answers,
+/// which a report refuses: the misuse is loud rather than a finding read
+/// against a limit nobody published.
+#[test]
+fn measuring_the_rule_with_no_published_limit_is_refused() {
+    let wrong = mesh::CLEANUP_EFFECTIVE.measured(
+        &profile(),
+        "clean.glb",
+        75.0,
+        1,
+        "seventy five".to_owned(),
+    );
+
+    let error = Report::new(mesh::STAGE, "survivor", 1)
+        .add(wrong)
+        .expect_err("a report refuses a limit that is not finite")
+        .to_string();
+
+    assert!(error.contains("limit must be finite"), "got: {error}");
+}
+
+/// A skip takes no measurement, so the rule that publishes no limit files
+/// zero rather than the NaN that says there is none.
+#[test]
+fn a_rule_with_no_published_limit_can_still_be_switched_off() {
+    let skipped = mesh::CLEANUP_EFFECTIVE.skipped(&profile(), "bare.glb", 1, "off".to_owned());
+
+    assert_eq!((skipped.measured, skipped.limit), (0.0, 0.0));
+    Report::new(mesh::STAGE, "survivor", 1)
+        .add(skipped)
+        .expect("a report refuses a limit that is not finite");
 }

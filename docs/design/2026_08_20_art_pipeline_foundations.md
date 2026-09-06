@@ -508,28 +508,35 @@ subject: Subject(
 ```
 model stage -> download bare.glb  (new: the model stage fetches its own GLB)
             -> mesh gates on bare.glb, world space, then welded
-            -> blender fixer -> clean.glb -> the same gates again
+            -> blender fixer -> clean.glb -> 11 of those 13 gates again
             -> POST /rigging { model_url: "data:model/gltf-binary;base64,..." }
             -> rigged.glb -> rig gates -> rename -> characters/<char>/model.glb
 ```
 
 About 60 lines of plain `bmesh`. No addon, no credits, 55 ms. On `model.glb`
 it took islands 8 to 1, holes 171 to 27, non-manifold 8 to 13, mirror error
-3.02 to 0.00, and kept the texture and UVs.
+3.02 to 0.00, and kept the texture and UVs. **T10 built the fixer and
+measured every step of it: three of those four figures are different and one
+defect class goes the wrong way**, see correction 1 below.
 
 **Those numbers are provisional limits, not final ones.** They were measured
 on `model.glb`, the rigged file, while the gate and the fixer run on
 `bare.glb`, which still has not been downloaded (fact 10). T3 published the
 `model.glb` figures into `[profile.mesh]` with their headroom and marked every
-one for recalibration. **T10 downloads `bare.glb`, recalibrates those rows,
-and measures the first real `clean.glb` for `mesh.non_manifold_post`.**
+one for recalibration. **T10 could not download `bare.glb` either**, so it
+built the fixer against a stand-in lifted out of `model.glb`, set
+`non_manifold_post` from that, and left every row provisional. The steps a
+working key unblocks are in `crates/xtask-art/README.md`.
 
 **The two flags are independent.** `cleanup` alone decides whether the Blender
-fixer runs at all, and therefore which limit set applies, pre-cleanup or
-post-cleanup. `symmetry` alone decides whether symmetrize is part of that
-fixer and whether the three mirror rules are errors or `info`. Flipping either
-is a reviewed diff in `spec.ron`, and the negative control for each silenced
-rule still runs in CI, so the proof that the rule works never leaves with it.
+fixer runs at all, and therefore whether the two post-cleanup rules measure or
+report `skipped` on that declaration; the pre-cleanup set applies to the mesh
+as it arrived either way. `symmetry` alone decides whether symmetrize is part
+of that fixer and whether the three mirror rules measure or report `skipped`
+on **its** declaration, which is the word T2 added beside `info` for exactly
+this. Flipping either is a reviewed diff in `spec.ron`, and the negative
+control for each silenced rule still runs in CI, so the proof that the rule
+works never leaves with it.
 
 **Symmetry is per character, not global, and the reason is not convenience.**
 Monsters can be asymmetric on purpose. A one-armed thing with a tail must not
@@ -543,9 +550,22 @@ auto-rigger places joints from the mesh.
 **Cons:** symmetrize deletes one half and mirrors the other without judging
 which was right, **and it mirrors the UVs**, so an asymmetric texture detail
 such as a strap or a scar is duplicated and flipped. The model contact sheet
-is reviewed for both. Vertex count moves, so weights are recomputed, which is
-why the re-rig is in the same step. Whether Meshy returns a symmetric skeleton
-from a symmetric mesh is the bet, and it costs 5 credits to settle.
+is reviewed for both. Vertex count moves, 27,508 to 28,219 on the stand-in, so
+weights are recomputed, which is why the re-rig is in the same step. Whether
+Meshy returns a symmetric skeleton from a symmetric mesh is the bet, and it
+costs 5 credits to settle.
+
+**T10 measured four more, on the stand-in:** holes 40 to 73, pieces 1 to 2,
+crossing faces 905 to 1026, and the height 0.349 percent under the 1.700 m the
+spec asks for, because the half the mirror keeps is the shorter one. So the
+trade is one sentence: symmetrize removes all 3.021 percent of the asymmetry
+and makes three topology counts worse, one of them past its published ceiling.
+This decision was accepted on the condition that it "makes things better
+without worsening things we care about", and on the stand-in that does not
+hold for `mesh.self_intersect`. The real `bare.glb` is what decides:
+correction 1 of T10 has every reading and what a human does about the
+crossings row, and correction 13 has the three alternatives that were measured
+and refused.
 
 **Rationale:** Accepted, on for the survivor.
 
@@ -843,6 +863,7 @@ tools/blender/src/
   plant.py                  # NEW  pure maths: contact detection, 2 bone IK
   findings.py               # NEW  the shared Finding record and JSON writer
   retarget_animation.py     # bpy glue only: import, map, transfer, export
+  cleanup.py                # NEW  the fixer's order and decisions, no bpy
   mesh_clean.py             # NEW  the fixer only. It measures nothing
   concept_check.py          # NEW  image checks before the Meshy call
   bake_sprites.py           # root motion in world space, fps from source_fps
@@ -1002,8 +1023,8 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `rig.world_height` | 5 percent of `spec.subject.height_meters` | le |
 | `rig.bind_deviation`, `rig.aim_table` | 75 deg | le |
 | `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
-| `mesh.non_manifold_post` | set by **T10**, the first task that produces `clean.glb` | le |
-| `mesh.cleanup_effective` | the pre-fixer count, over holes, islands and self-intersections only | **lt** |
+| `mesh.non_manifold_post` | 20 edges, from the 12 T10 measured on the stand-in's `clean.glb`. Provisional until a real one exists | le |
+| `mesh.cleanup_effective` | the pre-fixer count, over holes and islands. Self-intersections left the set in T10, correction 1, because mirroring copies them | **lt** |
 | `bake.in_frame`, `bake.pivot` | 1 px of alpha inset, 1 px of ground-line drift | ge, le |
 | `bake.forearm_roll` | 0.0 | eq |
 | `bake.sampled_frames_are_keys` | 0 rendered frames that are not authored keys | eq |
@@ -1025,7 +1046,14 @@ it.**
 | `mesh.world_size` | 1.6999997 m, 1.5e-5 percent off 1.700 | `height_tolerance_percent`, 5 percent | the whole band | le |
 | `mesh.budget` | 54,864 triangles | 300,000, Meshy's stated rigging limit | 245,136, 82 percent | le |
 | `mesh.printability` | not measurable, no key. The design records 179 | 200 | 21, 12 percent | le |
+| `mesh.non_manifold_post` | 12 edges, on the stand-in's `clean.glb` | 20 | 8, 40 percent | le |
 | `mesh.facing`, `stray_object`, `uv`, `texture`, `quads` | 0 defects each | 0. A count of defects has no tunable limit, so these join the `rig.*` family whose limit is not a `[profile]` number | none, by design | eq |
+
+**The `[profile.cleanup]` table is not limits.** It is the two sizes the fixer
+acts at, published so no script holds a copy: `smallest_island_cubic_meters`
+at 1e-6, which is a 1 cm cube measured exactly in `test_cleanup.py`, and
+`symmetrize_meters` at 0.001. The weld distance is not there, because
+`check/gltf_mesh.rs` already owns it and two copies of one distance drift.
 
 **Retarget errors are typed values** (requirement 7), never printed strings:
 
@@ -1271,6 +1299,14 @@ through the glTF node chain and then welded, and reports the pair. Both are
 unskinned, which is why the node chain is the whole transform there and why a
 skinned file needs fact 20's path instead.
 
+**T10 built this and corrected two lines of it.** Every step is a `bmesh`
+operation, the mirror included, so the last line is
+`bmesh.ops.symmetrize(direction="X", dist=...)`, which is the same half and
+the same threshold under the spelling that API accepts. Every constant
+arrives on argv from `[profile.cleanup]` and from the weld distance
+`check/gltf_mesh.rs` owns, so none of the four numbers above is written in
+Python at all. Corrections 5 and 10 have both measurements.
+
 ## Edge Cases & Constraints
 
 - **A gate that measures the wrong representation gives precise, wrong
@@ -1395,11 +1431,11 @@ it can honestly measure does fail. See the correction below.
 | `concept.cross_view` | the four committed views | `[synth]` a side view scaled 8 percent | pairwise silhouette height and centroid, T11 |
 | `mesh.printability` | a recorded response | `[synth]` a recorded response over the ceiling, `13368` edges and `is_watertight: false` | **not calibrated: the Meshy key answers 401, so no response could be recorded.** The ceiling of 200 comes from the design's own 179. `is_watertight` is Meshy's summary of the same count, so it goes in the message and is not measured twice |
 | `mesh.holes` | `model.glb`, world then welded, 171 | `[synth]` 67 boxes each missing a face, 201 edges against 200, **plus** 66 of them at 198, which passes. `[mut]` the same file unwelded, 13,368 | T3, on `model.glb`. Provisional |
-| `mesh.non_manifold` | `model.glb`, welded, 8 | `[synth]` 11 edges each carrying 3 faces, against a limit of 10 | T3, on `model.glb`. **This row was missing from the design**, see the correction below |
-| `mesh.non_manifold_post` | `clean.glb` | `[synth]` 3 faces on one edge | **T10**, the first task that can produce `clean.glb`. On `model.glb` the fixer took 8 to 13 |
+| `mesh.non_manifold` | `model.glb`, welded, 8 | `[synth]` 11 edges each carrying 3 faces, against a limit of 10 | T3, on `model.glb`. **This row was missing from the design**, see the correction below. A file the fixer wrote is not read against it: T10, correction 8 |
+| `mesh.non_manifold_post` | the stand-in's `clean.glb`, 12 edges against a ceiling of 20 | `[synth]` 21 boxes each with 3 faces on one edge, against that ceiling, **plus** 20 of them, which passes | **T10**, on the stand-in of correction 1. Provisional: the file it is set from is not `bare.glb` cleaned |
 | `mesh.quads` | `model.glb`, every primitive is triangles | `[synth]` a primitive declared as lines, which every other rule then reports as undefined | glTF has no quad mode, so what this rule reads is whether the surface is readable at all. **It was specified as `info`, never `error`**, see the correction below |
 | `mesh.islands` | `model.glb`, welded, 7 | `[synth]` 9 separate boxes against a limit of 8. A 5 mm cube inside the mesh is the second piece and is asserted at 2 | T3, on `model.glb`. Provisional |
-| `mesh.self_intersect` | `model.glb`, welded, via `parry3d`, 861 | `[synth]` 80 interpenetrating box pairs, 1,120 faces against 1,000. One pair alone is asserted at 14, and a 5 mm cube **inside** the mesh at 0 | T3, on `model.glb`. **The design's 16 could not be reproduced**, see the correction below |
+| `mesh.self_intersect` | `model.glb`, welded, via `parry3d`, 861 | `[synth]` 80 interpenetrating box pairs, 1,120 faces against 1,000. One pair alone is asserted at 14, and a 5 mm cube **inside** the mesh at 0 | T3, on `model.glb`. **The design's 16 could not be reproduced**, see the correction below. **T10: the cleaned stand-in reads 1026 and fails this row**, correction 1 |
 | `mesh.mirror` | `model.glb`, 3.021 percent, inside its own pre-fixer limit | `[synth]` one side pushed out 2 cm on a 32 cm figure, 6.25 percent against 3.5 | T3, on `model.glb`. Agrees with fact 9's independent kd-tree pass to three decimals |
 | `mesh.world_size` | through the node chain, 1.6999997 m | `[mut]` the same vertex data with the node's scale taken out of the file, 170 m. `model.glb` cannot serve: its own vertex coordinates are already in meters, so a local read is right there by accident | 1.6999997 against a spec of 1.700, 1.5e-5 percent, against `height_tolerance_percent` |
 | `mesh.facing` | `model.glb`, +Z in glTF Y-up, 0.8 degrees off | `[synth]` the same mesh yawed **180**, which reads -Z, and yawed **90**, which reads X | the horizontal step from the whole body's center to the center of its lowest 5 percent, named by the closest of six axes. **Not the foot island**, see the correction below |
@@ -1407,7 +1443,8 @@ it can honestly measure does fail. See the correction below.
 | `mesh.budget` | `model.glb`, 54,864 triangles under 300,000 | `[synth]` a strip of 300,001 triangles | `model.glb` reads 54,864 tris against the spec's 30,000 target, which is a remesh hint and not a gate |
 | `mesh.uv` | `model.glb`, one tile in [0,1] | `[synth]` a UV at 1.4, at -0.2, and a NaN | 0 out-of-bounds on `model.glb`, counted **as delivered**, before the weld: a seam is one position carrying two coordinates |
 | `mesh.texture` | `model.glb`, 0 primitives with no base color image | `[synth]` the same GLB with its material's base color stripped | rigging's own precondition |
-| `mesh.cleanup_effective` | a real run, holes 171 to 27 | `[synth]` a fixer stub that changes nothing, 8 lt 8 fails | the before and after pair. Non-manifold is excluded and owned by `non_manifold_post` |
+| `mesh.cleanup_effective` | the stand-in run: holes 171 to 73 and pieces 7 to 2, so 75 lt 178 | `[synth]` a fixer stub that wrote its input back, 6 lt 6 fails. Plus `[synth]` a class that arrived clean, which must not refuse a fixer that worked | the before and after pair. Non-manifold and self-intersections are both excluded and both have a ceiling of their own: see T10, correction 1 |
+| `mesh.mirror`, `rig.mirror_length`, `rig.mirror_direction` under `symmetry: false` | all three report `skipped` on the declaration, and every segment still reports | `[art]` the committed rig, which breaks both `rig.*` rules while the flag is on, and `[synth]` the lopsided mesh, which still fails `mesh.mirror` while it is on | the flag, on all four combinations of it and `cleanup`, through `cargo art check` |
 | `rig.bone_set` | `[art]` the committed rig, which carries all 24 after T5's rename | `[art]` `crates/xtask-art/tests/fixtures/humanoid_before_rename.glb`, the same file before it. Measured: 3 of 24 names absent | the 24 committed names, each present exactly once |
 | `rig.parents` | `[art]` the committed rig, where all 23 hang as the profile says | `[art]` the pre-rename fixture, `Spine` above `Spine02`. Measured: 4 bones hang wrong, `Spine`, `Head`, and both shoulders | the committed parent map |
 | `rig.single_root` | `humanoid.glb`, where every joint descends from `Hips` | `[synth]` `LeftUpLeg` parented outside `Hips`, which takes its whole branch with it, 4 bones | `humanoid.glb` |
@@ -1576,8 +1613,9 @@ wrong number, which is the failure this whole document exists to stop.
 - `check/clip.rs`'s split against the same two numeric cases as the Python
   side, so the two implementations are pinned to one external answer.
 - The `print/analyze` parser against a recorded response.
-- The rigging body: `model_url` present and `input_task_id` absent when
-  `cleanup` is on, and the reverse when off.
+- The rigging body: `model_url` present and `input_task_id` absent, with the
+  cleaned mesh when `cleanup` is on and the bare one when it is off. See T10,
+  correction 11.
 - The Blender argv builder: exact flag order, and a test that fails if
   `--python-exit-code` or `--python-use-system-env` is missing.
 - A lint test that fails if `transform_apply` appears anywhere in
@@ -1595,9 +1633,10 @@ wrong number, which is the failure this whole document exists to stop.
 **Integration, `cargo nextest --test integration`:** `cargo art check` on the
 committed art produces the same report twice. A stage that fails a gate leaves
 the report and does not advance the lock. With the network unavailable,
-`print/analyze` reports `warning` and the build continues. With
-`symmetry: false` the mirror rules report `skipped` and their negative
-controls still run.
+`print/analyze` reports `warning` and the build continues. The four
+combinations of `cleanup` and `symmetry` are unit tests instead, through
+`cargo art check`: no thread and no channel is involved, so the tier the
+design named for them buys nothing.
 
 **End to end, `cargo nextest --test e2e`:** T16 launches Godot headless, loads
 every atlas and manifest, and greps the log, because Godot exits 0 on a script
@@ -1979,8 +2018,8 @@ changes a sprite rate, or asserts a strict T-pose bind.
    file read against the `rig.*` rules goes from 13 defects to 18:
    `rig.mirror_direction` on `Leg` from 1.042 to 110.848 degrees, plus
    `rig.world_height`, `rig.bind_deviation` and `rig.facing` on both feet.
-   A unit test scans every Blender script and fails on an export that leaves
-   the flag to the default.
+   A unit test scans every Blender script and fails on an export that carries
+   an armature and leaves the flag to the default.
 
 8. **What the 11.411 degrees is made of, per role.** The limit is 15.0 and
    the worst real reading is 11.411, which is thin. Each number below is one
@@ -2496,6 +2535,205 @@ changes a sprite rate, or asserts a strict T-pose bind.
     copy of the same joints reads 1.665169 m, and taking it would leave the
     two sites 7e-8 m apart on the ceiling for no reason.
 
+### Corrections T10 made to this document
+
+Every number here is measured on a **stand-in**, and that is the first
+correction. `bare.glb` still has not been downloaded, because the only Meshy
+key on this machine answers 401, so T10 lifted the survivor's mesh out of the
+committed `model.glb` instead: imported, the armature modifier applied at its
+rest position, the parent cleared with the world transform kept, and exported
+unskinned to `art/staging/survivor/bare.glb`. That file is a faithful stand-in
+and the readings prove it: welded it measures holes **171**, non-manifold
+**8**, pieces **7**, mirror **3.021047 percent** and 54,864 triangles, which
+is `model.glb` exactly, and self-intersections **859** against 861, two fewer
+because the export re-split 16 vertices. It carries the same shape as the real
+family too: one `char1` node at a 0.01 scale over vertex coordinates 100x
+larger, one image, one UV layer.
+
+1. **The fixer makes two of the four defect classes worse, and
+   `cleanup_effective` cannot count either.** Measured end to end on the
+   stand-in, each step in the order the Logic section states:
+
+   | After | holes | non-manifold | pieces | crossing faces | mirror | height error |
+   |---|---|---|---|---|---|---|
+   | nothing, as downloaded | 171 | 8 | 7 | 859 | 3.021 | 0.000 |
+   | weld, then drop debris | 111 | 8 | 1 | 848 | 3.021 | 0.000 |
+   | fill holes | 40 | 11 | 1 | 905 | 3.021 | 0.000 |
+   | symmetrize | **73** | **12** | **2** | **1026** | **0.000** | **0.349** |
+
+   The third row is also what a `symmetry: false` character gets: a real run
+   with the flag off writes exactly it, and leaves the mirror distance at
+   3.021 rather than driving it to zero.
+
+   The height move is not an artifact. Measured before the mirror, the +X
+   half of the body is **1.694069 m** tall and the -X half **1.699935 m**,
+   and `direction="X"` keeps the +X one, so the mirrored body is 5.93 mm
+   shorter than the 1.700 m it arrived at. That is the kept half's own
+   height, 0.349 percent, well inside `mesh.world_size`'s 5 percent band.
+
+   Filling a hole closes it with a face that can meet two others, which is
+   what `non_manifold_post` was already published for: 8 to 11. **Mirroring
+   is the one the design did not see.** It copies the geometry of the half it
+   keeps, so the crossings inside that half are duplicated: 848 to 1026, plus
+   33 boundary edges and a second piece where the mirrored surface meets the
+   original. So a symmetrized mesh cannot be expected to have fewer crossing
+   faces, and `mesh.cleanup_effective` counts **holes and pieces only**. On
+   the stand-in that is 178 to 75.
+
+   Self-intersections keep their own gate, `mesh.self_intersect`, and the
+   cleaned stand-in reads **1026 against its provisional ceiling of 1000**.
+   The file rules run on the file that gets rigged, so that is a failing gate
+   today: `cargo art check` exits non-zero on the survivor and `rig()` refuses
+   to spend 5 credits on the mesh. There are two ways out and neither is
+   silent. Recalibrate on the real `bare.glb` cleaned, which is what the row
+   was marked for from T3 on. Or raise the ceiling, with the measured
+   headroom written beside it the way every other row states its own. This is
+   also why the row cannot be recalibrated on `bare.glb` alone: it has to
+   cover what the fixer leaves.
+
+2. **One reading over the classes, not one per class.** The design's prose
+   says "holes, islands and self-intersections strictly decreasing", which as
+   a rule per class refuses a fixer that was handed a class with nothing to
+   remove: 0 crossing faces in and 0 out reads 0 lt 0 and fails. That is a
+   gate failing on good art, and the synthetic fixture hit it on the first
+   run. So the rule sums the classes it counts, names each pair in the
+   message, and the stub the design asks it to reject still reads the same
+   number it was given. The one input it cannot pass is a mesh with no holes
+   and one piece, which is a mesh no generator this pipeline uses has
+   produced and which needs no fixer at all.
+
+3. **`mesh.cleanup_effective` publishes no limit, and the registry had no way
+   to say so.** Its limit is the subject's own count before the fixer ran, so
+   `[profile]` cannot state it. The rule answers `NaN` from its limit
+   function, `Rule::publishes_a_limit` is how anything asks, `Rule::against`
+   builds its findings, and `--list-rules` prints the word `before` where
+   every other rule prints a number. `Report::off_registry` then holds those
+   findings to the comparison, the unit, the space and the severity, and to
+   everything but the one number nobody published. `Rule::measured` on that
+   rule would file the NaN, which a report refuses, so the misuse is loud.
+
+4. **The importer's `Icosphere` needs an armature, and sits in a collection
+   the exporter ignores.** T5's correction 14 owns this: the object is
+   Blender's glTF importer and not the art. What T10 adds is where it goes
+   and when, because the fixer imports and exports: the collection is
+   `glTF_not_exported`, Blender's own exporter skips it, and importing the
+   unskinned stand-in adds no such object at all, because it carries no
+   armature.
+
+5. **Every hole is filled, and the alternative is measured.**
+   `bmesh.ops.holes_fill` defaults to `sides=4`, which fills only holes of up
+   to four edges. On the stand-in that default takes holes 111 to 96 for 4
+   extra crossing faces, where `sides=0` takes them to 40 for 57. The fixer
+   fills everything, because closing the surface is what rigging needs, and
+   both readings are here so the choice is a measurement rather than a
+   default nobody looked at.
+
+6. **The fixer measures nothing, and the image and UV layer counts it prints
+   are a log line.** Rule three is that the fixer never reports on its own
+   work, so `mesh_clean.py` writes no report at all and the runner refuses one
+   if it ever does. What proves the texture survived is `mesh.texture` and
+   `mesh.uv` on `clean.glb`, in Rust: measured, in
+   `art/staging/reports/cleaned.survivor.1.json`, the cleaned stand-in reports
+   0 primitives with no base color image and 0 texture coordinates outside
+   the tile, and the fixer's own `key=value` line says `images=1 uv_layers=1`.
+
+7. **The mirror flag reaches three rules and the fixer, and the cleanup flag
+   reaches two rules.** `symmetry: false` puts `--symmetry false` on Blender's
+   argv and reports `mesh.mirror`, `rig.mirror_length` and
+   `rig.mirror_direction` as `skipped`, each on every subject it owns, with
+   one sentence both sides share. `cleanup: false` runs no Blender at all and
+   reports `mesh.non_manifold_post` and `mesh.cleanup_effective` as `skipped`,
+   with the pre-cleanup set still applying to the mesh as it arrived. All four
+   combinations are pinned through `cargo art check`, and the negative control
+   of every silenced rule still runs with the flag on.
+
+8. **The rule list is 51, and the `mesh.*` family has three sets.** T9's 49
+   plus the two post-cleanup ones. `FILE_RULES` is the thirteen read off one
+   file, `CLEANUP_RULES` is the two read off the pair, and `RULES` is what
+   `--list-rules` prints. `CLEANED_RULES` is the third: eleven of the
+   thirteen, because two cannot honestly be read on a file the fixer wrote.
+   `mesh.non_manifold`'s ceiling is calibrated before the fixer and filling a
+   hole raises that count on purpose, so after the fixer it is
+   `mesh.non_manifold_post`'s, and one count against two limits is one of
+   them wrong. `mesh.printability` asks Meshy about a model task, and a local
+   file has none, so it could only ever warn that nobody answered.
+
+9. **The gate runs before the money, inside the rig stage, and writes three
+   reports.** `clean_mesh` measures the mesh as it arrived, runs the fixer,
+   measures the file it wrote and then the pair, writes
+   `mesh.<char>.1.json`, `cleaned.<char>.1.json` and `cleanup.<char>.1.json`,
+   and refuses to go on if any of them holds an error. One report per rule
+   set, because `cargo art check` writes the same three by hand and a stage
+   name carrying two shapes would have one producer overwrite the other's
+   file. Rigging is then handed the file by value: 4.19 MB of GLB is
+   **5,592,166 characters** of `data:model/gltf-binary;base64,...`, and
+   `input_task_id` is absent, because it wins if both are sent and the
+   cleanup would be discarded. Meshy states no body size limit, so that
+   number is what the first real call has to check.
+
+10. **The mirror runs through `bmesh`, and `POSITIVE_X` is not a word it
+    knows.** The Logic block calls `bpy.ops.mesh.symmetrize`, which needs an
+    edit-mode context; every other step here is a `bmesh` operation, so the
+    mirror is one too. `bmesh.ops.symmetrize` takes `direction` out of
+    `['-X', '-Y', '-Z', 'X', 'Y', 'Z']` and rejects `+X`, and measured on a
+    box with a spike out at +X only, `direction="X"` keeps the spike and
+    copies it to -X while `-X` deletes it. So `"X"` is the operator's
+    `POSITIVE_X`, proved rather than assumed, and `dist` is its `threshold`.
+
+11. **The mesh goes by value whether or not the fixer ran.** The Test Plan
+    asked for `input_task_id` when `cleanup` is off. It is never sent: with
+    the flag off the request carries `bare.glb`, and the file that was
+    measured is then the file that gets rigged, on one code path instead of
+    two. `input_task_id` wins if both are sent, so having it in the body at
+    all is the failure this is avoiding.
+
+12. **Still blocked, and where the steps are.** No Meshy call happened in
+    T10: `MESHY_API_KEY` is unset and the stored key answers 401. So
+    `bare.glb` is a stand-in, `non_manifold_post` is provisional, and the
+    5-credit rigging call by data URI is unproven. The exact sequence a key
+    unblocks is in `crates/xtask-art/README.md`, under "Still waiting on a
+    Meshy key": fetch the paid model task's own GLB for 0 credits, run
+    `cargo art check`, replace every provisional row with what it read,
+    re-run the rig stage for the 5 credits, and measure `clean.glb`.
+
+13. **The mirror's cost is inherent: three ways out measured, none adopted.**
+    The extra 33 boundary edges, the second piece and the 121 extra crossings
+    of correction 1 look like an unmerged seam at X = 0, so every way of
+    removing one was measured on the stand-in, through the fixer's own code
+    and read by the Rust gates off each exported step:
+
+    | Ordering, at the last step | holes | non-manifold | pieces | crossings | mirror | height |
+    |---|---|---|---|---|---|---|
+    | fill, then mirror: the design's | **73** | **12** | **2** | **1026** | 0.000 | 0.349 |
+    | mirror, then fill | 62 | 14 | 2 | 1052 | 0.000 | 0.349 |
+    | the design's, then a weld of the seam alone at 1 mm | 71 | 11 | 2 | 1006 | 0.000 | 0.349 |
+    | the same, and fill a second time | 60 | 13 | 2 | 1012 | 0.000 | 0.349 |
+
+    Mirroring first is worse on two counts and better on one, so the order
+    stands. The seam weld merges 14 vertices and recovers 2 of the 33
+    boundary edges, 1 of the 4 non-manifold edges and 20 of the 121
+    crossings: 6 percent of the cost, for a step and a test, and no gate
+    changes its verdict. Filling again after it trades those non-manifold
+    edges back. So the seam is only part of the cost, the rest is inherent to
+    copying a half, and the fixer keeps the order the Logic block states.
+
+    The mirror threshold was swept on that order, and nothing here holds
+    every gate either:
+
+    | `symmetrize_meters` | holes | non-manifold | pieces | crossings |
+    |---|---|---|---|---|
+    | 0.0005 | 60 | 6 | 1 | 1080 |
+    | **0.001, published** | 73 | 12 | 2 | 1026 |
+    | 0.0015 | 103 | 32 | 2 | 980 |
+    | 0.002 | 119 | 46 | 1 | 973 |
+    | 0.005 | 274 | 189 | 1 | 1404 |
+
+    0.0005 is better on holes, non-manifold and pieces, including no second
+    piece at all, and worse on the one row already over its ceiling. 0.0015
+    and 0.002 buy that row by taking `non_manifold_post` past its 20. So the
+    published 0.001 stays, and this table is where a recalibration on the
+    real `bare.glb` starts rather than a fresh guess.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -2587,7 +2825,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Add `source.child_axis`, `info` only, measuring each source bone's own axis against the direction to its mapped child, because a vendor skeleton is not ours to fix and correction 6 is the reason it has to be on record. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy, splitting the up axis off as `clip.root_bob` because the strip keeps it (correction 2), and record the excursion the strip removes as `source.wander` at the fetch (correction 1). Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on both horizontal axes and the bob under 15 cm on the up one. `source.child_axis` records Mixamo's `Neck` at 16.933 degrees and its `Hips` at 7.051. No sprite rate changes. | T5 |
 | T8  | Floor snap, and the femur band | 1.5 d | **T5 already moved the metric**: `stride_segment` in the skeleton file names the two roles, and every location key is scaled by that ratio in one operation. What is left here is the floor: snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`, and hold travel to a band rather than to a printed line. | Requirement 4 holds. Travel matches the source within 2 percent, which T5 measures by hand at 2.3117 m times 0.8815 giving 2.0378 m and does not yet gate. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
-| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **Recalibrate every `[profile.mesh]` row on `bare.glb`, which T3 could not download, and measure the first real `clean.glb` for `mesh.non_manifold_post`.** | **A real 5-credit rigging call with a data URI succeeds**, or the short-lived upload fallback ships instead. `cleanup_effective` shows holes, islands and self-intersections strictly decreasing. `non_manifold_post`'s ceiling is a measured number and every later run stays inside it. No `[profile.mesh]` row still says provisional. Texture and UVs survive. The no-op stub is rejected at 8 lt 8. With `symmetry: false` the fixer skips it, the mirror rules report `skipped`, and their negative controls still run. | T3 |
+| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **`bare.glb` could not be downloaded here either**, so the fixer is built and measured against a stand-in lifted out of `model.glb`, every `[profile.mesh]` row stays provisional, and the 5-credit call is left with its steps written down. | The fixer runs, and `cleanup_effective` shows the classes it counts strictly decreasing: holes 171 to 73 and pieces 7 to 2 on the stand-in. `non_manifold_post`'s ceiling is a measured 12 with 8 spare. The file rules run on both meshes, so texture and UVs are measured on the file that gets rigged, and **that file fails `mesh.self_intersect` at 1026 against 1000**: the honest signal correction 1 is about. The no-op stub is rejected. With `symmetry: false` the fixer skips the mirror, the three mirror rules report `skipped`, and their negative controls still run. **Blocked on a key: the recalibration on the real `bare.glb` and the real 5-credit rigging call by data URI**, whose exact steps are in `crates/xtask-art/README.md`. | T3 |
 | T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, `force = true`, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two called `concept` with `force = true`. `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
 | T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, every animation GLB, `pose_mode`, the Blender version and the script version into the right stages. Add `Model` to the version guard. Add `verdict` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. | T1 |

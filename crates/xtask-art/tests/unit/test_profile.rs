@@ -35,6 +35,11 @@ self_intersections = 1000
 mirror_percent = 3.5
 triangles = 300000
 printability_edges = 200
+non_manifold_post = 20
+
+[profile.cleanup]
+smallest_island_cubic_meters = 1e-6
+symmetrize_meters = 0.001
 
 [profile.clip]
 swing_degrees = 0.01
@@ -113,6 +118,9 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.mesh.mirror_percent, 3.5);
     assert_eq!(profile.mesh.triangles, 300_000.0);
     assert_eq!(profile.mesh.printability_edges, 200.0);
+    assert_eq!(profile.mesh.non_manifold_post, 20.0);
+    assert_eq!(profile.cleanup.smallest_island_cubic_meters, 1e-6);
+    assert_eq!(profile.cleanup.symmetrize_meters, 0.001);
     assert_eq!(profile.clip.swing_degrees, 0.01);
     assert_eq!(profile.clip.twist_degrees, 15.0);
     assert_eq!(profile.clip.fps_grid_frames, 1e-4);
@@ -489,6 +497,7 @@ fn a_mesh_ceiling_that_is_not_a_positive_number_is_refused() {
         ("mirror_percent", "3.5"),
         ("triangles", "300000"),
         ("printability_edges", "200"),
+        ("non_manifold_post", "20"),
     ] {
         for value in ["0.0", "-1.0", "nan"] {
             let error = refused(&[(
@@ -507,4 +516,32 @@ fn a_profile_with_no_mesh_table_is_refused() {
     let error = refused(&[("[profile.mesh]", "[profile.unread]")]);
 
     assert!(error.contains("mesh"), "got: {error}");
+}
+
+/// The two numbers the fixer runs on. A weld or a mirror threshold of zero
+/// merges nothing and mirrors nothing, so the fixer would report success
+/// having changed the mesh not at all.
+#[test]
+fn a_cleanup_parameter_that_is_not_a_positive_number_is_refused() {
+    for (field, declared) in [
+        ("smallest_island_cubic_meters", "1e-6"),
+        ("symmetrize_meters", "0.001"),
+    ] {
+        for value in ["0.0", "-1.0", "nan"] {
+            let error = refused(&[(
+                &format!("{field} = {declared}"),
+                &format!("{field} = {value}"),
+            )]);
+            assert!(error.contains(field), "cleanup.{field} = {value}: {error}");
+        }
+    }
+}
+
+/// And a profile with no cleanup table at all: the fixer reads every number
+/// it runs on from here, so a missing table is a fixer with none.
+#[test]
+fn a_profile_with_no_cleanup_table_is_refused() {
+    let error = refused(&[("[profile.cleanup]", "[profile.unread]")]);
+
+    assert!(error.contains("cleanup"), "got: {error}");
 }

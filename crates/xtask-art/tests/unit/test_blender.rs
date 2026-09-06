@@ -529,7 +529,49 @@ fn no_blender_script_applies_an_object_transform() {
     }
 }
 
-/// The one thing every glTF export must ask for.
+/// Every size the fixer acts at is published to it on argv, so no second
+/// copy of one can drift from the profile that states it.
+#[test]
+fn the_mesh_fixer_holds_no_size_of_its_own() {
+    let scripts = blender_scripts();
+    let fixer = |wanted: &str| {
+        let (_, source) = scripts
+            .iter()
+            .find(|(name, _)| name == wanted)
+            .unwrap_or_else(|| panic!("{wanted}"));
+        code_lines(source).join("\n")
+    };
+    let shell = fixer("mesh_clean.py");
+
+    for read in [
+        "args.weld",
+        "args.island_volume",
+        "args.symmetry_threshold",
+        "args.symmetry",
+        "args.meshes",
+    ] {
+        assert!(shell.contains(read), "mesh_clean.py never reads {read}");
+    }
+    // Both halves of the fixer: the shell that runs it and the module that
+    // decides what it does. The weld distance, the island floor, the mirror
+    // threshold and the one mesh name the profile allows, in every spelling
+    // Python would print.
+    for (name, code) in [
+        ("mesh_clean.py", shell),
+        ("cleanup.py", fixer("cleanup.py")),
+    ] {
+        for published in [
+            "1e-5", "1e-05", "0.00001", "1e-6", "1e-06", "0.000001", "0.001", "char1",
+        ] {
+            assert!(
+                !code.contains(published),
+                "{name} holds {published}, which the runner already publishes"
+            );
+        }
+    }
+}
+
+/// The one thing every glTF export that carries an armature must ask for.
 ///
 /// `clip.twist` reads its rest term off the joints of the file it is handed,
 /// so the armature has to leave Blender at its rest position. That is the
@@ -540,31 +582,34 @@ const REST_POSITION: &str = "export_rest_position_armature=True";
 
 const EXPORT: &str = "export_scene.gltf(";
 
-#[test]
-fn every_gltf_export_asks_for_the_armature_at_its_rest_position() {
-    let exporting: Vec<(String, usize, usize)> = blender_scripts()
-        .iter()
-        .map(|(name, source)| {
-            let code = code_lines(source).join("\n");
-            (
-                name.clone(),
-                code.matches(EXPORT).count(),
-                code.matches(REST_POSITION).count(),
-            )
-        })
-        .filter(|(_, exports, _)| *exports > 0)
-        .collect();
+/// An export with no armature in it has no pose to get wrong, which is the
+/// mesh fixer: it writes geometry and drops every skin.
+const WITH_ARMATURE: &str = "export_skins=True";
 
-    // A rename that left nothing exporting would pass without proving
-    // anything: the retarget and the strip are the two that write a GLB.
-    assert_eq!(exporting.len(), 2, "found {exporting:#?}");
-    for (name, exports, at_rest) in exporting {
+#[test]
+fn every_gltf_export_that_carries_an_armature_asks_for_its_rest_position() {
+    let mut written = (0, 0);
+    for (name, source) in blender_scripts() {
+        let code = code_lines(&source).join("\n");
+        let (skinned, at_rest) = (
+            code.matches(WITH_ARMATURE).count(),
+            code.matches(REST_POSITION).count(),
+        );
         assert_eq!(
-            exports, at_rest,
-            "{name} exports {exports} time(s) and asks for the rest position \
-             {at_rest} time(s)"
+            skinned, at_rest,
+            "{name} exports {skinned} armature(s) and asks for the rest \
+             position {at_rest} time(s)"
+        );
+        written = (
+            written.0 + code.matches(EXPORT).count(),
+            written.1 + skinned,
         );
     }
+
+    // A rename that left nothing exporting would pass without proving
+    // anything: three scripts write a GLB, and the retarget and the strip
+    // are the two that put an armature in one.
+    assert_eq!(written, (3, 2));
 }
 
 /// The lint's own negative: an export that leaves the flag to the default.
