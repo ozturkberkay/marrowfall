@@ -5,11 +5,14 @@
 
 mod clips;
 mod concepts;
+mod frames;
 mod gltf_bytes;
 mod meshes;
 mod rigs;
 mod support;
 mod test_aim;
+mod test_atlas;
+mod test_bake;
 mod test_bake_stage;
 mod test_blender;
 mod test_check;

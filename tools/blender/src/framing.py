@@ -1,7 +1,7 @@
 """Pure geometry and scheduling for the sprite bake.
 
 Everything here is deliberately free of `bpy`. Blender's API only exists inside
-Blender, so anything importing it cannot be unit tested, keeping the maths in
+Blender, so anything importing it cannot be unit tested, keeping the math in
 its own module is what makes the parts that have historically broken (camera
 framing, frame sampling, the forearm roll's mirror) testable at all.
 
@@ -10,6 +10,7 @@ decides what to do with them.
 """
 
 import math
+import pathlib
 from collections.abc import Iterable, Sequence
 
 from findings import Comparison, Finding, Rule
@@ -17,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Direction 0 faces the camera. `direction_rotation` turns the model by a
 # negative Z angle per index, which reads as clockwise on screen. So the ring
-# runs south, south-west, west, and on round. The other naming mirrors every
+# runs south, south-west, west, and on around. The other naming mirrors every
 # diagonal and swaps east with west, and it leaves south and north looking
 # correct. That is what makes the mistake easy to miss.
 #
@@ -445,6 +446,233 @@ def root_kept(name: str, bone: str, limits: dict[str, float]) -> list[Finding]:
             )
         )
     return findings
+
+
+SAMPLED = "the frames the bake renders, against the frames the clip's own action keys"
+
+SAMPLED_FRAMES_ARE_KEYS = Rule(
+    id="bake.sampled_frames_are_keys",
+    comparison=Comparison.EQ,
+    unit="frames",
+    measured_on=SAMPLED,
+)
+"""Whether every rendered frame is a pose somebody authored.
+
+There is no divisibility rule between the sprite rate and the clip's own rate,
+and none is wanted: what matters is that a rendered frame is an authored key
+rather than an interpolation of two."""
+
+PROJECTED = (
+    "every joint of the rig at three sampled frames, projected through the "
+    "bake camera to whole pixels, against the committed golden, the wider of "
+    "the two axes of the worst joint"
+)
+
+LANDMARK_GOLDEN = Rule(
+    id="bake.landmark_golden",
+    comparison=Comparison.LE,
+    unit="pixels",
+    measured_on=PROJECTED,
+)
+"""Where every joint landed on screen, against the pixels a human signed off."""
+
+UPDATE_GOLDENS = "MARROWFALL_UPDATE_GOLDENS=1"
+"""What a message names as the only thing that rewrites a golden. The Rust
+runner reads that variable and passes the flag; no script here reads it."""
+
+
+def frames_the_action_keys(channels: Iterable[Iterable[float]]) -> set[int]:
+    """Every whole frame any channel of an action keys.
+
+    Any channel and not every one of them, which was measured: 149 of the 240
+    curves a committed clip carries are a bone's own constant `location` and
+    `scale`, and their `f32` noise overlaps the smallest real motion in the
+    same file. Correction 2 of T14 in the design has both numbers.
+
+    Whole frames, because `sampled_frames` rounds every sample it returns.
+    """
+    return {round(frame) for channel in channels for frame in channel}
+
+
+def unkeyed_frames(sampled: Iterable[int], keyed: set[int]) -> list[int]:
+    """The frames the bake renders that nothing authored a pose at."""
+    return sorted({frame for frame in sampled if frame not in keyed})
+
+
+def frames_are_keys(
+    name: str,
+    sampled: Sequence[int],
+    channels: Iterable[Iterable[float]],
+    limits: dict[str, float],
+) -> Finding:
+    """`bake.sampled_frames_are_keys` for one clip."""
+    keyed = frames_the_action_keys(channels)
+    unkeyed = unkeyed_frames(sampled, keyed)
+    return SAMPLED_FRAMES_ARE_KEYS.at(limits).measured(
+        name,
+        len(unkeyed),
+        f"{name} renders {len(sampled)} frame(s) of the {len(keyed)} its "
+        f"action keys" + (f", and {unkeyed} are keyed by nothing" if unkeyed else ""),
+    )
+
+
+class Camera(Frozen):
+    """The bake camera as a pixel mapper.
+
+    Orthographic, so a projection is a scale and never a divide: the camera's
+    own right and up directions carry a world point across the canvas, and
+    `ortho_scale` is how much world that square canvas covers.
+    """
+
+    location: Vec3
+    right: Vec3
+    up: Vec3
+    ortho_scale: float = Field(gt=0.0)
+    size: int = Field(ge=16)
+
+
+class Landmark(Frozen):
+    """Where one joint landed, in one sampled frame of one direction."""
+
+    frame: int
+    bone: str
+    x: int
+    y: int
+
+    @property
+    def at(self) -> tuple[int, str]:
+        """What names this row, which is what a golden is matched on."""
+        return (self.frame, self.bone)
+
+
+def project(point: Vec3, camera: Camera) -> tuple[int, int]:
+    """One world point as the whole pixel of the rendered frame it lands on.
+
+    Rows count down from the top, the way an image does.
+    """
+    offset = tuple(point[axis] - camera.location[axis] for axis in range(3))
+    across = sum(offset[axis] * camera.right[axis] for axis in range(3))
+    up = sum(offset[axis] * camera.up[axis] for axis in range(3))
+    return (
+        round((0.5 + across / camera.ortho_scale) * camera.size),
+        round((0.5 - up / camera.ortho_scale) * camera.size),
+    )
+
+
+def golden_samples(count: int) -> list[int]:
+    """Which sampled frames a golden records: the first, the middle and the
+    last.
+
+    Three of them, and not every frame: the full form is about 37,000 lines
+    and would be rubber-stamped. Deduplicated, so a clip of one or two frames
+    records what it has.
+    """
+    return sorted({0, count // 2, count - 1}) if count > 0 else []
+
+
+GOLDEN_ROW = "{frame:<7}{bone:<16}{x:>5}{y:>5}"
+"""One landmark per line, wide enough for `RightShoulder` and a four digit
+canvas."""
+
+GOLDEN_HEADER = GOLDEN_ROW.format(frame="frame", bone="bone", x="x", y="y")
+"""The one line a golden carries that is not a landmark. Built from the row
+format, so a label cannot sit over the wrong field."""
+
+
+def golden_text(landmarks: Iterable[Landmark]) -> str:
+    """A golden file, verbatim."""
+    rows = "".join(
+        GOLDEN_ROW.format(frame=mark.frame, bone=mark.bone, x=mark.x, y=mark.y) + "\n"
+        for mark in landmarks
+    )
+    return f"{GOLDEN_HEADER}\n{rows}"
+
+
+def golden_landmarks(text: str) -> list[Landmark]:
+    """The landmarks a golden file records, header and blank lines dropped."""
+    marks = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) != 4 or not fields[0].isdecimal():
+            continue
+        marks.append(
+            Landmark(
+                frame=int(fields[0]),
+                bone=fields[1],
+                x=int(fields[2]),
+                y=int(fields[3]),
+            )
+        )
+    return marks
+
+
+def golden_gap(
+    measured: Sequence[Landmark], recorded: Sequence[Landmark]
+) -> tuple[int, str] | None:
+    """How far this run sits from the golden, and which joint is worst.
+
+    `None` when the two do not describe the same joints at the same frames: a
+    26 joint pose has no distance from a 24 joint record, and saying it does
+    would compare whatever happened to line up.
+    """
+    theirs = {mark.at: mark for mark in recorded}
+    if sorted(theirs) != sorted(mark.at for mark in measured):
+        return None
+    worst = 0
+    where = "every joint is on the pixel the golden records"
+    for mark in measured:
+        golden = theirs[mark.at]
+        apart = max(abs(mark.x - golden.x), abs(mark.y - golden.y))
+        if apart > worst:
+            worst = apart
+            where = (
+                f"{mark.bone} at frame {mark.frame} is {apart} px off, "
+                f"({mark.x}, {mark.y}) against ({golden.x}, {golden.y})"
+            )
+    return (worst, where)
+
+
+def landmark_golden(
+    subject: str,
+    path: pathlib.Path,
+    measured: Sequence[Landmark],
+    limits: dict[str, float],
+    update: bool,
+) -> Finding:
+    """`bake.landmark_golden` for one clip in one direction.
+
+    A missing golden is an error and never an auto-accept. With `update` the
+    file is rewritten from this run and the rule reports `skipped`: reading a
+    golden this run just wrote would be the run agreeing with itself.
+    """
+    rule = LANDMARK_GOLDEN.at(limits)
+    if update:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(golden_text(measured))
+        return rule.skipped(
+            subject,
+            f"{UPDATE_GOLDENS} rewrote {path.name} from this run, so nothing read it",
+        )
+    if not path.exists():
+        return rule.undefined(
+            subject,
+            f"there is no golden at {path}, so nothing recorded where {subject} "
+            f"belongs. {UPDATE_GOLDENS} writes one",
+        )
+    gap = golden_gap(measured, golden_landmarks(path.read_text()))
+    if gap is None:
+        return rule.undefined(
+            subject,
+            f"{path.name} records another set of joints or frames than this "
+            f"run projected, so the two have no distance apart. {UPDATE_GOLDENS} "
+            f"rewrites it",
+        )
+    worst, where = gap
+    return rule.measured(
+        subject,
+        worst,
+        f"of the {len(measured)} joints of {subject}, {where}",
+    )
 
 
 SAME_BODY = 1e-4

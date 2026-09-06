@@ -21,12 +21,12 @@ under `crates/xtask-art/src/check/`.
 | Module | `bpy` | What it is |
 | --- | --- | --- |
 | `cleanup.py` | no | what the mesh fixer does, in which order, and which pieces are debris |
-| `transfer.py` | no | the retarget maths: world matrices in, local poses out |
+| `transfer.py` | no | the retarget math: world matrices in, local poses out |
 | `plant.py` | no | where a foot touches the ground: contact, the lock, the leg solve |
 | `clip.py` | no | what the retarget reports: the two counts, the frame grid, where the fit ended up, and the source motion sidecar |
 | `source.py` | no | what a vendor clip is, measured before anything is fitted to it |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
-| `framing.py` | no | the bake's camera geometry, frame sampling, and the root strip |
+| `framing.py` | no | the bake's camera geometry, frame sampling, the root strip, and the landmark golden |
 | `findings.py` | no | the Finding record, the rule, the report, and the success sentinel |
 | `actions.py` | yes | the F-curve edits the retarget and the bake both make |
 | `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
@@ -129,6 +129,45 @@ committed clips read **1.227e-6** away from the character's own rest height,
 which is the `f32` a GLB stores a joint position in. The bake therefore
 refuses a clip further out than `framing.SAME_BODY` instead of rescaling it,
 because scaling there would size the same lengths twice.
+
+## Why the golden is text and not pixels
+
+`bake_sprites.py` projects every joint of the rig through the bake camera and
+writes whole pixels to `art/goldens/<character>/<clip>_<direction>.txt`, three
+sampled frames by two directions per clip. That is the deterministic half of
+the art review; the contact sheet is the judgment half. A published graphics
+diff still flagged about 42 percent false positives, so nothing here compares
+images.
+
+The projection is `framing.project`, and it needs only where the camera sits
+and which way its own right and up point: the camera is orthographic, so a
+depth is not a scale. `bake_sprites.bake_camera` reads those off the scene,
+and **it updates the view layer first**: a transform set through the API
+reaches `matrix_world` only when something evaluates the scene, and reading it
+too early put the depth where the height belongs and the head 18 px under the
+hips. Two pytest cases hold the projection to known answers and one holds all
+six committed goldens to a body the right way up.
+
+`MARROWFALL_UPDATE_GOLDENS=1` is the only thing that rewrites a golden, the
+Rust runner is the only thing that reads that variable, and with it set the
+rule reports `skipped`: a run compared against a file it just wrote is a run
+agreeing with itself.
+
+The report is written before the render, and the render is skipped when the
+report already carries an error. A golden that moved therefore stops the bake
+in 3 seconds against the 107 a clean one costs.
+
+## Why every rendered frame has to be a key
+
+`bake.sampled_frames_are_keys` counts the frames the bake renders that nothing
+authored a pose at. It reads the frames **any** channel keys, and that was
+measured rather than assumed: of the 240 curves each committed clip carries,
+91 key every frame and 149 are a bone's own `location` and `scale`, which the
+exporter stores as two endpoint keys. Those 149 carry 2.8e-5 to 3.1e-5 of
+`f32` noise between their two keys while the smallest real motion in the same
+files is 3.6e-5, so no threshold on the values tells a constant channel from a
+moving one. What can be told is whether anything keyed the frame being
+rendered.
 
 ## Why one script writes a sidecar
 

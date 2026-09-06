@@ -43,6 +43,12 @@ triangles = 300000
 printability_edges = 200
 non_manifold_post = 20
 
+[profile.bake]
+frame_coverage_percent = 1.0
+in_frame_pixels = 1.0
+pivot_pixels = 2.0
+landmark_pixels = 1.0
+
 [profile.cleanup]
 smallest_island_cubic_meters = 1e-6
 symmetrize_meters = 0.001

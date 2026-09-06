@@ -24,7 +24,7 @@ means deleting one of those.
 - One written skeleton spec, stored as data, plus a check that says which
   rules a rig breaks and by how much, and a rename to the standard names.
 - An in-house retarget that transfers motion in world space against an
-  absolute per role aim table, replacing the current local-space maths.
+  absolute per role aim table, replacing the current local-space math.
 - A verifier that measures swing and twist separately, terminal bones
   included, against the original vendor file.
 - Foot planting, floor snapping, and stride scaled by femur length, on
@@ -64,7 +64,7 @@ means deleting one of those.
   limits, keyframe simplification and twist bones, each with its cost under P2
   and P3 in `mine_retarget_bvh_and_find_our_gaps.md`.
 - **Changing the game side, the packer, the manifest format, the camera or
-  the framing maths.** The audit found them sound, so sprite rates and
+  the framing math.** The audit found them sound, so sprite rates and
   playback speeds do not move.
 
 ## Terminology
@@ -353,12 +353,12 @@ Borrowed, by technique number from `mine_constraint_family_retargeters.md`:
 | 17, 29 | refuse a duplicate target bone, resolve every data path first | req 7 |
 
 **Pros:** verified on our own files at about 0.1 degrees on every joint. Twist
-never enters the swing maths, so the rig's arbitrary rolls stop breaking
+never enters the swing math, so the rig's arbitrary rolls stop breaking
 motion. No new dependency in a headless build, `humanoid.toml` stays the one
-place bones are mapped, and the maths is a pure function, which is what makes
+place bones are mapped, and the math is a pure function, which is what makes
 rule four's CI tests possible.
 
-**Cons:** we own the maths, mitigated by the known-answer, negative-control
+**Cons:** we own the math, mitigated by the known-answer, negative-control
 and metamorphic tests we need anyway.
 
 **Cost:** T4 to T9 total 12.5 engineer days, foot planting included.
@@ -732,7 +732,7 @@ new `Stage` variants, and the character lock keeps its six.
 
 **Pros:** costs seconds of attention, only on real changes, and uses a gate
 GitHub already enforces. The golden is the deterministic half and the sheet is
-the judgement half. No new command.
+the judgment half. No new command.
 
 **Cons:** committed sheets add repository weight, bounded by LFS.
 
@@ -757,7 +757,7 @@ flagged about 42 percent false positives
 
 Four changes in shape. Gates move to stage boundaries. All CI-side measurement
 moves to Rust, so negative controls run on the arm64 runner. The retarget
-maths moves into `transfer.py`, which never imports `bpy`. The `model` stage
+math moves into `transfer.py`, which never imports `bpy`. The `model` stage
 gains a download and a local cleanup, so rigging is fed a cleaned mesh.
 
 ```text
@@ -789,6 +789,7 @@ spec.ron
                [bake.*  frame_count, non_empty, in_frame, pivot, forearm_roll,
                         sampled_frames_are_keys, landmark_golden]
   ▼ pack     ─▶ [atlas.*  frame_count, trim_boxes, manifest_schema]
+               sheet.png, full under art/preview/ and downscaled beside the atlas
   ▼ review   ─▶ contact sheet committed beside the atlas ─▶ PR approval
 
   transfer.py, plant.py (no bpy) ──▶ pytest in CI
@@ -821,6 +822,7 @@ art/
   animations/library.ron    # + NEW source_fps and travels per animation
   animations/library.lock   # + NEW verdict on Fetched
   goldens/survivor/         # NEW  3 frames x 2 directions per clip, text
+                            #      24 joints a frame, 73 lines a file
   staging/                  # gitignored: bare.glb, clean.glb, reports/
   preview/                  # gitignored: full size local scratch
 
@@ -837,7 +839,8 @@ crates/xtask-art/src/check/
   clip.rs                   # NEW  swing, twist, fps grid, object transform
   gltf_clip.rs              # NEW  the delivered clip, sampled at its key times
   motion.rs                 # NEW  one clip's orientations, from either reader
-  atlas.rs                  # pack and manifest invariants
+  bake.rs                   # NEW  the rendered frames, and the spec patch
+  atlas.rs                  # NEW  pack and manifest invariants
   validator.rs              # NEW  runs npm gltf-validator, maps its report
 crates/xtask-art/src/
   spec.rs                   # + Subject::cleanup, Subject::symmetry
@@ -862,9 +865,9 @@ tools/gltf_validator/
 
 tools/blender/src/
   skeleton.py               # NEW  the skeleton file: roles, chain, aim table
-  transfer.py               # NEW  pure maths: matrices in and out, no bpy
+  transfer.py               # NEW  pure math: matrices in and out, no bpy
   clip.py                   # NEW  pure counts, and the source motion sidecar
-  plant.py                  # NEW  pure maths: contact detection, 2 bone IK
+  plant.py                  # NEW  pure math: contact detection, 2 bone IK
   findings.py               # NEW  the shared Finding record and JSON writer
   retarget_animation.py     # bpy glue only: import, map, transfer, export
   cleanup.py                # NEW  the fixer's order and decisions, no bpy
@@ -1032,9 +1035,13 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
 | `mesh.non_manifold_post` | 20 edges, from the 12 T10 measured on the stand-in's `clean.glb`. Provisional until a real one exists | le |
 | `mesh.cleanup_effective` | the pre-fixer count, over holes and islands. Self-intersections left the set in T10, correction 1, because mirroring copies them | **lt** |
-| `bake.in_frame`, `bake.pivot` | 1 px of alpha inset, 1 px of ground-line drift | ge, le |
+| `bake.in_frame` | 1 px of alpha inset. The tightest of the 848 rendered frames is 58 px clear of a border, and a pose the camera cut off reads 0 | ge |
+| `bake.pivot` | 2 px between two opposite directions and their own reflection about the canvas center. **Not ground-line drift**, which reads 28 to 86 px on correct art: correction 1 | le |
+| `bake.non_empty` | 1.0 percent of a frame's own canvas. The emptiest frame of each clip reads 4.1164, 4.8367 and 4.8912, and a frame that rendered nothing reads 0.0000 | ge |
+| `bake.landmark_golden` | 1 px, which is one rounding step of a golden's own whole pixels. All 432 committed landmarks read 0 | le |
 | `bake.forearm_roll` | 0.0 | eq |
 | `bake.sampled_frames_are_keys` | 0 rendered frames that are not authored keys | eq |
+| `bake.frame_count`, `atlas.frame_count`, `atlas.trim_boxes`, `atlas.manifest_schema` | 0 defects each: a frame absent from the rendered rectangle, a cell with no rect, a box outside the atlas or its cell, a manifest the game's own reader refuses. These join the `rig.*` family whose limit is not a `[profile]` number | eq |
 
 **The `mesh.*` limits, set by T3.** Every one is **provisional**: they are
 calibrated on `art/characters/survivor/model.glb` welded at 1e-5 m in world
@@ -1353,7 +1360,7 @@ Python at all. Corrections 5 and 10 have both measurements.
   construction**, because aiming both rigs at one table makes every offset a
   pure twist about the bone's own axis, so it reads about 0 on a correct fit
   and cannot be evidence of anything else. What it **can** catch is everything
-  between the maths and the file: a Blender shell that wrote something other
+  between the math and the file: a Blender shell that wrote something other
   than what `transfer.py` computed, a role driving the wrong bone, a dropped
   or duplicated frame, a key at the wrong time, and an export that lost or
   resampled the motion. Read 0.000 as "the file carries the motion the
@@ -1421,10 +1428,16 @@ tests the metric rather than the gate. Every `concept.*`, `mesh.*`, `rig.*`,
 `clip.*`, `bake.*` and `atlas.*` row runs in Rust, so its negative control is
 a required CI check with no Blender. **`source.*` cannot**: the vendor file is
 an FBX no Rust reader opens, so those six are measured in Python and their
-negatives are pytest ones, on the maths module `source.py`, with a report from
+negatives are pytest ones, on the math module `source.py`, with a report from
 a real run committed as `crates/xtask-art/tests/fixtures/fetch.run.1.json`.
 `source.posture`, `source.child_axis` and `source.wander` are recording rules,
 so they are calibrated and carry no negative, per the Terminology exemption.
+**Two `bake.*` rows cannot either, and T14 says which:**
+`bake.sampled_frames_are_keys` reads the clip's own action and
+`bake.landmark_golden` projects through the scene camera, so both are measured
+in `framing.py` and both negatives are pytest ones, which CI runs in the same
+`pytest` job as `source.py`'s. The other five read PNGs and a spec field,
+which need no Blender.
 **`mesh.quads` was in that sentence and T3 took it out:** a rule that can
 only report `info` is failure shape one from the section above, and the thing
 it can honestly measure does fail. See the correction below.
@@ -1472,7 +1485,7 @@ it can honestly measure does fail. See the correction below.
 | `source.traveling`, `source.in_place` | `strafe_left.fbx` at `travels: true`, **2.3117 m** of hip travel; `run.glb` at `travels: false`, 0.0000 m | `[synth]` **both directions**: an in-place export declared `travels: true`, and a traveling export declared `travels: false` | symmetric on 0.02 m, so a mistyped flag fails either way. Where the hips **end up**, horizontally: a run cycle in place sways 0.028 m sideways and comes back exactly, and calling that travel would declare every in-place clip a traveling one. The excursion is `source.wander`, beside it |
 | `source.wander` | measured on the hips at every frame: `idle` **0.0112 m**, `run` **0.0276**, `walk_back` **1.2712**, `strafe_left.fbx` **2.3117**. `[art]` `run.glb` in `crates/xtask-art/tests/fixtures/fetch.run.1.json` | none, `info` only. `[synth]` a path that goes 0.6 m out and comes back, where `source.traveling` reads 0 and this reads 0.6 | the four clips above. This is the only boundary that can read the excursion at all: the bake pins the horizontal axes onto the first frame before `clip.root_travel` sees them, and `--keep-root-motion` reports both bake rules as `skipped` |
 | `clip.swing` | the synthetic cross-rig fixture, and the new output on the three Mixamo clips at 4.1e-5 to 7.1e-5 deg, a hand measurement | `[synth]` a 3 deg swing injected into one role, and `[synth]` the source read one frame out, which fires on every role. `[art]` the shipped `strafe_left.glb`: measured absolutely against the vendor file its worst role is 97.797 deg and its wrists are 76.154 and 78.216, **reproduced exactly by T6's implementation**. It cannot be committed, so the CI negatives are the two synthetic ones | the synthetic cross-rig fixture, T6, which reads 4.3e-6 deg |
-| `clip.twist` | the same fixture, and the three Mixamo clips at 11.411 deg, a hand measurement | `[synth]` a 90 deg twist **post-multiplied in the bone's local frame**, `q @ Quaternion((0, 1, 0), radians(90))`, on `LeftUpLeg`. The same test asserts `clip.swing` stays under its limit, which is what proves the injection is a twist and not a yaw. Pre-multiplying by a world +Y rotation would yaw a downward thigh and fire `clip.swing` instead. Plus `[synth]` 16 deg and minus 16 deg, one degree past the limit either way round, which fail beside 14 deg, which holds; and `[synth]` minus 90 deg, which reads 90 and is the control on the rule reporting a size rather than a direction. The shipped clips cannot serve: `rotation_difference` is pure swing, so they carry our rest twist unchanged (fact 2) and this rule reads 0.073 on them | the synthetic cross-rig fixture, T6, which reads 3.5e-6 deg |
+| `clip.twist` | the same fixture, and the three Mixamo clips at 11.411 deg, a hand measurement | `[synth]` a 90 deg twist **post-multiplied in the bone's local frame**, `q @ Quaternion((0, 1, 0), radians(90))`, on `LeftUpLeg`. The same test asserts `clip.swing` stays under its limit, which is what proves the injection is a twist and not a yaw. Pre-multiplying by a world +Y rotation would yaw a downward thigh and fire `clip.swing` instead. Plus `[synth]` 16 deg and minus 16 deg, one degree past the limit either way around, which fail beside 14 deg, which holds; and `[synth]` minus 90 deg, which reads 90 and is the control on the rule reporting a size rather than a direction. The shipped clips cannot serve: `rotation_difference` is pure swing, so they carry our rest twist unchanged (fact 2) and this rule reads 0.073 on them | the synthetic cross-rig fixture, T6, which reads 3.5e-6 deg |
 | `clip.fps_grid` | the three committed clips at `source_fps` 24, worst **9.5e-7** frames, which is the `f32` a GLB stores key times in | `[art]` the shipped `strafe_left.glb` in a 24 fps scene, range 0.8 to 16.8. In CI, the same shape on a clip that may be redistributed: `run.glb` read at 30, where 15 of its 21 keys land off the grid and the worst reads 0.5. Plus `[synth]` a declared rate of 0, which is undefined rather than infinite | `run.glb`. Measured at two sites: the retarget reads the action, which is the only place an off-grid **import** is visible, and `check/clip.rs` reads the delivered file's own key times, which is where a resampling **export** would show |
 | `clip.fps_grid.range` | the three committed clips, 0 frames | `[synth]` 21 keys at 0.8 to 16.8 sampled at frames 1 to 17, which reports the **4** frames the rounding dropped | the frames the retarget samples against the source's own key times. Not the scene's render range: the glTF importer sets none, so that reading fires on Blender's 1 to 250 default |
 | `clip.object_transform` | the committed `run.glb` against `humanoid.glb`, exactly 2 subjects: `Armature` and `skin_carrier` | `[synth]` the same clip with the armature's 0.01 scale applied, which is what `transform_apply(scale=True)` leaves, **and** `[synth]` a translation channel on the armature object, which the static reading alone cannot see | the armature scale, byte identical at `0.009999999776482582` across six exported GLBs |
@@ -1486,13 +1499,13 @@ it can honestly measure does fail. See the correction below.
 | `clip.foot_contact.penetration` | the refit of `run.glb`, which clears the floor by **0.0074** and 0.0005 m, and the vendor's own `strafe_left.fbx`, which reads **0.0000 m** at every planted frame and 0.0038 at worst | `[synth]` the standing pair keyed **2 cm** under its own floor, plus the pair either side of the limit at 4 mm and 6 mm. `[art]` the **left** foot of all three Mixamo fits, at **0.0200 to 0.0203 m**: see correction 4 | 5 mm, on the two sole points of each foot. The vendor file reading 0.0000 at every plant is what says the sole model is the right one |
 | `clip.loop` | `run.glb` at **0.000** deg and `idle.glb` at **0.487** | `[art]` `walk_back.glb`, which reads **6.910** on `LeftForeArm` and breaks on nine of its 24 bones. That is the hitch `library.ron` has recorded in prose all along and which nothing could measure until now. Plus `[synth]` a whole cycle against the same cycle cut one frame short | `idle.glb` and `run.glb`, 2.0 deg today. Per joint, on the local rotation, so one wrong hips reports once rather than dragging every bone below it into the count |
 | `clip.interpolation`, `clip.reference_pose_key` | the recorded report of the `run.glb` refit, committed as `crates/xtask-art/tests/fixtures/retarget.run.1.json`: 44 findings, no error | `[synth]` in CI, on `clip.py`: a Bezier key, a pose not held at the ends, and a key off either end of the range. Plus `[mut]` two Blender runs, one with the LINEAR and CONSTANT pass removed and one with a pose keyed outside the source's range, each firing its own rule on all 22 bones and leaving the other at `info`. Plus `[synth]` three reports the runner refuses: an unpublished rule id, a limit of its own, and a defect filed as `info` | `run.glb`. **The reference pose is never keyed at any frame**, so the rule measures keys outside the source's frame range rather than at frame 0. See the correction below |
-| `bake.frame_count`, `bake.non_empty` | the rendered set | `[synth]` one frame deleted, and one fully transparent | directions x sampled frames, alpha coverage |
-| `bake.in_frame`, `bake.pivot` | the rendered set | `[synth]` a pose clipped at the border, and a frame offset 20 px | 1 px inset, and the ground line across directions |
+| `bake.frame_count`, `bake.non_empty` | the recorded run: 240, 320 and 288 frames rendered of the same, and 4.1164 percent of a canvas at the emptiest | `[synth]` one frame deleted, which reads 1 missing and names `w 01`, and one fully transparent, which reads 0.0000 percent | directions x sampled frames, alpha coverage. The rendered set is gitignored, so the readings are the recorded run in `crates/xtask-art/tests/fixtures/bake.survivor.1.json` and every negative is a synthetic 64 px frame set |
+| `bake.in_frame`, `bake.pivot` | the recorded run: 89, 65 and 58 px of inset, and 1 px of reflection error over 424 opposite pairs | `[synth]` a pose clipped at the border, which reads 0 px, and a frame offset 20 px, which reads 20 | 1 px of inset, and the reflection between opposite directions. **The ground line cannot serve**: correction 1 |
 | `bake.forearm_roll` | spec field 0.0 | `[synth]` the field set to 30 | `eq 0` |
-| `bake.sampled_frames_are_keys` | the rendered set on `run.glb` | `[synth]` an action with every other key deleted | `framing.py:260` already rounds to integers |
-| `bake.landmark_golden` | committed golden | `[synth]` one arm rotated 30 deg before projection | 3 frames x 2 directions per clip |
-| `atlas.frame_count`, `atlas.trim_boxes` | the packed atlas | `[synth]` a manifest claiming one extra frame, and a box one pixel outside | the committed atlases |
-| `atlas.manifest_schema` | the packed manifest | `[synth]` a missing field | the committed manifests |
+| `bake.sampled_frames_are_keys` | the recorded run: `idle` renders 15 frames of the 47 its action keys, `run` 20 of 21, `walk_back` 18 of 23. Green by construction, because each clip keys every integer frame of its own range: correction 2 | `[synth]` an action with every other key deleted, which reports the 3 frames of 6 that nothing keyed | `framing.sampled_frames` already rounds to integers. **Any channel, not every channel**: correction 2 |
+| `bake.landmark_golden` | the six committed goldens, all 432 landmarks at 0 px | `[synth]` one arm rotated 30 deg before projection, which moves a wrist 21 px; `[synth]` a golden of another set of joints, which is undefined; and no golden at all, which is an error | 3 frames x 2 directions per clip. The projection's own calibration is two known answers plus all six goldens read for a body the right way up: correction 3 |
+| `atlas.frame_count`, `atlas.trim_boxes` | the three committed atlases and the manifest the game loads, 0 defects each | `[synth]` a manifest claiming one extra frame, which reads the 16 cells with no rect, and a box one pixel outside, which reads 1 | the committed atlases |
+| `atlas.manifest_schema` | the same manifest, which `sprites::parse` loads as three animations | `[synth]` a missing field, which also leaves the other two rules undefined on every animation, plus a table of every refusal `sprites::parse` has, one case each on a two-frame manifest, each caught as an error by some `atlas.*` rule | the committed manifests |
 
 ### Corrections T3 made to this document
 
@@ -1711,9 +1724,9 @@ changes a sprite rate, or asserts a strict T-pose bind.
    not a dependency of this repository and the venv carries stubs alone. A
    `transfer.py` that imported it could not be unit tested, which is the
    module's whole reason for existing, so it carries about 90 lines of its own
-   vector, quaternion and 4x4 affine maths over plain tuples. The alternatives
+   vector, quaternion and 4x4 affine math over plain tuples. The alternatives
    were weighed and are on the record. **The PyPI `mathutils`** is a third
-   party extraction of Blender's C module, so the maths would be pinned to a
+   party extraction of Blender's C module, so the math would be pinned to a
    package nobody in this project maintains. **numpy** ships inside Blender
    and covers the affine half, but it is not a dependency of the venv either
    and it carries no quaternion type, so the swing-twist split would still be
@@ -1754,7 +1767,7 @@ changes a sprite rate, or asserts a strict T-pose bind.
 5. **The absolute accuracy is 0.000181 degrees, not "about 0.1".** Worst
    absolute per-bone swing against the vendor file, over all 22 roles: 0.000181
    on `strafe_left`, 0.000184 on `strafe_right`, 0.000196 on `walk_back`. The
-   figure is glTF's f32 storage, not the maths. The prototype's 0.1 came from
+   figure is glTF's f32 storage, not the math. The prototype's 0.1 came from
    reading poses back through a dependency graph. **Every one of these three
    is a hand measurement, not a test**, read in Blender 5.2.1 against
    `art/staging/downloads/*.fbx`: that directory is gitignored, so no test can
@@ -2124,7 +2137,7 @@ changes a sprite rate, or asserts a strict T-pose bind.
    standing between a hand-written Python finding and a limit nobody
    published. So the declaration picks the rule instead. A clip that travels
    is read by `source.traveling` while `source.in_place` reports `skipped`,
-   and a clip that does not is read the other way round. Both are printed by
+   and a clip that does not is read the other way around. Both are printed by
    `--list-rules`, both carry `[profile.source] travel_meters`, every clip
    reports on both, and both negatives still fail.
 
@@ -2405,7 +2418,7 @@ changes a sprite rate, or asserts a strict T-pose bind.
    can locate.
 
    The evidence that this is the right model is the vendor file. On
-   `art/staging/downloads/strafe_left.fbx`, read through the same maths
+   `art/staging/downloads/strafe_left.fbx`, read through the same math
    against Mixamo's own rest pose, both sole points read **0.0000 m at every
    planted frame** of both feet, and 0.0038 m at worst over the whole clip.
    This is the true sole datum T8's correction 1 said would arrive here, and
@@ -2519,7 +2532,7 @@ changes a sprite rate, or asserts a strict T-pose bind.
 8. **The rule list is 49.** T8's 46 plus these three. `clip.foot_contact.*`
    lives in `check/foot.rs` rather than in `check/clip.rs`, the way
    `rig.aim_table` lives in `check/aim.rs`: one module owns the rules, the
-   maths and the findings of one concern. `clip.rs` lists all three in
+   math and the findings of one concern. `clip.rs` lists all three in
    `RETARGET_RULES` and `FILE_RULES`, which is where `stages.rs` reads them
    and what `refuse_unread_rules` holds the report to.
 
@@ -3057,6 +3070,198 @@ larger, one image, one UV layer.
     a later task: T13's fingerprints do not reach inside a stage, and no
     fingerprint change can fix a file written before the refusal.
 
+### Corrections T14 made to this document
+
+1. **`bake.pivot` cannot read the ground line, and reads the reflection
+   instead.** The limits table asked for 1 px of ground-line drift across
+   directions. Measured on the 848 rendered frames, the lowest content row
+   moves **28 px** across the ring on `idle`, 86 on `run` and 52 on
+   `walk_back`, and every one of those is correct geometry: a camera at 35
+   degrees projects depth onto the vertical axis of the image, so turning the
+   character changes the depth of its lowest foot and with it the row that
+   foot lands on. Pairing opposite directions to cancel the depth still
+   leaves 15 px, because the argmax moves to the other foot. A 1 px rule
+   there would have failed every correct bake.
+
+   What *is* exact is horizontal. An orthographic camera centered on the axis
+   the ring turns about maps a world point at `x` to the mirror of where it
+   maps it half a turn around, so for directions `d` and `d + count/2` the
+   content spans satisfy `right(d) + left(d + count/2) = width - 1` and the
+   same swapped, whatever the pose. Over the 424 opposite pairs of the three
+   clips the worst reading of each is **1 px**, which the recorded run carries
+   and a test pins. So the rule reads that
+   identity, the published limit is 2 px with one pixel of rasterization
+   headroom, and it still rejects the Test Plan's 20 px offset by 10x. The
+   vertical is not left unmeasured: `clip.floor_snap` holds it in meters at
+   the retarget, where the number means something, and `clip.root_bob` holds
+   what the strip keeps.
+
+2. **`bake.sampled_frames_are_keys` counts the frames *any* channel keys.**
+   The strict reading, every channel, was implemented first and it failed all
+   three committed clips at 14, 19 and 17 unkeyed frames. The reason is not a
+   defect: of the 240 curves each clip carries, **91 key every frame** and
+   **149** are a bone's own `location` and `scale`, which the glTF exporter
+   stores as two endpoint keys. Filtering those out by value spread does not
+   work either, and that was measured too: the 149 carry **2.8e-5 to 3.1e-5**
+   of `f32` noise between their two keys while the smallest real motion in the
+   same files is **3.59e-5**, a gap of 1.16x. No threshold separates them, so
+   the honest question is whether anything authored a pose at the frame being
+   rendered. The union answers that, it reads 0 on all three clips (15 frames
+   of 47, 20 of 21, 18 of 23), and it rejects the Test Plan's negative.
+
+   Those three zeroes are a **tautology on this art**, and the calibration
+   column says so: each clip keys every integer frame of its own range, `idle`
+   all 47 of 0..46, so no integer sample `framing.sampled_frames` can return
+   is able to miss one. The evidence the rule reads anything is the synthetic
+   negative, an action with every other key deleted, which reports the 3
+   frames of 6 that nothing keyed.
+
+3. **The projection had to be calibrated, and the first version was wrong.**
+   `bake_sprites.bake_camera` read `camera.matrix_world` immediately after
+   `setup_camera` placed it. Nothing had evaluated the scene, so the matrix
+   was still the identity: the projection used the world axes, put the depth
+   where the height belongs, and wrote a golden whose head sat 18 px **under**
+   its own hips. `bpy.context.view_layer.update()` is the fix, and the test
+   that would have caught it is now committed: all six goldens are read for a
+   body the right way up, the head above the hips and the lowest joint a toe.
+   Not the highest joint: `run_s` frame 19 swings a forearm past the head,
+   which is why that half of the assertion is a set of toes and not a set of
+   head bones.
+
+4. **The goldens are 24 joints, not a chosen subset, and the columns are
+   wider than the sketch.** The design's example shows `Hips` and `LeftHand`
+   in a 12 character column. The rig carries `RightShoulder` at 13, and
+   `render_size` can ask for a four digit canvas, so the format is
+   `{frame:<7}{bone:<16}{x:>5}{y:>5}` under the same header. Every joint of
+   the armature goes in, sorted by name, which is 24 rows per frame and 73
+   lines per file: no subset has to be chosen and no second copy of the bone
+   list exists. Six files, 438 lines, and the two directions are the first
+   stop of the ring and the one three quarters around, which is `s` and `e` on
+   every named ring the packer knows.
+
+5. **The goldens reproduce byte for byte, twice, and they do not depend on
+   the direction count.** Two `--update-goldens` runs of the committed clips
+   wrote identical files, one at 16 directions and one at 4. That is stronger
+   than a repeat: `direction_rotation` gives `e` the same angle in both rings,
+   and the camera is framed over poses rather than directions, so the two runs
+   share nothing but the math. A third run with the variable unset read them
+   at **0 px on all 432 landmarks**. The committed goldens are therefore the
+   goldens of the current art, which is what decision 11 asks for.
+
+6. **The five Rust bake rules could not be calibrated on committed art, so
+   the recorded run is.** The rendered set lives under `art/staging/`, which
+   is gitignored, so no test can open it and CI cannot re-derive these
+   numbers. `crates/xtask-art/tests/fixtures/bake.survivor.1.json` is
+   therefore the whole bake report of a real run of the committed art: **31
+   findings, every one `info`**, and the readings the `[profile.bake]`
+   comments quote are in it. It replaces the 9 finding version T7 recorded.
+   Every negative is a synthetic 64 px frame set in
+   `crates/xtask-art/tests/unit/frames.rs`, which is what runs in CI.
+
+7. **`bake.frame_count` counts what is absent from a rectangle, because the
+   sampled frame count is Blender's own.** The design's calibration column
+   says "directions x sampled frames", and Rust cannot know the second factor
+   without a second copy of `framing.sampled_frames`. So the rule reads the
+   rendered set as a rectangle whose width is the widest direction's own frame
+   count, and reports how many of its cells are missing. One deleted file
+   reads 1 and names it. The sampling itself is held to the action by
+   `bake.sampled_frames_are_keys`, which is where that question belongs.
+
+8. **`[profile.bake]` is four numbers, and three rules in the new families
+   publish none.** `bake.frame_count` and the three `atlas.*` rules count
+   defects, and `bake.forearm_roll` is a patch that must be off, so all five
+   join the family whose limit is not a `[profile]` number, beside
+   `rig.names_standard` and `concept.single_figure`. The limits table gained
+   the six rows it was missing.
+
+9. **`atlas.manifest_schema` calls the game's own reader, and the other two
+   report its numbers.** `sprites::parse` is what Godot loads a manifest with,
+   so the rule runs `sprites::parse` itself rather than filling the same types
+   from RON: every invariant the game holds a manifest to is that one rule,
+   and nothing describes the format a second time. `atlas.frame_count` and
+   `atlas.trim_boxes` then report the readings behind two of those
+   invariants, a rect count against the animation's own header and an anchor
+   against its cell, plus the one thing no format check can see: whether a
+   rect is inside the atlas image it indexes. A table test breaks each
+   refusal `parse` has on a two-frame manifest and asserts some `atlas.*`
+   rule calls it an error, so the split cannot drift back apart.
+
+10. **The contact sheet is `preview::sheet`, written twice, and the
+    `sprites.png` name is gone.** The full-resolution sheet is
+    `art/preview/<char>/sheet.png`, gitignored, and the committed one is
+    `project/assets/characters/<char>/sheet.png` under LFS, downscaled to
+    2048 px on its longest edge. The survivor's own sheet is 3792 by 777, so
+    the committed copy is 2048 by 420 and 365 KB, and every sprite in it stays
+    128 px wide. One name for one picture at two resolutions, so the CI
+    artifact and the file in the diff are obviously the same thing.
+
+11. **CI can draw that sheet, so the artifact is real today.** The design says
+    the full sheet is a CI artifact, and there is no CI job that bakes:
+    fact 16 is that the runner has no Blender. But the sheet is read from the
+    packed atlases, which are committed, so `cargo art check --sheet` draws it
+    from them with no Blender at all. That is a flag on the one new verb
+    rather than a second verb, the way `--list-rules` already is, and the
+    `test` job runs it and uploads the result. `cargo art check` itself does
+    not measure the atlases: the pack boundary owns those three rules, and a
+    unit test reads the committed ones on every pull request.
+
+    That redraw is also the staleness check. Two local runs write the same
+    365 KB, sha256 `97e0cbb6`, so the job asserts the committed thumbnail
+    came back byte for byte and a sign-off picture that no longer matches the
+    atlases cannot ship. The comparison needs `lfs: true` on the checkout,
+    which the `test` job already passes, or it would read a pointer.
+
+12. **`MARROWFALL_UPDATE_GOLDENS` is read in exactly one place, and Python
+    reads no environment at all.** `stages::updating_goldens` reads it and
+    passes `--update-goldens` on argv, so the script takes a flag like every
+    other parameter. CI refuses the variable in a step that runs **before**
+    the tests, and a unit test reads the workflow file to prove the step is
+    there and comes first. A second unit test asserts the variable is unset in
+    the run it is part of, so a developer who exports it cannot get a green
+    local suite either.
+
+13. **Nothing remained to route for the clip audition.** T7 already wrote
+    `art/staging/reports/fetch.<clip>.<attempt>.json` with all six `source.*`
+    readings, `stages::check_source` already refuses the clip before the
+    retarget spends anything on it, and `cli::fetch` already keeps the
+    downloaded FBX. What T14 added is the proof: a stubbed unattended
+    `cargo art fetch` now asserts that the report is on disk at that exact
+    path with `source.posture` among its findings, and the test is red when
+    the file is removed. One thing is left as it is on purpose: the `verdict`
+    on `Fetched` names the retarget's report and not the audition's. Both
+    boundaries gate the same uncommitted file and the fetch refuses the clip
+    if the first one fails, so a recorded clip passed both; recording two
+    verdicts would change the lock schema T13 fixed for a fact the report
+    already carries.
+
+14. **The bake writes its report before it renders, and the rules that need
+    the scene run before it too.** `bake_sprites.main` used to write the
+    report and then render for two minutes. The golden needs the camera and
+    the pivot, so the scene setup is now its own function, the two Blender
+    side rules are measured against it, the report is written, and the render
+    is the last thing that happens, skipped outright when the report already
+    carries an error. A golden moved 5 px stops the bake in **3 seconds**
+    against **107** for the clean one and writes no frame; the four Rust
+    rules that read those frames then report undefined on every clip, which
+    is what an empty staging directory is. A render that dies still leaves
+    the whole report on disk. `stages::bake` then extends that report with
+    the five Rust rules and rewrites it, so the file a reader opens is the
+    whole measurement rather than the Blender half of it.
+
+15. **The rule list is 66.** T13's 56 plus seven `bake.*` and three
+    `atlas.*`. Blender reports 20 of them, four of which are at the bake:
+    `clip.root_travel`, `clip.root_bob`, `bake.sampled_frames_are_keys` and
+    `bake.landmark_golden`.
+
+16. **Round 2: three figures this document carried could not be re-derived.**
+    The frames the `[profile.bake]` numbers are measured on are **rendered**,
+    not committed: `art/staging/` is gitignored, which correction 6 already
+    says. `bake.non_empty` reads **4.1164, 4.8367 and 4.8912** percent, one
+    per clip, and the 7.5161 the limits table quoted is in no fixture, because
+    the rule records only the emptiest frame of each clip. And the
+    deleted-frame negative names **`w 01`**, index 2 of an eight direction
+    ring, not `sw 01`.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -3098,9 +3303,14 @@ larger, one image, one UV layer.
   this document records.
 - `pyproject.toml`: `--cov` over every `bpy`-free module with
   `--cov-fail-under=100`. T7 adds `source.py` to that list, making six:
-  `clip`, `findings`, `framing`, `skeleton`, `source` and `transfer`.
+  `clip`, `findings`, `framing`, `skeleton`, `source` and `transfer`. T14 adds
+  no module: the landmark golden and the frame-key count are `framing.py`,
+  which is the bake's own geometry and already in that list.
 - `MARROWFALL_UPDATE_GOLDENS`, unset by default. Set to `1` a golden is
-  rewritten, and CI asserts it is unset.
+  rewritten, and CI asserts it is unset. **T14 built it:** `stages::bake` is
+  the one reader, it passes `--update-goldens` on argv so no script reads an
+  environment, the rule reports `skipped` on a run that rewrote its own
+  golden, and both halves of the CI assertion are unit tested.
 - **Failure diagnostics**, per `research_unattended_art_pipelines.md:181`,
   owned by T1: the exact `blender` argv written verbatim to a file beside the report,
   `--log-file` at debug level beside it, the `.blend` saved from the exception

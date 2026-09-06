@@ -210,7 +210,7 @@ fn a_report_from_an_earlier_run_cannot_pass_this_one() {
             "rule":"bake.pivot","severity":"error","subject":"idle_s_00",
             "measured":20.0,"limit":1.0,"comparison":"le","unit":"px",
             "attempt":1,"measured_on":"pixels, cropped frame",
-            "message":"the ground line drifts 20 px"}]}"#,
+            "message":"idle_s_00 sits 20 px off its own reflection"}]}"#,
     )
     .unwrap();
 
@@ -290,7 +290,7 @@ fn the_findings_a_script_wrote_come_back_from_the_run() {
             "rule":"bake.pivot","severity":"error","subject":"idle_s_00",
             "measured":20.0,"limit":1.0,"comparison":"le","unit":"px",
             "attempt":1,"measured_on":"pixels, cropped frame",
-            "message":"the ground line drifts 20 px"}]}"#,
+            "message":"idle_s_00 sits 20 px off its own reflection"}]}"#,
     );
 
     let report = blender::run(&script(dir.path()), &[], &artifacts, dir.path())

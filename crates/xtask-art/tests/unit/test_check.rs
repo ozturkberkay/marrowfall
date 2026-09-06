@@ -12,7 +12,7 @@ use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::motion::Motion;
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{
-    Artifacts, Comparison, Finding, Report, Severity, Symmetry, clip, concept, every_rule,
+    Artifacts, Comparison, Finding, Report, Severity, Symmetry, atlas, clip, concept, every_rule,
     gltf_clip, mesh, rig, source,
 };
 use xtask_art::library::HUMANOID;
@@ -55,9 +55,10 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        56,
+        66,
         "5 concept rules, 13 rig rules, the aim table, 15 mesh rules, 6 source \
-         rules, 13 clip rules and the 3 foot contact ones"
+         rules, 13 clip rules, the 3 foot contact ones, 7 bake rules and 3 \
+         atlas rules"
     );
     assert_eq!(
         ids.iter()
@@ -67,6 +68,9 @@ fn every_family_reaches_the_printed_rule_list() {
         "a rule id is listed twice"
     );
     for expected in [
+        "atlas.manifest_schema",
+        "bake.landmark_golden",
+        "bake.sampled_frames_are_keys",
         "concept.background_flat",
         "concept.single_figure",
         "concept.arm_gap",
@@ -150,21 +154,29 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
 }
 
 /// And the bake boundary, where `clip.root_travel` reads the stripped copy
-/// that is never written to disk. The recorded run is the three committed
-/// clips on the committed character; its ring and its render size are bake
-/// parameters this rule does not read.
+/// that is never written to disk and the seven `bake.*` rules read the frames
+/// and the goldens. The recorded run is the three committed clips on the
+/// committed character, at the 16 directions and 512 px the spec asks for.
 #[test]
 fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
     let report = a_recorded_report("bake.survivor.1");
 
     assert_eq!((report.stage(), report.item()), ("bake", "survivor"));
-    assert_eq!(report.findings().len(), 9, "three clips, three axes");
+    assert_eq!(
+        report.findings().len(),
+        31,
+        "three clips by three axes, by the four rules read off the frames and \
+         the two read in Blender, by two goldens each, plus the one patch"
+    );
 
     assert!(!report.has_errors());
     assert_eq!(report.off_registry(&profile()), Vec::<String>::new());
 
     for finding in report.findings() {
         assert_eq!(finding.severity, Severity::Info, "{finding:?}");
+        if !finding.rule.starts_with("clip.") {
+            continue;
+        }
         if finding.subject.ends_with(" z") {
             // The bob the strip keeps on purpose: 0.0089 on `idle`, 0.0535 on
             // `run` and 0.0391 on `walk_back`, against a limit of 0.15.
@@ -176,6 +188,44 @@ fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
             assert_eq!(finding.rule, "clip.root_travel", "{finding:?}");
             assert!(finding.measured < 1e-6, "{finding:?}");
         }
+    }
+
+    // What `[profile.bake]` is calibrated on, in the report those numbers
+    // were read out of. Only the emptiest frame of each clip is recorded, at
+    // 4.1164, 4.8367 and 4.8912 percent of its own canvas. The tightest sits
+    // 58 px clear of the nearest border, and every opposite pair reflects to
+    // within one pixel.
+    let worst = |rule: &str| {
+        report
+            .findings()
+            .iter()
+            .filter(|finding| finding.rule == rule)
+            .map(|finding| finding.measured)
+            .fold(f64::NAN, f64::min)
+    };
+    assert_eq!(worst("bake.non_empty"), 4.1164398193359375);
+    assert_eq!(worst("bake.in_frame"), 58.0);
+    assert_eq!(
+        report
+            .findings()
+            .iter()
+            .filter(|finding| finding.rule == "bake.pivot")
+            .map(|finding| finding.measured)
+            .fold(0.0, f64::max),
+        1.0
+    );
+    for finding in report
+        .findings()
+        .iter()
+        .filter(|finding| finding.rule == "bake.landmark_golden")
+    {
+        assert_eq!(finding.measured, 0.0, "{finding:?}");
+        assert!(
+            finding
+                .message
+                .contains("every joint is on the pixel the golden records"),
+            "{finding:?}"
+        );
     }
 }
 
@@ -338,6 +388,9 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
     // The mesh gates run on the bare mesh, and the rigged file stands in
     // until that one can be downloaded.
     let mesh_glb = committed_glb("art/characters/survivor/model.glb");
+    // The three atlas rules read the pixels the game loads, which are
+    // committed beside the manifest that indexes them.
+    let assets = root.join("project/assets/characters/survivor");
 
     // `clip.swing` and `clip.twist` need the vendor file the motion was
     // bought in, and that one may not be redistributed, so their subject here
@@ -402,6 +455,15 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
         a_recorded_report("retarget.run.1").findings().to_vec(),
         a_recorded_report("fetch.run.1").findings().to_vec(),
         a_recorded_report("bake.survivor.1").findings().to_vec(),
+        atlas::check_files(
+            &atlas::Packed {
+                manifest: &assets.join("character.ron"),
+                dir: &assets,
+                animations: &["idle", "run", "walk_back"],
+            },
+            &profile,
+            1,
+        ),
         clip::compare(
             &gltf_clip::read(&pair.output_glb(), &bones).unwrap(),
             &Motion::parse(&pair.source_motion()).unwrap(),
@@ -1007,8 +1069,8 @@ fn every_blender_rule_says_what_the_registry_publishes() {
     assert_eq!(spelled, published);
     assert_eq!(
         spelled.len(),
-        18,
-        "10 at the retarget, 2 at the bake and 6 at the fetch"
+        20,
+        "10 at the retarget, 4 at the bake and 6 at the fetch"
     );
 }
 

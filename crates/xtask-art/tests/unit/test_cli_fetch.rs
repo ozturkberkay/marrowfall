@@ -726,6 +726,57 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
     );
 }
 
+/// The clip audition, on record after an unattended run. The vendor FBX is
+/// not committed and nothing downstream still carries its posture, so this
+/// report is the only thing that says a hunched purchase was measured before
+/// the pipeline spent anything on it. Nothing prints and vanishes.
+#[tokio::test]
+async fn the_audition_survives_an_unattended_fetch_as_a_report_on_disk() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        );
+
+    fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap();
+
+    let written = xtask_art::check::Artifacts::new(dir.path(), source::STAGE, "walk_back", 1)
+        .unwrap()
+        .report();
+    assert!(
+        written.ends_with("art/staging/reports/fetch.walk_back.1.json"),
+        "got: {}",
+        written.display()
+    );
+    let report = Report::read(&written).unwrap();
+    assert_eq!((report.stage(), report.item()), ("fetch", "walk_back"));
+    let read: Vec<&str> = report
+        .findings()
+        .iter()
+        .map(|finding| finding.rule.as_str())
+        .collect();
+    for rule in source::RULES {
+        assert!(
+            read.contains(&rule.id),
+            "{} is not on record: {read:?}",
+            rule.id
+        );
+    }
+    assert!(
+        read.contains(&source::POSTURE.id),
+        "the posture the audition is about: {read:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_second_run_skips_what_the_first_one_fetched() {
     let server = MockServer::start().await;

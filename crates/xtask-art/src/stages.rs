@@ -15,7 +15,8 @@ use crate::blender::{self, BLENDER_SRC};
 use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
 use crate::check::{
-    Artifacts, Finding, Report, Rule, Severity, Symmetry, clip, concept, gltf_mesh, mesh, source,
+    Artifacts, Finding, Report, Rule, Severity, Symmetry, atlas, bake as bake_check, clip, concept,
+    gltf_mesh, mesh, source,
 };
 use crate::library::{Animation, AnimationLibrary, MotionSource, Verdict};
 use crate::lock::{Stage, StageRecord, TaskRef};
@@ -775,12 +776,47 @@ pub fn bake(
         args.push("--fps".into());
         args.push(blender::pair(name, animation.fps.to_string()));
     }
+    let directions = pack::direction_names(spec.bake.directions)?;
+    let goldens = bake_check::golden_directions(directions).with_context(|| {
+        format!(
+            "a ring of {} direction(s) is too short to take a landmark golden in two of them",
+            directions.len()
+        )
+    })?;
+    for direction in goldens {
+        args.push("--golden-direction".into());
+        args.push(direction.into());
+    }
     let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
     args.extend(published(clip::BAKE_RULES, &profile));
+    args.extend(published(bake_check::BLENDER_RULES, &profile));
     let artifacts = Artifacts::new(repo_root, Stage::Bake.as_str(), &spec.name, FIRST_ATTEMPT)?;
-    let report = blender::run(&script, &args, &artifacts, repo_root)?
+    let mut report = blender::run(&script, &args, &artifacts, repo_root)?
         .with_context(|| format!("the bake of {} wrote no report", spec.name))?;
+    // Blender measured the action and the scene camera. These read the PNGs it
+    // wrote and the one spec field, where no Blender is needed and CI has none.
+    let staging = paths.staging();
+    let rendered: Vec<bake_check::Rendered<'_>> = names
+        .iter()
+        .map(|name| bake_check::Rendered {
+            name,
+            dir: &staging,
+            directions,
+        })
+        .collect();
+    report.extend(bake_check::check_files(
+        &rendered,
+        &spec.name,
+        f64::from(spec.bake.forearm_roll),
+        &profile,
+        FIRST_ATTEMPT,
+    ))?;
+    report.write(repo_root)?;
     refuse_off_registry(&report, &profile, &spec.name, "bake")?;
+    let mut owed = per_axis(&names);
+    owed.extend(bake_check::subjects(&names, &spec.name, &goldens));
+    refuse_unreported_subjects(&report, &owed, &spec.name, "bake")?;
+    refuse_unread_rules(&report, &bake_rules(), &spec.name, "bake")?;
     anyhow::ensure!(
         !report.has_errors(),
         "the bake of {} left {}, listed in {}",
@@ -788,9 +824,8 @@ pub fn bake(
         defects(&report),
         artifacts.report().display()
     );
-    refuse_unreported_subjects(&report, &per_axis(&names), &spec.name, "bake")?;
 
-    preview::bake(&names, pack::direction_names(spec.bake.directions)?, paths)?;
+    preview::bake(&names, directions, paths)?;
 
     let frames = std::fs::read_dir(paths.staging())
         .map(|entries| {
@@ -837,11 +872,32 @@ fn per_axis(names: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// Every rule the bake boundary owes a finding under: the two the script
+/// reports off the pinned copy, and the seven this stage owns.
+fn bake_rules() -> Vec<&'static Rule> {
+    clip::BAKE_RULES
+        .into_iter()
+        .chain(bake_check::RULES)
+        .collect()
+}
+
+/// The variable that turns a golden read into a rewrite, read here and
+/// nowhere else. CI asserts it is unset, so a rewritten golden is always a
+/// deliberate local act.
+pub const UPDATE_GOLDENS_ENV: &str = "MARROWFALL_UPDATE_GOLDENS";
+
+/// Whether this run rewrites its goldens rather than reading them.
+fn updating_goldens() -> bool {
+    std::env::var_os(UPDATE_GOLDENS_ENV).is_some_and(|value| !value.is_empty())
+}
+
 /// The bake parameters the spec fixes, ahead of the per-animation arguments.
 fn bake_args(paths: &Paths, spec: &CharacterSpec) -> Vec<OsString> {
-    vec![
+    let mut args = vec![
         "--out".into(),
         paths.staging().into(),
+        "--goldens".into(),
+        paths.goldens().into(),
         "--directions".into(),
         spec.bake.directions.to_string().into(),
         "--size".into(),
@@ -850,7 +906,11 @@ fn bake_args(paths: &Paths, spec: &CharacterSpec) -> Vec<OsString> {
         spec.bake.trim_start.to_string().into(),
         "--forearm-roll".into(),
         spec.bake.forearm_roll.to_string().into(),
-    ]
+    ];
+    if updating_goldens() {
+        args.push("--update-goldens".into());
+    }
+    args
 }
 
 /// Crops, scales and packs the baked frames, then writes the manifest. One
@@ -911,7 +971,8 @@ pub fn pack(
     let text = ron::ser::to_string_pretty(&assets, config)? + "\n";
     std::fs::write(&manifest, text).with_context(|| format!("writing {}", manifest.display()))?;
 
-    preview::sprites(&assets, paths)?;
+    check_atlases(spec, &manifest, paths)?;
+    preview::sheet(&assets, paths)?;
     Ok(StageRecord {
         note: Some(format!(
             "{} atlases → {}",
@@ -920,6 +981,45 @@ pub fn pack(
         )),
         ..StageRecord::default()
     })
+}
+
+/// Measures the packed atlases and their manifest, and refuses a character
+/// the game could not draw.
+///
+/// The pack boundary owns these three, so a manifest is read back through the
+/// game's own types by whatever wrote it.
+pub fn check_atlases(spec: &CharacterSpec, manifest: &Path, paths: &Paths) -> Result<()> {
+    let names: Vec<&str> = spec.animations.iter().map(String::as_str).collect();
+    let profile = Profile::of(&paths.root, &spec.subject.skeleton)?;
+    let artifacts = Artifacts::new(&paths.root, Stage::Pack.as_str(), &spec.name, FIRST_ATTEMPT)?;
+    let mut report = Report::new(Stage::Pack.as_str(), &spec.name, FIRST_ATTEMPT);
+    let assets = paths.assets();
+    report.extend(atlas::check_files(
+        &atlas::Packed {
+            manifest,
+            dir: &assets,
+            animations: &names,
+        },
+        &profile,
+        FIRST_ATTEMPT,
+    ))?;
+    report.write(&paths.root)?;
+    refuse_off_registry(&report, &profile, &spec.name, "pack")?;
+    refuse_unread_rules(&report, &atlas::RULES, &spec.name, "pack")?;
+    refuse_unreported_subjects(
+        &report,
+        &atlas::subjects(manifest, &names),
+        &spec.name,
+        "pack",
+    )?;
+    anyhow::ensure!(
+        !report.has_errors(),
+        "the pack of {} left {}, listed in {}",
+        spec.name,
+        defects(&report),
+        artifacts.report().display()
+    );
+    Ok(())
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {

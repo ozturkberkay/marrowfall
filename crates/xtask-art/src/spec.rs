@@ -389,6 +389,12 @@ impl Paths {
         self.root.join(format!("art/staging/{}", self.name))
     }
 
+    /// The landmark goldens, three frames by two directions per clip.
+    /// Committed text, and the only thing that records where a joint belongs.
+    pub fn goldens(&self) -> PathBuf {
+        self.root.join(format!("art/goldens/{}", self.name))
+    }
+
     /// Reviewable artifacts, one per stage. Derived; gitignored.
     pub fn preview(&self) -> PathBuf {
         self.root.join(format!("art/preview/{}", self.name))

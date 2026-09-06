@@ -94,6 +94,10 @@ pub enum Command {
         /// Print every rule id, limit, comparison, unit and space, and stop.
         #[arg(long, conflicts_with = "name")]
         list_rules: bool,
+        /// Draw the contact sheet of the committed atlases, and stop. What a
+        /// pull request reviews, and what CI uploads at full resolution.
+        #[arg(long, conflicts_with = "list_rules")]
+        sheet: bool,
     },
 }
 
@@ -727,35 +731,47 @@ pub fn stale_hint(name: &str, stale: &[Stage]) -> Option<String> {
     Some(lines.join("\n"))
 }
 
+/// What `cargo art check` was asked for. The three are exclusive, which clap
+/// refuses on the flags before [`Asked::of`] is reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Asked {
+    /// Measure the art on disk, which is what the bare verb does.
+    Measure,
+    /// Print every rule id, limit, comparison, unit and space.
+    ListRules,
+    /// Draw the contact sheet of the committed atlases.
+    Sheet,
+}
+
+impl Asked {
+    /// Which of the three a pair of flags asked for.
+    pub const fn of(list_rules: bool, sheet: bool) -> Self {
+        match (list_rules, sheet) {
+            (true, _) => Self::ListRules,
+            (_, true) => Self::Sheet,
+            _ => Self::Measure,
+        }
+    }
+}
+
 /// Validates every spec, then measures the concept views, the rig and the
 /// mesh each one has on disk.
 ///
 /// A stage whose art is not built yet is named and counted as unbuilt, never
 /// as passing. A missing file is an error at the stage boundary, where the
 /// stage has just written it; here there is nothing to have written it yet.
-pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
-    if list_rules {
+pub fn check(root: &Path, name: Option<&str>, asked: Asked) -> Result<()> {
+    if asked == Asked::ListRules {
         return print_rule_list(root);
     }
-    let dir = root.join("art/characters");
-    let specs: Vec<PathBuf> = match name {
-        Some(name) => vec![Paths::new(root, name).spec()],
-        None => {
-            if !dir.exists() {
-                println!("no characters yet");
-                return Ok(());
-            }
-            // One directory per character, each holding a spec.ron.
-            let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
-                .with_context(|| format!("reading {}", dir.display()))?
-                .filter_map(Result::ok)
-                .map(|entry| entry.path().join("spec.ron"))
-                .filter(|path| path.is_file())
-                .collect();
-            found.sort();
-            found
-        }
-    };
+    let specs = specs_under(root, name)?;
+    if specs.is_empty() {
+        println!("no characters yet");
+        return Ok(());
+    }
+    if asked == Asked::Sheet {
+        return draw_sheets(root, &specs);
+    }
 
     let mut failed = 0;
     let mut defects = 0;
@@ -794,6 +810,49 @@ pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
         println!("{unbuilt} stage(s) have no art on disk yet");
     }
     anyhow::ensure!(defects == 0, "{defects} defect(s)");
+    Ok(())
+}
+
+/// Every spec the command was pointed at: one character, or all of them.
+fn specs_under(root: &Path, name: Option<&str>) -> Result<Vec<PathBuf>> {
+    if let Some(name) = name {
+        return Ok(vec![Paths::new(root, name).spec()]);
+    }
+    let dir = root.join("art/characters");
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    // One directory per character, each holding a spec.ron.
+    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("spec.ron"))
+        .filter(|path| path.is_file())
+        .collect();
+    found.sort();
+    Ok(found)
+}
+
+/// Draws each character's contact sheet from the atlases already committed.
+///
+/// Measures nothing: the sheet is the judgment half of the art review and a
+/// human is what reads it. The full-resolution copy goes under `art/preview/`
+/// for CI to upload, and the downscaled one beside the atlas it pictures.
+fn draw_sheets(root: &Path, specs: &[PathBuf]) -> Result<()> {
+    for path in specs {
+        let spec = CharacterSpec::load(path)?;
+        let paths = Paths::new(root, &spec.name);
+        let manifest = paths.assets().join("character.ron");
+        match std::fs::read_to_string(&manifest) {
+            Ok(text) => crate::preview::sheet(&sprites::parse(&text)?, &paths)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                println!("      no atlas yet at {}", paths.relative(&manifest))
+            }
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", manifest.display()));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1064,6 +1123,10 @@ where
         }
         Command::Fetch { names, force } => fetch(&root, &names, force).await,
         Command::Status { name, json } => status(&root, &name, json),
-        Command::Check { name, list_rules } => check(&root, name.as_deref(), list_rules),
+        Command::Check {
+            name,
+            list_rules,
+            sheet,
+        } => check(&root, name.as_deref(), Asked::of(list_rules, sheet)),
     }
 }

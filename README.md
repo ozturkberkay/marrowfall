@@ -32,7 +32,7 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
 │   ├── xtask-art/            # The character art pipeline
 │   └── xtask-world/          # World preview tool
 ├── project/                  # Godot project, including `data/` tuning tables
-├── art/                      # Concepts, sprites, animations, skeletons, branding
+├── art/                      # Concepts, sprites, animations, skeletons, goldens, branding
 ├── tools/                    # Blender scripts, and the glTF-Validator driver
 ├── scripts/                  # Shell scripts and git hooks
 ├── docs/                     # Design docs, blog posts etc.

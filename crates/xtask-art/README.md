@@ -10,6 +10,7 @@ cargo art run skeleton                    # run the pipeline, resuming where it 
 cargo art status skeleton                 # what is done, stale or pending
 cargo art check                           # validate the specs, measure the art
 cargo art check --list-rules              # every gate: limit, comparison, unit, space
+cargo art check --sheet                   # draw the contact sheet of the committed atlases
 ```
 
 A run asks nothing except before it re-spends: the one prompt left is
@@ -95,6 +96,88 @@ they are two rules with two limits: a residual of 0.02 m and a bob of 0.15.
 The bake scales nothing: the retarget already sized every length, so a clip
 whose own rig is not this character's size is refused there rather than
 rescaled a second time.
+
+## Gating the bake, and the atlas
+
+Seven `bake.*` rules run at the **bake** boundary, beside those two. Five of
+them read the PNGs the render left and the one spec field, in Rust, so CI
+runs them with no Blender:
+
+| Rule | Reads |
+|---|---|
+| `bake.frame_count` | whether the rendered set is a full rectangle: one frame per direction per frame, contiguous from zero |
+| `bake.non_empty` | what share of its own canvas the emptiest frame covers |
+| `bake.in_frame` | how close the tightest frame's content comes to a canvas border |
+| `bake.pivot` | how far two opposite directions sit from being each other's reflection about the canvas center |
+| `bake.forearm_roll` | whether `spec.bake.forearm_roll` still asks for the patch the world-space transfer replaced |
+
+`bake.pivot` is the one that needs saying. An orthographic camera centered on
+the axis the ring turns about maps a point at world `x` to the mirror of where
+it maps it half a turn around, so the two content spans of opposite directions
+reflect about the middle of the canvas **exactly**, whatever the pose. All 848
+frames of the survivor read 0 or 1 px there. The ground line does not work
+that way: a 35 degree camera projects depth onto the vertical axis of the
+image, so turning the character moves its lowest foot 28 to 86 px up or down
+the frame, and that is correct rather than a defect.
+
+The other two need the scene, so `bake_sprites.py` measures them and
+`check/bake.rs` only publishes them. `bake.sampled_frames_are_keys` reads the
+clip's own action: every frame the bake renders has to be a frame something
+keyed, or the sprite shows a pose halfway between two nobody authored. There
+is no divisibility rule between `fps` and `source_fps` and none is wanted;
+this is the invariant that was actually meant.
+
+`bake.landmark_golden` projects every joint of the rig through the bake camera
+to whole pixels and reads them against a committed text golden, three sampled
+frames by two directions per clip:
+
+```text
+art/goldens/survivor/idle_s.txt
+frame  bone                x     y
+0      Head              252  153
+0      Hips              256  234
+```
+
+Two directions, because a joint moved along the camera's own line of sight
+barely moves on screen in that facing and moves fully in a facing 90 degrees
+off it. Three frames, because every frame of every direction is about 37,000
+lines and would be rubber-stamped. **A missing golden is an error**, never an
+auto-accept, and `MARROWFALL_UPDATE_GOLDENS=1` is the only thing that rewrites
+one:
+
+```sh
+MARROWFALL_UPDATE_GOLDENS=1 cargo art run survivor --only bake
+git diff art/goldens/                     # read what moved before committing it
+```
+
+With that variable set the rule reports `skipped` rather than a reading:
+comparing a run against a file it just wrote is the run agreeing with itself.
+CI asserts the variable is unset before it runs a test, and a unit test reads
+the workflow to say so.
+
+Three `atlas.*` rules run at the **pack** boundary, on the manifest and the
+atlas it indexes. `atlas.manifest_schema` runs `sprites::parse`, the reader
+the game loads the file with, so every invariant the game holds a manifest to
+is that one rule and nothing here describes the format twice.
+`atlas.frame_count` is one rect per direction per frame, and
+`atlas.trim_boxes` is every rect and the anchor inside the atlas image and
+inside its own cell: the numbers behind two of those invariants, plus the one
+thing no format check can see.
+
+## The contact sheet
+
+Packing draws one picture of every animation in every direction, at final
+sprite size, read from the packed atlases so what is reviewed is exactly what
+ships. It is written twice: full resolution under `art/preview/<name>/`, which
+is gitignored local scratch and what CI uploads as an artifact, and
+downscaled to `project/assets/characters/<name>/sheet.png`, which is
+committed under Git LFS beside the atlas it pictures. The art and its picture
+are one diff, and a pull request approval is the sign-off.
+
+`cargo art check --sheet` draws both from the atlases already committed, with
+no bake and no Blender, which is what CI runs. The redraw is deterministic, so
+CI then asserts the committed copy came back byte for byte: a thumbnail that no
+longer matches the atlases is a sign-off on the wrong art.
 
 ## Gating the concept views, and retrying them
 
@@ -257,7 +340,7 @@ what `art/characters/<name>/spec.lock` records:
 | `rig` | paid | Rust | Adds a skeleton, then one animation clip per entry in `animations`. |
 | `download` | free | Rust | Fetches the finished GLBs and splits them: mesh once, one file per clip. |
 | `bake` | free | **Blender** | Renders every clip through 8 compass directions into loose PNG frames. |
-| `pack` | free | Rust | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads. |
+| `pack` | free | Rust | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads, the three `atlas.*` rules over both, and the contact sheet. |
 
 The `.ron` spec describes the *character*; the `.lock` records *what has been
 built*. So `pack` appears in the lock without appearing in the spec, its
@@ -291,11 +374,19 @@ the files it opens, so a replaced input cannot report `cached`:
 | `bake` | the sprite settings, `model.glb`, `humanoid.glb`, `humanoid.toml`, every animation GLB it plays, the Blender build and every script |
 | `pack` | the name, `sprite_height`, the directions, and which clips loop |
 
-`pack` is the exception: it reads hundreds of staging PNGs and hashes none of
-them. That is safe because those PNGs have exactly one author. Recording a
-bake clears every stage after it, so a re-bake always re-packs, and
-`stages::bake` deletes the `*.png` it is about to rewrite, so no frame of an
-older shape survives to be packed.
+The landmark goldens are in no row: they are what a bake is measured
+**against** rather than an input it reads, so rewriting one never makes a
+stale bake current. The contact sheet is the same, one step later.
+
+`pack` is the exception: it reads hundreds of staging PNGs, and the skeleton
+profile, and hashes none of them. That is safe because those PNGs have exactly
+one author, and because no `atlas.*` limit is a profile number: all three
+count defects, and the profile is loaded only because `Rule::measured` takes
+one. Recording a bake clears every
+stage after it, so a re-bake always re-packs, and `stages::bake` deletes the
+`*.png` it is about to rewrite, so no frame of an older shape survives to be
+packed. The profile is in the `bake` row above, so an edited limit invalidates
+the bake and forces the re-pack anyway.
 
 `model`, `bake` and `pack` also carry `LOCAL_PIPELINE_VERSION`, because a
 fingerprint over inputs cannot say "the code that produced this was fixed".
