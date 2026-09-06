@@ -34,7 +34,7 @@ under `crates/xtask-art/src/check/`.
 | `mesh_sheet.py` | yes | renders the five views of the model contact sheet |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
-| `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
+| `strip_animation.py` | yes | the one-triangle skin carrier the retarget exports through. Nothing runs it as a script: the retarget drops the mesh a provider ships with a clip |
 
 The eight `bpy`-free modules are unit tested by `uv run pytest` at 100
 percent coverage, with no Blender anywhere. That split is not tidiness: `bpy`

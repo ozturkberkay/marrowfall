@@ -3,15 +3,16 @@
 # Retargeting matches by role, never by name. A provider is a table here plus
 # a `MotionSource` variant, tied together by `MotionSource::bone_convention`.
 #
-# The two tables are identical, and they are still two tables: a bought rig
-# names its bones the same way today and nothing says the next one will.
-# `[fingerprints]` is what tells them apart.
+# Three tables: what Meshy ships, what Mixamo ships, and what this project
+# ships. Meshy numbers its spine from the top and Mixamo from the bottom, so
+# their `Spine` is not the same bone. `[fingerprints]` is what says which
+# table a file in hand is named in.
 
-canonical = "meshy"
+canonical = "standard"
 
 # Roles a source rig is allowed to leave out. Every other role must be in
-# every convention, or a clip arrives with nothing to drive that bone. Both
-# conventions below fill all 22, so nothing is optional yet.
+# every convention, or a clip arrives with nothing to drive that bone. All
+# three conventions below fill all 22, so nothing is optional yet.
 optional_roles = []
 
 # The two roles whose joints root travel is sized by: a clip authored for a
@@ -25,7 +26,38 @@ stride_segment = ["left_upper_leg", "left_leg"]
 # toe joint here is the ball of the foot and rests 0.0307 m above the sole.
 ground_roles = ["left_toe", "right_toe"]
 
+# What Meshy's rigger ships, measured on every file it has returned here:
+# `crates/xtask-art/tests/fixtures/humanoid_before_rename.glb` and the three
+# rigs of the `pose_mode` spike. Its spine is numbered from the top, so
+# `Spine02` is the lowest of the three and `Spine` the highest.
 [conventions.meshy]
+hips = "Hips"
+spine_lower = "Spine02"
+spine_middle = "Spine01"
+spine_upper = "Spine"
+neck = "neck"
+head = "Head"
+left_shoulder = "LeftShoulder"
+left_arm = "LeftArm"
+left_forearm = "LeftForeArm"
+left_hand = "LeftHand"
+left_upper_leg = "LeftUpLeg"
+left_leg = "LeftLeg"
+left_foot = "LeftFoot"
+left_toe = "LeftToeBase"
+right_shoulder = "RightShoulder"
+right_arm = "RightArm"
+right_forearm = "RightForeArm"
+right_hand = "RightHand"
+right_upper_leg = "RightUpLeg"
+right_leg = "RightLeg"
+right_foot = "RightFoot"
+right_toe = "RightToeBase"
+
+# What this project ships, which is the Mixamo and HumanIK standard with the
+# spine numbered from the bottom. The rename step in `crates/xtask-art/src/
+# conform.rs` is what puts a bought rig into these names.
+[conventions.standard]
 hips = "Hips"
 spine_lower = "Spine"
 spine_middle = "Spine1"
@@ -49,6 +81,8 @@ right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
 
+# What Mixamo ships, which is the same standard under a namespace the
+# comparison strips.
 [conventions.mixamo]
 hips = "Hips"
 spine_lower = "Spine"
@@ -101,13 +135,18 @@ right_leg = "right_upper_leg"
 right_foot = "right_leg"
 right_toe = "right_foot"
 
-# One bone per convention that no other convention has, so two identical role
-# tables can still be told apart. Both are measured, not guessed: the
-# committed `humanoid.glb` carries `headfront`, and a downloaded Mixamo FBX
-# carries `HeadTop_End`. Matched with the namespace and the case stripped, so
+# Which bones a file must have for a convention to match it: every one of
+# them, so a row of two is an "and". This is what reads a file's convention
+# off the file, and the rename step is the caller.
+#
+# Measured, not guessed. `Spine02` is Meshy's alone. `HeadTop_End` is
+# Mixamo's alone. The standard needs two, because no single bone separates it
+# from both of the others: `Spine1` is not in a Meshy file and `headfront` is
+# not in a Mixamo one. Matched with the namespace and the case stripped, so
 # `mixamorig:HeadTop_End` counts.
 [fingerprints]
-meshy = ["headfront"]
+meshy = ["Spine02"]
+standard = ["Spine1", "headfront"]
 mixamo = ["HeadTop_End"]
 
 # The absolute world direction each role's bone must point in, which is the
@@ -161,9 +200,9 @@ right_toe = [0.0, -1.0, 0.0]
 # the only reader, and `cargo art check --list-rules` prints it.
 #
 # Bone names are the Mixamo and HumanIK standard, with the spine numbered from
-# the bottom, so `Spine` is the lowest of the three. The committed rig was
-# renamed to these, so the two convention tables below are now identical and
-# `[fingerprints]` is what tells them apart.
+# the bottom, so `Spine` is the lowest of the three. `[conventions.standard]`
+# is the same set by role, and the rename step is what puts a bought rig into
+# it.
 [profile]
 # The exact bone set. `head_end` and `headfront` fill no role, and they are
 # listed because they are part of this rig.

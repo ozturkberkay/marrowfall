@@ -347,9 +347,30 @@ fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
     );
 }
 
+/// The conformed character, which is the file every stage downstream reads
+/// and the one the gate is on.
 #[test]
-fn check_writes_the_rig_report_where_the_runner_writes_every_report() {
+fn check_writes_the_conformed_report_where_the_runner_writes_every_report() {
     let dir = a_repo_with_a_rig("survivor");
+
+    check(dir.path(), None, Asked::Measure).unwrap_err();
+
+    let report = xtask_art::check::Report::read(
+        &dir.path()
+            .join("art/staging/reports/conformed.survivor.1.json"),
+    )
+    .unwrap();
+    assert_eq!(report.stage(), "conformed");
+    assert_eq!(report.item(), "survivor");
+    assert!(report.has_errors());
+}
+
+/// And the file the vendor returned beside it, under its own stage name and
+/// read in its own naming convention, the way `mesh` sits beside `cleaned`.
+#[test]
+fn check_writes_the_rig_report_of_the_file_the_vendor_returned() {
+    let dir = a_repo_with_a_rig("survivor");
+    install_vendor_rig(dir.path());
 
     check(dir.path(), None, Asked::Measure).unwrap_err();
 
@@ -357,8 +378,46 @@ fn check_writes_the_rig_report_where_the_runner_writes_every_report() {
         xtask_art::check::Report::read(&dir.path().join("art/staging/reports/rig.survivor.1.json"))
             .unwrap();
     assert_eq!(report.stage(), "rig");
-    assert_eq!(report.item(), "survivor");
-    assert!(report.has_errors());
+    // Meshy's own names, so the three the rename closes are all here.
+    let broken: std::collections::BTreeSet<&str> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.severity == xtask_art::check::Severity::Error)
+        .map(|finding| finding.rule.as_str())
+        .collect();
+    for rule in ["rig.names_standard", "rig.bone_set", "rig.parents"] {
+        assert!(broken.contains(rule), "{rule} in {broken:?}");
+    }
+}
+
+/// The rig the vendor returned, in staging beside the conformed character.
+fn install_vendor_rig(root: &std::path::Path) {
+    let rigged = Paths::new(root, "survivor").rigged_glb();
+    std::fs::create_dir_all(rigged.parent().unwrap()).unwrap();
+    std::fs::copy(
+        real_repo().join("crates/xtask-art/tests/fixtures/humanoid_before_rename.glb"),
+        &rigged,
+    )
+    .unwrap();
+}
+
+/// That report records and refuses nothing: a bought rig fails the three name
+/// rules by construction and the rename is what closes them, so a machine
+/// that still holds one reads the same defect count as one that does not.
+#[test]
+fn the_vendor_rig_on_disk_adds_no_defect_to_the_count() {
+    let dir = a_repo_with_a_rig("survivor");
+    let alone = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
+    install_vendor_rig(dir.path());
+
+    let beside = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
+
+    assert!(alone.contains("14 defect(s)"), "got: {alone}");
+    assert_eq!(beside, alone, "the conformed file is the only gate");
 }
 
 #[test]

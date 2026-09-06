@@ -281,6 +281,69 @@ band of its own rather than the rig's 5 percent, because `height_meters` is a
 parameter of the **rigging** call: nothing before it scales the body, and a
 bare mesh arrives about 1.90 m tall whatever the spec asks for.
 
+## Renaming and conforming the rig
+
+A bought rig is not a conformant one. Meshy names its bones its own way and
+numbers its spine from the top, so its `Spine` is our `Spine2`; it points the
+`Hips` bone at a hip socket, pitches `Head` off its own end, and places limb
+joints 1 to 4 percent asymmetric even on a mesh the fixer symmetrized. Every
+one of those was measured on the three rigs `spike-pose` bought.
+
+So the download stage does not write `model.glb`. It writes
+`art/staging/<name>/rigged.glb` and takes it the rest of the way:
+
+```text
+rigged.glb -> rig gates (record) -> rename -> conform -> conformed gates
+           -> art/characters/<name>/model.glb
+```
+
+**A bought clip takes the same detour, for the same reason.** Meshy animates
+the rig it sold, so the delivered file carries the vendor's bone names and the
+vendor's rest pose, and an action's keys are read against a rest pose. A clip
+kept as it was downloaded would put the vendor's rest frames back on a body
+the conform has just moved. So it lands in `art/staging/downloads/` as a
+source and reaches `art/animations/` the way a Mixamo clip does:
+
+```text
+<clip>.glb -> check_source.py -> retarget_animation.py --convention meshy
+           -> clip gates -> art/animations/<clip>.glb
+```
+
+The fit is also what drops the stock character a clip arrives with: a provider
+ships the whole mesh and its 2048-square texture with every motion, and these
+files are committed.
+
+**The rename** reads which convention the file is in from `[fingerprints]` in
+`art/skeletons/<skeleton>.toml` and rewrites every joint name by role into the
+canonical one. It is a JSON chunk edit: glTF addresses a joint by node index,
+so a bone's name is one string in one place and the buffer chunk comes out
+byte identical. A file already in the canonical names comes back byte for
+byte.
+
+**The conform** turns every joint whose own axis misses the child
+`[profile.tails]` names onto it, by the smallest rotation about `old x new`,
+and when `symmetry` is on it first averages each mirrored pair onto X = 0.
+Every joint keeps its world position, every child's local transform is
+re-expressed, and every inverse bind matrix is recomputed against the joint's
+new world matrix. That last one is why the mesh does not move: glTF skins a
+vertex through `world(joint) @ inverseBind(joint)`, so holding that product is
+holding the vertex. Measured on the committed rig, the joints move
+millimeters and the furthest rest vertex moves **1.57e-7 m**, which is the
+`f32` a GLB stores.
+
+**Two stage names over one rule set**, the way `mesh` sits beside `cleaned`.
+`rig.<name>.1.json` is what the vendor shipped and it refuses nothing: a
+bought rig fails the three name rules by construction, and the rename is what
+closes them. `conformed.<name>.1.json` is the gate. `cargo art check` writes
+the same pair from whatever is on disk.
+
+One defect no rest-frame edit can close: `rig.humerus_angle` reads the
+direction from the shoulder joint to the elbow, which is where the mesh's arm
+is. The survivor's arms hang 59 degrees below horizontal against a prompt of
+40, and moving the joints to reach it would put the bones outside the arms
+they deform. That one is a generation defect, and the `pose_mode` spike below
+is what measured the only lever on it.
+
 ### Which `pose_mode` to send
 
 ```sh
@@ -343,7 +406,7 @@ what `art/characters/<name>/spec.lock` records:
 | `concept` | paid | Rust | Turns the written description into four concept views, gated and retried up to three times. |
 | `model` | paid | Rust | Concept art to a textured 3D mesh. |
 | `rig` | paid | Rust | Adds a skeleton, then one animation clip per entry in `animations`. |
-| `download` | free | Rust | Fetches the finished GLBs and splits them: mesh once, one file per clip. |
+| `download` | free | Rust | Fetches the finished GLBs, renames and conforms the rig into `model.glb`, then fits every bought clip onto it. |
 | `bake` | free | **Blender** | Renders every clip through 8 compass directions into loose PNG frames. |
 | `pack` | free | Rust | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads, the three `atlas.*` rules over both, and the contact sheet. |
 
@@ -355,9 +418,11 @@ shared by the last two stages rather than one block per stage.
 The pipeline is Rust. `tools/blender/src/` holds the only Python in the repo,
 because `bpy` is Python-only and Blender is the one tool that cannot be driven
 any other way: `bake_sprites.py`, `check_source.py`, `mesh_clean.py`,
-`retarget_animation.py` and `strip_animation.py` run inside Blender, and
+`retarget_animation.py` and `mesh_sheet.py` run inside Blender, and
 `cleanup.py`, `clip.py`, `findings.py`, `framing.py`, `skeleton.py`,
 `source.py` and `transfer.py` are the `bpy`-free modules they import.
+`strip_animation.py` is neither: nothing shells out to it any more, and the
+retarget imports its one-triangle skin carrier.
 `cargo art` shells out to `blender --background --python …` for those five,
 and does everything else itself. Every published limit those scripts report
 against is passed to them as `--limit RULE=NUMBER`, read off the same rule
@@ -375,13 +440,19 @@ the files it opens, so a replaced input cannot report `cached`:
 | `concept` | the description, and the pose its body plan injects |
 | `model` | the remesh and texture settings, and all four concept views |
 | `rig` | the height, the skeleton, `cleanup`, `symmetry`, the Meshy action ids, `bare.glb` and `clean.glb` |
-| `download` | the same as `rig` |
+| `download` | the same as `rig`, plus `rigged.glb` and `humanoid.toml`, which the rename and the conform read |
 | `bake` | the sprite settings, `model.glb`, `humanoid.glb`, `humanoid.toml`, every animation GLB it plays, the Blender build and every script |
 | `pack` | the name, `sprite_height`, the directions, and which clips loop |
 
 The landmark goldens are in no row: they are what a bake is measured
 **against** rather than an input it reads, so rewriting one never makes a
 stale bake current. The contact sheet is the same, one step later.
+
+The `download` row is narrower than what that stage opens: it fits every
+bought clip through `retarget_animation.py`, and no Blender script is in its
+fingerprint. `LOCAL_PIPELINE_VERSION` is what covers a script edit there, per
+the rule below, and keeping Blender out of this row is what lets
+`cargo art status` answer on a machine that has none.
 
 `pack` is the exception: it reads hundreds of staging PNGs, and the skeleton
 profile, and hashes none of them. That is safe because those PNGs have exactly
@@ -393,10 +464,11 @@ stage after it, so a re-bake always re-packs, and `stages::bake` deletes the
 packed. The profile is in the `bake` row above, so an edited limit invalidates
 the bake and forces the re-pack anyway.
 
-`model`, `bake` and `pack` also carry `LOCAL_PIPELINE_VERSION`, because a
-fingerprint over inputs cannot say "the code that produced this was fixed".
-`concept` and `rig` do not: a local fix must never re-spend on OpenAI or on
-rigging. Bumping it does re-run the model stage, which costs Meshy credits.
+`model`, `download`, `bake` and `pack` also carry `LOCAL_PIPELINE_VERSION`,
+because a fingerprint over inputs cannot say "the code that produced this was
+fixed". `concept` and `rig` do not: a local fix must never re-spend on OpenAI
+or on rigging. Bumping it does re-run the model stage, which costs Meshy
+credits.
 
 Content, never a date, so a fresh checkout is not a rebuild. A **committed**
 input that is missing is an error rather than a hash of nothing:
@@ -447,7 +519,10 @@ cargo art fetch strafe_left  # just one, --force to replace it
 
 A fetch is three steps: the export is downloaded, `check_source.py` measures
 it against what the library declares, and only then is it fitted to the
-canonical rig. Every export is requested **traveling**, so the root carries
+canonical rig. The download stage runs those same three on every clip Meshy
+animated, so no clip reaches `art/animations/` unmeasured or unfitted.
+
+Every export is requested **traveling**, so the root carries
 the motion and the femur ratio can size the step to our own body, and at the
 rate `source_fps` declares. `source_fps` is the clip's own rate and `fps` is
 the sprite sampling rate: `idle` is sampled 8 times a second out of a clip

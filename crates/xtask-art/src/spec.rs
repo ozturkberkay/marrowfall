@@ -465,6 +465,13 @@ impl Paths {
         self.staging().join("clean.glb")
     }
 
+    /// The rigged character as the vendor returned it, under its own bone
+    /// names and its own rest frames. The rename and the conform read this
+    /// and write [`Paths::character_glb`]. Derived; gitignored.
+    pub fn rigged_glb(&self) -> PathBuf {
+        self.staging().join("rigged.glb")
+    }
+
     /// Raw bake output. Derived; gitignored.
     pub fn staging(&self) -> PathBuf {
         self.staging.clone()

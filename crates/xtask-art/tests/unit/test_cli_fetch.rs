@@ -9,8 +9,7 @@ use std::path::Path;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::check::profile::Profile;
-use xtask_art::check::{Finding, Report, Rule, Severity, clip, foot, source};
+use xtask_art::check::{Report, Rule, Severity, clip, foot, source};
 use xtask_art::cli::{FetchStep, OnDisk, fetch, fetch_plan};
 use xtask_art::library::{
     Animation, AnimationLibrary, ClipFiles, HUMANOID, LibraryLock, MotionSource, Verdict,
@@ -18,6 +17,10 @@ use xtask_art::library::{
 use xtask_art::lock::blender_inputs;
 use xtask_art::providers::mixamo::client::CHARACTER_ID;
 
+use crate::stubs::{
+    a_blender_stub, a_blender_stub_of, a_convention, a_profile, a_retarget_report, a_source_report,
+    a_stub, as_findings, reporting, writes_a_report,
+};
 use crate::support::{BLENDER, EnvGuard, a_tree, edit_an_aim_row};
 
 const PRODUCT: &str = "c9ccc468-b96c-11e4-a802-0aaa78deedf9";
@@ -380,36 +383,6 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
     dir
 }
 
-/// The report writing, as the real script looks like from outside: the
-/// header comes off the path the runner set, and one finding per rule stands
-/// in for the 69 the retarget and the 33 the source check really write.
-///
-/// Each stage defaults to the clean set of every rule it owns, kept on a
-/// file, because the runner refuses either script when it leaves one of its
-/// own rules unread. A test overrides one stage's whole list.
-fn writes_a_report(dir: &Path) -> String {
-    let fitted = dir.join("retarget-findings.json");
-    let vendor = dir.join("fetch-findings.json");
-    std::fs::write(&fitted, a_retarget_report(0.0)).unwrap();
-    std::fs::write(&vendor, as_findings(&a_source_report())).unwrap();
-    format!(
-        r#"
-name=$(basename "$MARROWFALL_REPORT" .json)
-stage=${{name%%.*}}; rest=${{name#*.}}; item=${{rest%.*}}; attempt=${{rest##*.}}
-if [ "$stage" = "fetch" ]; then
-  if [ -n "$MARROWFALL_STUB_SOURCE_FINDINGS" ]; then
-    findings="$MARROWFALL_STUB_SOURCE_FINDINGS"
-  else findings=$(cat "{vendor}"); fi
-elif [ -n "$MARROWFALL_STUB_FINDINGS" ]; then findings="$MARROWFALL_STUB_FINDINGS"
-else findings=$(cat "{fitted}"); fi
-printf '{{"stage":"%s","item":"%s","attempt":%s,"findings":[%s]}}' \
-  "$stage" "$item" "$attempt" "$findings" > "$MARROWFALL_REPORT"
-"#,
-        fitted = fitted.display(),
-        vendor = vendor.display()
-    )
-}
-
 /// The fetch path runs two scripts, and a stub testing the second one still
 /// has to let the first through with a clean report of its own.
 fn passes_the_source_check(dir: &Path) -> String {
@@ -430,145 +403,11 @@ esac
     )
 }
 
-/// One executable stub, named after what it does wrong.
-///
-/// Every one answers `--version` first, because a fetch reads the Blender
-/// build before it fits anything.
-fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
-    let stub = dir.join(name);
-    std::fs::write(
-        &stub,
-        format!("#!/bin/sh\n{}{body}", crate::support::answers_its_version()),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
-    stub
-}
-
-/// Blender as the fetch path uses it: it writes the clip, the source motion
-/// beside it, the report and the sentinel.
-///
-/// The clip and the sidecar are the synthetic cross-rig pair, standing, so
-/// every file-side `clip.*` rule measures a real fit rather than a stub
-/// string and the three foot contact ones have a foot that plants.
-fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
-    a_blender_stub_of(dir, &crate::clips::CrossRig::new(a_convention()).standing())
-}
-
-/// The same stub handing back a pair a test chose.
-fn a_blender_stub_of(dir: &Path, pair: &crate::clips::CrossRig) -> std::path::PathBuf {
-    std::fs::write(dir.join("fitted.glb"), pair.output_glb()).unwrap();
-    std::fs::write(dir.join("source.json"), pair.source_motion()).unwrap();
-    a_stub(
-        dir,
-        "blender-stub.sh",
-        &format!(
-            r#"printf '%s\n' "$@" >> "$MARROWFALL_STUB_ARGV"
-out=""; motion=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--out" ]; then out="$2"; fi
-  if [ "$1" = "--source-motion" ]; then motion="$2"; fi
-  shift
-done
-if [ -n "$out" ]; then
-  mkdir -p "$(dirname "$out")" "$(dirname "$motion")"
-  cp "{clip}" "$out"
-  cp "{source}" "$motion"
-fi
-{report}
-: > "$MARROWFALL_SENTINEL"
-exit 0
-"#,
-            clip = dir.join("fitted.glb").display(),
-            source = dir.join("source.json").display(),
-            report = writes_a_report(dir),
-        ),
-    )
-}
-
-/// The canonical role to bone map, out of the committed skeleton file.
-fn a_convention() -> std::collections::BTreeMap<String, String> {
-    let table =
-        xtask_art::check::aim::AimTable::of(&crate::support::repo_root(), HUMANOID).unwrap();
-    table.bones(table.canonical()).unwrap().clone()
-}
-
-/// What the retarget reports, as JSON: one clean finding per rule it owns,
-/// with `clip.interpolation` reading `measured`.
-///
-/// Built through the rule registry, so the stub cannot report a limit, a unit
-/// or a space the published list does not carry, and never decides its own
-/// severity.
-fn a_retarget_report(measured: f64) -> String {
-    as_findings(&reporting(clip::RETARGET_RULES.iter().copied(), |rule| {
-        match rule.id {
-            // A clean reading inside every published limit. The one ratio of
-            // the seven sits near 1, and everything else reads none of what
-            // it measures.
-            id if id == clip::INTERPOLATION.id => measured,
-            // The one ratio, and the one foot that has to plant at least once.
-            id if id == clip::STRIDE_RATIO.id || id == foot::PLANTS.id => 1.0,
-            _ => 0.0,
-        }
-    }))
-}
-
 /// The same report with one rule left out of it.
 fn without(rule: &str) -> String {
     let mut reported = reporting(clip::RETARGET_RULES.iter().copied(), |_| 0.0);
     reported.remove(rule);
     as_findings(&reported)
-}
-
-/// What the source check reports: one clean finding per rule it owns, keyed
-/// by rule id so a test can swap one for the defect it is about.
-fn a_source_report() -> BTreeMap<&'static str, Finding> {
-    let travel = a_profile().source.travel_meters;
-    reporting(source::RULES.iter().copied(), |rule| {
-        // `source.traveling` is the one `ge` rule of the six: a clip that
-        // travels reads at least the threshold, and every other rule reads
-        // none of what it is measuring.
-        if rule.id == source::TRAVELING.id {
-            travel
-        } else {
-            0.0
-        }
-    })
-}
-
-/// One finding per rule, each reading whatever `reads` says, so the registry
-/// and not the stub decides the severity.
-fn reporting(
-    rules: impl Iterator<Item = &'static Rule>,
-    reads: impl Fn(&Rule) -> f64,
-) -> BTreeMap<&'static str, Finding> {
-    let profile = a_profile();
-    rules
-        .map(|rule| {
-            (
-                rule.id,
-                rule.measured(&profile, "Hips", reads(rule), 1, "stub".to_owned()),
-            )
-        })
-        .collect()
-}
-
-/// A findings list as the body of a JSON array, which is how the stub pastes
-/// it into a report.
-fn as_findings(reported: &BTreeMap<&str, Finding>) -> String {
-    reported
-        .values()
-        .map(|finding| serde_json::to_string(finding).unwrap())
-        .collect::<Vec<String>>()
-        .join(",")
-}
-
-fn a_profile() -> Profile {
-    Profile::of(&crate::support::repo_root(), HUMANOID).unwrap()
 }
 
 /// Serves one product, its export, and the file that export produces.
@@ -634,7 +473,7 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         .await
         .unwrap();
 
-    let staged = AnimationLibrary::staged_download(dir.path(), "walk_back");
+    let staged = AnimationLibrary::staged_download(dir.path(), "walk_back", "fbx");
     assert_eq!(std::fs::read(staged).unwrap(), an_fbx(), "kept for a look");
     let glb = library.glb(dir.path(), "walk_back");
     assert!(

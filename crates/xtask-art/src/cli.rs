@@ -16,7 +16,6 @@ use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::blender::Build;
-use crate::check::aim::{self, AimTable};
 use crate::check::profile::Profile;
 use crate::check::{self, Finding, Report, Severity, Symmetry, mesh, rig};
 use crate::library::{AnimationLibrary, ClipFiles, LibraryLock, MotionSource};
@@ -426,7 +425,7 @@ pub async fn run(
                 outcome?
             }
             Stage::Download => {
-                crate::stages::download(&library, &paths, root, &lock.tasks()).await?
+                crate::stages::download(&spec, &library, &paths, root, &lock.tasks()).await?
             }
             Stage::Bake => crate::stages::bake(&spec, &library, &paths, root)?,
             Stage::Pack => crate::stages::pack(&spec, &library, &paths)?,
@@ -570,7 +569,7 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
             .motion_fbx(&product_id, animation.source_fps, &token)
             .await?;
 
-        let download = AnimationLibrary::staged_download(root, &name);
+        let download = AnimationLibrary::staged_download(root, &name, "fbx");
         std::fs::create_dir_all(download.parent().unwrap_or(root))
             .with_context(|| format!("creating {}", download.display()))?;
         std::fs::write(&download, &fbx)
@@ -811,6 +810,7 @@ pub fn check(root: &Path, name: Option<&str>, asked: Asked) -> Result<()> {
         for measured in [
             check_concept(root, &spec)?,
             check_rig(root, &spec)?,
+            check_conformed(root, &spec)?,
             check_mesh(root, &spec)?,
             check_cleaned(root, &spec)?,
             check_cleanup(root, &spec)?,
@@ -895,47 +895,65 @@ fn check_concept(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
     Ok(Some(printed(&paths, &report, &written)))
 }
 
-/// Measures one character's rigged GLB against its skeleton profile.
-/// `None` when the rig is not on disk.
+/// Measures the rigged GLB the vendor returned, which is what the rename and
+/// the conform read. `None` when it is not on disk: it is derived, so a fresh
+/// checkout has the conformed character and not this.
 fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    measure_rig(
+        root,
+        spec,
+        &Paths::new(root, &spec.name).rigged_glb(),
+        rig::STAGE,
+        rig::NOUN,
+    )
+}
+
+/// And the conformed character beside it, which is the file the gate is on
+/// and the one every stage downstream reads.
+fn check_conformed(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    measure_rig(
+        root,
+        spec,
+        &Paths::new(root, &spec.name).character_glb(),
+        rig::CONFORMED_STAGE,
+        rig::CONFORMED_NOUN,
+    )
+}
+
+/// One rig on disk against its skeleton profile, filed under one stage name.
+///
+/// Only the conformed file's defects are counted, the way
+/// [`mesh::only`] narrows the cleaned mesh. The `rig` report records what the
+/// vendor shipped and refuses nothing: it fails the three name rules by
+/// construction, and the rename is what closes them.
+fn measure_rig(
+    root: &Path,
+    spec: &CharacterSpec,
+    glb: &Path,
+    stage: &str,
+    what: &str,
+) -> Result<Option<usize>> {
     let paths = Paths::new(root, &spec.name);
-    let glb = paths.character_glb();
     if !spec.subject.kind.can_be_rigged() {
         println!(
-            "      no rig: {:?} characters are not rigged",
+            "      no {what}: {:?} characters are not rigged",
             spec.subject.kind
         );
         return Ok(None);
     }
     if !glb.exists() {
-        println!("      no rig yet at {}", paths.relative(&glb));
+        println!("      no {what} yet at {}", paths.relative(glb));
         return Ok(None);
     }
-    let profile = Profile::of(root, &spec.subject.skeleton)?;
-    let table = AimTable::of(root, &spec.subject.skeleton)?;
-    let findings = [
-        rig::check_file(
-            &glb,
-            root,
-            &profile,
-            f64::from(spec.subject.height_meters),
-            Symmetry::declared(spec.subject.symmetry),
-            FIRST_ATTEMPT,
-        )?,
-        // The rig stage writes our own rig, so it is named in the canonical
-        // convention. A source rig is measured against the same table under
-        // its own one.
-        aim::check_file(
-            &glb,
-            root,
-            &profile,
-            &table,
-            table.canonical(),
-            FIRST_ATTEMPT,
-        )?,
-    ]
-    .concat();
-    report_on(root, &paths, rig::STAGE, findings).map(Some)
+    let bytes = std::fs::read(glb).with_context(|| format!("reading {}", glb.display()))?;
+    let report = crate::stages::check_rig(spec, &paths, root, stage, glb, &bytes)?;
+    let written = report.artifacts(root)?.report();
+    let defects = printed(&paths, &report, &written);
+    Ok(Some(if stage == rig::CONFORMED_STAGE {
+        defects
+    } else {
+        0
+    }))
 }
 
 /// Measures one character's bare mesh, which is the mesh before rigging.

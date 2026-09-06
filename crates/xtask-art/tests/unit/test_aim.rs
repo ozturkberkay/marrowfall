@@ -28,6 +28,14 @@ const COMMITTED: [&str; 2] = [
 /// The file every skeleton table lives in, `[profile]` included.
 const SKELETON_FILE: &str = "art/skeletons/humanoid.toml";
 
+/// The same rig under Meshy's own names, which is what a fresh rig arrives
+/// as. Its spine is numbered from the top and its neck is lowercase.
+const PRE_RENAME: &str = "crates/xtask-art/tests/fixtures/humanoid_before_rename.glb";
+
+/// How many roles the humanoid table aims, which is how many rows one rig
+/// owes.
+const ROLES: usize = 22;
+
 /// A tiny valid skeleton file, for one broken line at a time. One sided pair,
 /// so the mirror rows have something to reflect.
 const SMALL: &str = r#"
@@ -39,6 +47,9 @@ stride_segment = ["hips", "left_fin"]
 hips = "Hips"
 left_fin = "LeftFin"
 right_fin = "RightFin"
+
+[fingerprints]
+ours = ["LeftFin"]
 
 [aim_table]
 hips = [0.0, 0.0, 1.0]
@@ -81,6 +92,11 @@ fn findings_for(file: &str) -> Vec<Finding> {
         1,
     )
     .expect("the aim rule runs without a Blender")
+}
+
+/// One rig this repository ships, as the gates read it.
+fn read_file(file: &str) -> Skeleton {
+    Skeleton::read(&committed_glb(file)).expect("committed art")
 }
 
 /// One hand-built rig, as the gates read it.
@@ -132,7 +148,7 @@ fn measured(findings: &[Finding], subject: &str) -> f64 {
 fn the_committed_aim_table_loads() {
     let table = table();
 
-    assert_eq!(table.canonical(), "meshy");
+    assert_eq!(table.canonical(), "standard");
     assert_eq!(table.roles().count(), 22, "22 roles, no fingers");
     // Blender Z-up, the character facing -Y, so +X is his left.
     assert_eq!(table.aim("hips"), Some(DVec3::Z));
@@ -191,7 +207,7 @@ fn the_committed_table_maps_every_role_in_every_convention() {
     let table = table();
     let roles: BTreeSet<&str> = table.roles().collect();
 
-    for convention in ["meshy", "mixamo"] {
+    for convention in ["meshy", "mixamo", "standard"] {
         let bones = table.bones(convention).unwrap();
         assert_eq!(
             bones.keys().map(String::as_str).collect::<BTreeSet<&str>>(),
@@ -199,11 +215,12 @@ fn the_committed_table_maps_every_role_in_every_convention() {
             "{convention}"
         );
     }
-    // The rename made the two tables identical, and they stay two tables:
-    // the next bought rig need not name its bones this way. `[fingerprints]`
-    // is what tells them apart.
-    assert_eq!(table.bones("meshy").unwrap()["spine_lower"], "Spine");
+    // The one row that says why three tables are three tables: Meshy
+    // numbers its spine from the top, so its lowest spine bone is `Spine02`
+    // and ours is `Spine`.
+    assert_eq!(table.bones("meshy").unwrap()["spine_lower"], "Spine02");
     assert_eq!(table.bones("mixamo").unwrap()["spine_lower"], "Spine");
+    assert_eq!(table.bones("standard").unwrap()["spine_lower"], "Spine");
 }
 
 /// `clip.floor_snap` puts the lowest of these on the floor, and which joints
@@ -292,7 +309,7 @@ fn an_unknown_convention_names_the_ones_that_exist() {
     let error = format!("{:#}", table().bones("maya").unwrap_err());
 
     assert!(
-        error.contains("maya") && error.contains("meshy, mixamo"),
+        error.contains("maya") && error.contains("meshy, mixamo, standard"),
         "got: {error}"
     );
 }
@@ -383,6 +400,43 @@ fn a_row_that_is_not_three_numbers_is_refused() {
     // A row that is not an array at all never gets that far.
     let error = refused(&[("hips = [0.0, 0.0, 1.0]", "hips = \"up\"")]);
     assert!(error.contains("aim_table"), "got: {error}");
+}
+
+/// `[fingerprints]` is what reads a rig's convention off the rig, so a
+/// convention nothing fingerprints could never be matched to a file.
+#[test]
+fn a_convention_with_no_fingerprint_of_its_own_is_refused() {
+    let error = refused(&[("ours = [\"LeftFin\"]", "theirs = [\"LeftFin\"]")]);
+
+    assert!(error.contains("every convention in"), "got: {error}");
+}
+
+#[test]
+fn a_convention_whose_fingerprint_names_no_bone_is_refused() {
+    let error = refused(&[("ours = [\"LeftFin\"]", "ours = []")]);
+
+    assert!(error.contains("no fingerprint bone"), "got: {error}");
+}
+
+/// A bone two conventions both claim tells them apart from nothing, which is
+/// the refusal `skeleton.py` makes on the other side of the same file.
+#[test]
+fn a_fingerprint_bone_two_conventions_share_is_refused() {
+    let error = refused(&[
+        (
+            "[conventions.ours]",
+            "[conventions.theirs]\nhips = \"Hips\"\nleft_fin = \"LeftFin\"\nright_fin = \"RightFin\"\n\n[conventions.ours]",
+        ),
+        (
+            "ours = [\"LeftFin\"]",
+            "ours = [\"LeftFin\"]\ntheirs = [\"leftfin\"]",
+        ),
+    ]);
+
+    assert!(
+        error.contains("tells them apart from nothing"),
+        "got: {error}"
+    );
 }
 
 #[test]
@@ -514,6 +568,53 @@ fn every_role_the_rig_fills_is_reported_either_way() {
     );
 }
 
+/// Every role the table aims, sorted, which is the list one rig owes.
+fn owed() -> Vec<String> {
+    table().roles().map(str::to_owned).collect()
+}
+
+/// The subjects a run reported, in the order it reported them.
+fn subjects(findings: &[Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .map(|finding| finding.subject.clone())
+        .collect()
+}
+
+/// A rig is measured on all 22 of its roles, whichever convention it is named
+/// in, because it is read in the one its own fingerprint names.
+#[test]
+fn every_role_is_measured_on_a_vendor_rig_and_on_ours() {
+    let owed = owed();
+    assert_eq!(owed.len(), ROLES);
+
+    for (file, convention) in [(PRE_RENAME, "meshy"), (COMMITTED[0], "standard")] {
+        let findings = aim::check(&read_file(file), &profile(), &table(), convention, 1)
+            .expect("a declared convention");
+
+        assert_eq!(findings.len(), ROLES, "{file} under {convention}");
+        assert_eq!(subjects(&findings), owed, "{file} under {convention}");
+    }
+}
+
+/// And what reading one in the wrong convention costs, which is the defect
+/// correction 7 of T15a records: `spine_middle`, `spine_upper` and `neck`
+/// land on no bone, leave no finding, and the report is three rows short with
+/// nothing saying so.
+#[test]
+fn a_vendor_rig_read_as_ours_silently_loses_three_roles() {
+    let findings = aim::check(&read_file(PRE_RENAME), &profile(), &table(), "standard", 1)
+        .expect("a declared convention");
+
+    assert_eq!(findings.len(), 19);
+    let reported = subjects(&findings);
+    let missing: Vec<String> = owed()
+        .into_iter()
+        .filter(|role| !reported.contains(role))
+        .collect();
+    assert_eq!(missing, ["neck", "spine_middle", "spine_upper"]);
+}
+
 // --- the rule, on hand-built rigs -----------------------------------------
 
 /// The conformant rig is named the way the profile and Mixamo name bones, so
@@ -543,7 +644,7 @@ fn a_role_whose_bone_the_rig_lacks_is_left_to_the_bone_set_rule() {
         .renamed("Spine2", "spine2")
         .renamed("Neck", "neck");
 
-    let findings = findings_of(&odd, "meshy");
+    let findings = findings_of(&odd, "standard");
 
     assert_eq!(findings.len(), 19, "22 roles less Spine1, Spine2 and Neck");
     assert_eq!(rejected(&findings), Vec::<String>::new());

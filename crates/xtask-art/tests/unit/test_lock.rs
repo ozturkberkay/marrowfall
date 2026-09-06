@@ -259,15 +259,53 @@ fn stages_name_the_provider_they_bill() {
 /// version, otherwise a corrected packer reports `cached` forever.
 ///
 /// The concept and the rig do not, because a local fix must never re-spend
-/// on OpenAI or on rigging.
+/// on OpenAI or on rigging. The download does: it renames and conforms the
+/// rig it fetched and fits every bought clip onto it, and all three are ours.
+/// Re-running it bills nothing, because it keeps the vendor's own files.
 #[test]
 fn only_the_stages_running_our_own_code_are_versioned() {
-    for stage in [Stage::Model, Stage::Bake, Stage::Pack] {
+    for stage in [Stage::Model, Stage::Download, Stage::Bake, Stage::Pack] {
         assert!(stage.is_versioned(), "{stage} produces its own output");
     }
-    for stage in [Stage::Concept, Stage::Rig, Stage::Download] {
+    for stage in [Stage::Concept, Stage::Rig] {
         assert!(!stage.is_versioned(), "{stage} runs no code of ours");
     }
+}
+
+/// The rename and the conform read the profile, so an edit to it rebuilds
+/// `model.glb`. The rig stage must not read it: that one bills.
+#[test]
+fn a_profile_edit_re_conforms_the_rig_and_buys_nothing() {
+    let library = a_library();
+    let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
+    let before = |stage| fingerprint(stage, &inputs(root, &spec, &library)).unwrap();
+    let (rig, download) = (before(Stage::Rig), before(Stage::Download));
+
+    edit_an_aim_row(root);
+
+    assert_eq!(before(Stage::Rig), rig, "a table edit must not re-rig");
+    assert_ne!(before(Stage::Download), download);
+}
+
+/// And so does the file the vendor returned, which is what they both read.
+#[test]
+fn replacing_the_vendors_rigged_file_re_conforms_and_buys_nothing() {
+    let library = a_library();
+    let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
+    let rigged = Paths::new(root, "survivor").rigged_glb();
+    std::fs::create_dir_all(rigged.parent().unwrap()).unwrap();
+    std::fs::write(&rigged, b"glTF one").unwrap();
+    let before = |stage| fingerprint(stage, &inputs(root, &spec, &library)).unwrap();
+    let (rig, download) = (before(Stage::Rig), before(Stage::Download));
+
+    std::fs::write(&rigged, b"glTF two").unwrap();
+
+    assert_eq!(before(Stage::Rig), rig);
+    assert_ne!(before(Stage::Download), download);
 }
 
 /// Free motion must not be able to invalidate a paid stage.

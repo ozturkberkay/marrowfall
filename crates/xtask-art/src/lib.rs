@@ -6,6 +6,8 @@
 pub mod blender;
 pub mod check;
 pub mod cli;
+pub mod conform;
+pub mod glb;
 pub mod http;
 pub mod library;
 pub mod lock;

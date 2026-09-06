@@ -435,13 +435,17 @@ def test_a_sided_role_with_no_mirror_row_is_refused() -> None:
 def test_the_committed_skeleton_file_loads() -> None:
     roles = Skeleton.parse(COMMITTED.read_text())
 
-    assert roles.canonical == "meshy"
+    assert roles.canonical == "standard"
     assert len(roles.roles) == 22, "22 roles, no fingers"
     assert len(roles.aim_table) == 22, "one aim per role, torso included"
     assert set(roles.roles) - set(roles.retarget_chain) == {"hips"}
     assert roles.stride_segment == ("left_upper_leg", "left_leg")
     assert roles.ground_roles == ("left_toe", "right_toe")
-    assert roles.optional_roles == (), "both conventions fill every role"
+    assert roles.optional_roles == (), "all three conventions fill every role"
+    # Meshy numbers its spine from the top, so its lowest spine bone is not
+    # the one our own `Spine` names.
+    assert roles.convention("meshy")["spine_lower"] == "Spine02"
+    assert roles.convention("standard")["spine_lower"] == "Spine"
 
 
 def test_the_committed_aim_table_aims_the_torso_up_and_the_toes_forward() -> None:
