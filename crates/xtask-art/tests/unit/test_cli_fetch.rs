@@ -9,7 +9,8 @@ use std::path::Path;
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use xtask_art::check::clip;
+use xtask_art::check::profile::Profile;
+use xtask_art::check::{Finding, Rule, clip, source};
 use xtask_art::cli::{FetchStep, fetch, fetch_plan};
 use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
 use xtask_art::providers::mixamo::client::CHARACTER_ID;
@@ -216,31 +217,54 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
 }
 
 /// The report writing, as the real script looks like from outside: the
-/// header comes off the path the runner set, and one finding per stage
-/// stands in for the 66 the retarget and the 32 the source check really
-/// write. An unset variable leaves an empty report, which is a run that
-/// passed.
-const WRITES_A_REPORT: &str = r#"
+/// header comes off the path the runner set, and one finding per rule stands
+/// in for the 69 the retarget and the 33 the source check really write.
+///
+/// Each stage defaults to the clean set of every rule it owns, kept on a
+/// file, because the runner refuses either script when it leaves one of its
+/// own rules unread. A test overrides one stage's whole list.
+fn writes_a_report(dir: &Path) -> String {
+    let fitted = dir.join("retarget-findings.json");
+    let vendor = dir.join("fetch-findings.json");
+    std::fs::write(&fitted, a_retarget_report(0.0)).unwrap();
+    std::fs::write(&vendor, as_findings(&a_source_report())).unwrap();
+    format!(
+        r#"
 name=$(basename "$MARROWFALL_REPORT" .json)
-stage=${name%%.*}; rest=${name#*.}; item=${rest%.*}; attempt=${rest##*.}
-if [ "$stage" = "fetch" ]; then finding="$MARROWFALL_STUB_SOURCE_FINDING"
-else finding="$MARROWFALL_STUB_FINDING"; fi
-printf '{"stage":"%s","item":"%s","attempt":%s,"findings":[%s]}' \
-  "$stage" "$item" "$attempt" "$finding" > "$MARROWFALL_REPORT"
-"#;
+stage=${{name%%.*}}; rest=${{name#*.}}; item=${{rest%.*}}; attempt=${{rest##*.}}
+if [ "$stage" = "fetch" ]; then
+  if [ -n "$MARROWFALL_STUB_SOURCE_FINDINGS" ]; then
+    findings="$MARROWFALL_STUB_SOURCE_FINDINGS"
+  else findings=$(cat "{vendor}"); fi
+elif [ -n "$MARROWFALL_STUB_FINDINGS" ]; then findings="$MARROWFALL_STUB_FINDINGS"
+else findings=$(cat "{fitted}"); fi
+printf '{{"stage":"%s","item":"%s","attempt":%s,"findings":[%s]}}' \
+  "$stage" "$item" "$attempt" "$findings" > "$MARROWFALL_REPORT"
+"#,
+        fitted = fitted.display(),
+        vendor = vendor.display()
+    )
+}
 
 /// The fetch path runs two scripts, and a stub testing the second one still
-/// has to let the first through.
-const PASSES_THE_SOURCE_CHECK: &str = r#"
-case "${MARROWFALL_REPORT##*/}" in
+/// has to let the first through with a clean report of its own.
+fn passes_the_source_check(dir: &Path) -> String {
+    let vendor = dir.join("passing-fetch-findings.json");
+    std::fs::write(&vendor, as_findings(&a_source_report())).unwrap();
+    format!(
+        r#"
+case "${{MARROWFALL_REPORT##*/}}" in
   fetch.*)
-    printf '{"stage":"fetch","item":"walk_back","attempt":1,"findings":[]}' \
-      > "$MARROWFALL_REPORT"
+    printf '{{"stage":"fetch","item":"walk_back","attempt":1,"findings":[%s]}}' \
+      "$(cat "{vendor}")" > "$MARROWFALL_REPORT"
     : > "$MARROWFALL_SENTINEL"
     exit 0
     ;;
 esac
-"#;
+"#,
+        vendor = vendor.display()
+    )
+}
 
 /// One executable stub, named after what it does wrong.
 fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
@@ -279,12 +303,13 @@ if [ -n "$out" ]; then
   cp "{clip}" "$out"
   cp "{source}" "$motion"
 fi
-{WRITES_A_REPORT}
+{report}
 : > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
             clip = dir.join("fitted.glb").display(),
             source = dir.join("source.json").display(),
+            report = writes_a_report(dir),
         ),
     )
 }
@@ -296,13 +321,77 @@ fn a_convention() -> std::collections::BTreeMap<String, String> {
     table.bones(table.canonical()).unwrap().clone()
 }
 
-/// One finding as JSON, built through the rule registry so the stub cannot
-/// report a limit, a unit or a space the published list does not carry.
-fn a_clip_finding(measured: f64) -> String {
-    let profile =
-        xtask_art::check::profile::Profile::of(&crate::support::repo_root(), HUMANOID).unwrap();
-    let finding = clip::INTERPOLATION.measured(&profile, "Hips", measured, 1, "stub".to_owned());
-    serde_json::to_string(&finding).unwrap()
+/// What the retarget reports, as JSON: one clean finding per rule it owns,
+/// with `clip.interpolation` reading `measured`.
+///
+/// Built through the rule registry, so the stub cannot report a limit, a unit
+/// or a space the published list does not carry, and never decides its own
+/// severity.
+fn a_retarget_report(measured: f64) -> String {
+    as_findings(&reporting(clip::RETARGET_RULES.iter().copied(), |rule| {
+        match rule.id {
+            // A clean reading inside every published limit. The one ratio of
+            // the seven sits near 1, and everything else reads none of what
+            // it measures.
+            id if id == clip::INTERPOLATION.id => measured,
+            id if id == clip::STRIDE_RATIO.id => 1.0,
+            _ => 0.0,
+        }
+    }))
+}
+
+/// The same report with one rule left out of it.
+fn without(rule: &str) -> String {
+    let mut reported = reporting(clip::RETARGET_RULES.iter().copied(), |_| 0.0);
+    reported.remove(rule);
+    as_findings(&reported)
+}
+
+/// What the source check reports: one clean finding per rule it owns, keyed
+/// by rule id so a test can swap one for the defect it is about.
+fn a_source_report() -> BTreeMap<&'static str, Finding> {
+    let travel = a_profile().source.travel_meters;
+    reporting(source::RULES.iter().copied(), |rule| {
+        // `source.traveling` is the one `ge` rule of the six: a clip that
+        // travels reads at least the threshold, and every other rule reads
+        // none of what it is measuring.
+        if rule.id == source::TRAVELING.id {
+            travel
+        } else {
+            0.0
+        }
+    })
+}
+
+/// One finding per rule, each reading whatever `reads` says, so the registry
+/// and not the stub decides the severity.
+fn reporting(
+    rules: impl Iterator<Item = &'static Rule>,
+    reads: impl Fn(&Rule) -> f64,
+) -> BTreeMap<&'static str, Finding> {
+    let profile = a_profile();
+    rules
+        .map(|rule| {
+            (
+                rule.id,
+                rule.measured(&profile, "Hips", reads(rule), 1, "stub".to_owned()),
+            )
+        })
+        .collect()
+}
+
+/// A findings list as the body of a JSON array, which is how the stub pastes
+/// it into a report.
+fn as_findings(reported: &BTreeMap<&str, Finding>) -> String {
+    reported
+        .values()
+        .map(|finding| serde_json::to_string(finding).unwrap())
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
+fn a_profile() -> Profile {
+    Profile::of(&crate::support::repo_root(), HUMANOID).unwrap()
 }
 
 /// Serves one product, its export, and the file that export produces.
@@ -362,7 +451,7 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
             "MARROWFALL_STUB_ARGV",
             dir.path().join("argv.txt").to_str().unwrap(),
         )
-        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(0.0));
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(0.0));
 
     fetch(dir.path(), &["walk_back".to_owned()], false)
         .await
@@ -384,7 +473,9 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         argv.find("check_source.py") < argv.find("retarget_animation.py"),
         "measured before anything was fitted to it: {argv}"
     );
-    assert!(argv.contains("--travels\ntrue"), "got: {argv}");
+    // Both scripts are told: the source check gates the vendor file's own
+    // travel and `clip.stride` reads the fit against it.
+    assert_eq!(argv.matches("--travels\ntrue").count(), 2, "got: {argv}");
     assert!(
         argv.contains("--children\nhips=spine_lower,"),
         "the mapped child per role, off `[profile.tails]`: {argv}"
@@ -396,6 +487,9 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         "source.traveling=0.02",
         "source.child_axis=180",
         "clip.fps_grid=0.0001",
+        "clip.floor_snap=0.005",
+        "clip.stride=2",
+        "clip.stride_ratio=100",
     ] {
         assert!(argv.contains(limit), "{limit} is not published: {argv}");
     }
@@ -473,7 +567,10 @@ async fn a_retarget_that_writes_nothing_is_not_recorded_as_fetched() {
     let stub = a_stub(
         dir.path(),
         "silent-stub.sh",
-        &format!("{PASSES_THE_SOURCE_CHECK}: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"),
+        &format!(
+            "{passes}: > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
+            passes = passes_the_source_check(dir.path())
+        ),
     );
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
@@ -503,14 +600,16 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
         dir.path(),
         "no-clip-stub.sh",
         &format!(
-            "{PASSES_THE_SOURCE_CHECK}{WRITES_A_REPORT}\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"
+            "{passes}{report}\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
+            passes = passes_the_source_check(dir.path()),
+            report = writes_a_report(dir.path())
         ),
     );
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
         .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
         .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
-        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(0.0));
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(0.0));
 
     let error = format!(
         "{:#}",
@@ -521,7 +620,7 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
 
     // The clip gates are what report it: a missing input is an error with a
     // stated reason, never a skip.
-    assert!(error.contains("left 5 defect(s)"), "got: {error}");
+    assert!(error.contains("left 8 defect(s)"), "got: {error}");
     let report = std::fs::read_to_string(
         dir.path()
             .join("art/staging/reports/retarget.walk_back.1.json"),
@@ -549,7 +648,7 @@ async fn a_retarget_that_breaks_a_rule_is_not_recorded_as_fetched() {
         )
         // Four channels left on Bezier. The registry decides the severity,
         // so this is an error without the stub claiming to be one.
-        .set("MARROWFALL_STUB_FINDING", &a_clip_finding(4.0));
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(4.0));
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)
         .await
@@ -563,6 +662,35 @@ async fn a_retarget_that_breaks_a_rule_is_not_recorded_as_fetched() {
             .exists(),
         "the report is the diagnostic, so it stays"
     );
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// A retarget that reported nothing about one of its own rules. This is what
+/// deleting the retarget's own `placed` call looks like from here: a gate
+/// that goes quiet cannot be told from one that never ran.
+#[tokio::test]
+async fn a_retarget_that_leaves_one_of_its_rules_unread_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &without("clip.floor_snap"));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("clip.floor_snap"), "got: {error}");
+    assert!(error.contains("never read"), "got: {error}");
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }
 
@@ -584,8 +712,8 @@ async fn a_retarget_that_calls_a_defect_information_is_refused() {
             dir.path().join("argv.txt").to_str().unwrap(),
         )
         .set(
-            "MARROWFALL_STUB_FINDING",
-            &a_clip_finding(4.0).replace("\"error\"", "\"info\""),
+            "MARROWFALL_STUB_FINDINGS",
+            &a_retarget_report(4.0).replace("\"error\"", "\"info\""),
         );
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)
@@ -614,8 +742,13 @@ async fn a_source_check_that_finds_a_defect_stops_before_the_retarget() {
             "MARROWFALL_STUB_ARGV",
             dir.path().join("argv.txt").to_str().unwrap(),
         )
-        // An in-place export of a clip the library calls traveling.
-        .set("MARROWFALL_STUB_SOURCE_FINDING", &a_source_finding(0.0));
+        // An in-place export of a clip the library calls traveling. The
+        // other five rules still report, so this is the reading and not the
+        // shape of the report.
+        .set(
+            "MARROWFALL_STUB_SOURCE_FINDINGS",
+            &a_source_report_where(&source::TRAVELING, 0.0),
+        );
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)
         .await
@@ -650,8 +783,9 @@ async fn a_source_check_reporting_a_rule_nobody_publishes_is_refused() {
             dir.path().join("argv.txt").to_str().unwrap(),
         )
         .set(
-            "MARROWFALL_STUB_SOURCE_FINDING",
-            &a_source_finding(2.31).replace("source.traveling", "source.made_up"),
+            "MARROWFALL_STUB_SOURCE_FINDINGS",
+            &a_source_report_where(&source::TRAVELING, 2.31)
+                .replace("source.traveling", "source.made_up"),
         );
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)
@@ -660,6 +794,42 @@ async fn a_source_check_reporting_a_rule_nobody_publishes_is_refused() {
         .to_string();
 
     assert!(error.contains("source.made_up"), "got: {error}");
+}
+
+/// A source check that reported nothing about one of its own six rules.
+/// This is what deleting one of `check_source.py`'s own measurements looks
+/// like from here, and the guard is the same one the retarget gets.
+#[tokio::test]
+async fn a_source_check_that_leaves_one_of_its_rules_unread_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut reported = a_source_report();
+    reported.remove(source::WANDER.id);
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_SOURCE_FINDINGS", &as_findings(&reported));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("source.wander"), "got: {error}");
+    assert!(error.contains("never read"), "got: {error}");
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    assert!(
+        !argv.contains("retarget_animation.py"),
+        "nothing was fitted to it: {argv}"
+    );
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }
 
 /// A vendor file with two coincident joints has no angle to report, and the
@@ -684,10 +854,11 @@ async fn a_source_check_that_could_not_take_a_measurement_reports_the_defect() {
             "MARROWFALL_STUB_ARGV",
             dir.path().join("argv.txt").to_str().unwrap(),
         )
-        .set(
-            "MARROWFALL_STUB_SOURCE_FINDING",
-            &serde_json::to_string(&undefined).unwrap(),
-        );
+        .set("MARROWFALL_STUB_SOURCE_FINDINGS", &{
+            let mut reported = a_source_report();
+            reported.insert(source::CHILD_AXIS.id, undefined);
+            as_findings(&reported)
+        });
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)
         .await
@@ -700,19 +871,21 @@ async fn a_source_check_that_could_not_take_a_measurement_reports_the_defect() {
     );
 }
 
-/// One `source.traveling` finding as JSON, built through the rule registry so
-/// the stub cannot report a limit the published list does not carry.
-fn a_source_finding(meters: f64) -> String {
-    let profile =
-        xtask_art::check::profile::Profile::of(&crate::support::repo_root(), HUMANOID).unwrap();
-    let finding = xtask_art::check::source::TRAVELING.measured(
-        &profile,
-        "the whole clip",
-        meters,
-        1,
-        "stub".to_owned(),
+/// The clean source report with one rule reading something else, which is
+/// the shape a real defect arrives in.
+fn a_source_report_where(rule: &Rule, measured: f64) -> String {
+    let mut reported = a_source_report();
+    reported.insert(
+        rule.id,
+        rule.measured(
+            &a_profile(),
+            "the whole clip",
+            measured,
+            1,
+            "stub".to_owned(),
+        ),
     );
-    serde_json::to_string(&finding).unwrap()
+    as_findings(&reported)
 }
 
 /// A rule `--list-rules` does not print has no published limit, so a report
@@ -732,8 +905,8 @@ async fn a_retarget_reporting_a_rule_nobody_publishes_is_refused() {
             dir.path().join("argv.txt").to_str().unwrap(),
         )
         .set(
-            "MARROWFALL_STUB_FINDING",
-            &a_clip_finding(0.0).replace("clip.interpolation", "clip.made_up"),
+            "MARROWFALL_STUB_FINDINGS",
+            &a_retarget_report(0.0).replace("clip.interpolation", "clip.made_up"),
         );
 
     let error = fetch(dir.path(), &["walk_back".to_owned()], false)

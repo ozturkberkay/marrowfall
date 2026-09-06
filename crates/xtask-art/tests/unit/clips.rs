@@ -45,6 +45,24 @@ use super::rigs::{Clip, Interpolation, SyntheticRig};
 /// measures the real pair at 171 to 175.
 pub const LEG_ROLL_DEGREES: f64 = 174.0;
 
+/// The roles that stand on the floor, as `humanoid.toml` names them.
+const GROUND_ROLES: [&str; 2] = ["left_toe", "right_toe"];
+
+/// The role every other one hangs under, which carries a clip's travel.
+const TOP: &str = "hips";
+
+/// The two roles a step is sized across, as `humanoid.toml` names them.
+const STRIDE_SEGMENT: [&str; 2] = ["left_upper_leg", "left_leg"];
+
+/// How far the vendor clip's own root gets, in meters. `strafe_left`'s real
+/// reading, and the sidecar declares it because no vendor rig is built here:
+/// `clip.swing` and `clip.twist` need rotations and nothing else.
+const SOURCE_TRAVEL_METERS: f64 = 2.3117;
+
+/// How much shorter our femur is than the vendor's, which is what every
+/// length of a correct fit is sized by. The real Mixamo pair reads this.
+const FEMUR_RATIO: f64 = 0.8815;
+
 /// How many frames the fixture clip runs, and at what rate.
 const FRAMES: usize = 8;
 const FPS: f64 = 24.0;
@@ -111,6 +129,10 @@ pub struct CrossRig {
     interpolation: Interpolation,
     /// Writes one key as a quaternion of no length at all.
     broken_key: bool,
+    /// Scales the root's travel alone, which is what sizing a clip by the
+    /// wrong femur leaves. The floor snap runs after the sizing, so the
+    /// standing part of the same keys is left alone.
+    travel_sized_by: f64,
 }
 
 impl CrossRig {
@@ -150,7 +172,29 @@ impl CrossRig {
             source_resting_opposite: Vec::new(),
             interpolation: Interpolation::Linear,
             broken_key: false,
+            travel_sized_by: 1.0,
         }
+    }
+
+    /// The root's travel scaled, leaving the source's alone. `clip.stride`
+    /// is the only rule that reads it, and 1.05 is a fit sized by a femur
+    /// ratio five percent out.
+    pub fn travel_sized_by(mut self, ratio: f64) -> Self {
+        self.travel_sized_by = ratio;
+        self
+    }
+
+    /// Our own stride segment at rest, off the fixture rig itself.
+    pub fn femur(&self) -> f64 {
+        let rest = self.rig.rest_positions();
+        let at = |role: &str| rest[&self.bones[role]];
+        (at(STRIDE_SEGMENT[1]) - at(STRIDE_SEGMENT[0])).length()
+    }
+
+    /// How far a correct fit of this pair travels: the vendor's own travel
+    /// sized by the femur ratio, which is what `clip.stride` reads.
+    pub fn travel(&self) -> f64 {
+        SOURCE_TRAVEL_METERS * FEMUR_RATIO
     }
 
     /// Rolls one role's output bone about its own +Y, on every frame, leaving
@@ -262,14 +306,13 @@ impl CrossRig {
         self
     }
 
-    /// The clip we deliver, as the bake would load it.
-    pub fn output_glb(&self) -> Vec<u8> {
-        let by_bone = |role: &str| self.bones[role].clone();
+    /// The role above each role, for every role a bone still fills.
+    ///
+    /// A role whose bone this fixture renamed away has no row, so it gets no
+    /// channel and the file simply has nothing filling it.
+    fn parent_roles(&self) -> BTreeMap<String, Option<String>> {
         let above: BTreeMap<String, Option<String>> = self.rig.hierarchy().into_iter().collect();
-        // A role whose bone this fixture renamed away has no row, so it gets
-        // no channel and the file simply has nothing filling it.
-        let parent_role: BTreeMap<String, Option<String>> = self
-            .bones
+        self.bones
             .iter()
             .filter_map(|(role, bone)| {
                 let parent = above.get(bone)?.clone().and_then(|parent| {
@@ -280,7 +323,58 @@ impl CrossRig {
                 });
                 Some((role.clone(), parent))
             })
+            .collect()
+    }
+
+    /// Where one joint sits at one frame, composed up its own chain.
+    ///
+    /// **The fixture's own composition, not `gltf_clip`'s.** A fixture built
+    /// with the reader under test cancels that reader out of every reading it
+    /// takes. A rigid chain is enough here: each rest offset is carried by
+    /// however far its parent turned from rest.
+    fn placed(
+        &self,
+        role: &str,
+        posed: &BTreeMap<String, DQuat>,
+        rest: &BTreeMap<String, DVec3>,
+        parents: &BTreeMap<String, Option<String>>,
+    ) -> DVec3 {
+        let Some(parent) = parents.get(role).and_then(Option::as_ref) else {
+            return rest[role];
+        };
+        let turned = posed[parent] * self.rest[parent].inverse();
+        self.placed(parent, posed, rest, parents) + turned * (rest[role] - rest[parent])
+    }
+
+    /// How far up this clip has to move for its lowest ground joint to stand
+    /// where the rig itself rests, which is the lift the retarget applies.
+    ///
+    /// A correct fit stands on its own floor, so the fixture keys it: a
+    /// rotation-only clip on this rig leaves its feet half a meter under the
+    /// ground, and `clip.floor_snap` would rightly reject that.
+    fn lift(&self) -> f64 {
+        let parents = self.parent_roles();
+        let bones = self.rig.rest_positions();
+        let rest: BTreeMap<String, DVec3> = self
+            .bones
+            .iter()
+            .filter_map(|(role, bone)| Some((role.clone(), *bones.get(bone)?)))
             .collect();
+        let mut floor = f64::INFINITY;
+        let mut lowest = f64::INFINITY;
+        for role in GROUND_ROLES {
+            floor = floor.min(rest[role].y);
+            for (_, posed) in &self.frames {
+                lowest = lowest.min(self.placed(role, posed, &rest, &parents).y);
+            }
+        }
+        floor - lowest
+    }
+
+    /// The clip we deliver, as the bake would load it.
+    pub fn output_glb(&self) -> Vec<u8> {
+        let by_bone = |role: &str| self.bones[role].clone();
+        let parent_role = self.parent_roles();
         let frames = &self.frames[..self.frames.len() - usize::from(self.output_short)];
         let carried = |role: &str, posed: &BTreeMap<String, DQuat>| {
             posed[role] * self.injected.get(role).copied().unwrap_or(DQuat::IDENTITY)
@@ -288,6 +382,7 @@ impl CrossRig {
         let mut clip = Clip {
             seconds: frames.iter().map(|(at, _)| *at).collect(),
             rotations: BTreeMap::new(),
+            translations: BTreeMap::new(),
             interpolation: self.interpolation,
         };
         for role in parent_role.keys() {
@@ -305,6 +400,21 @@ impl CrossRig {
             }
             clip.rotations.insert(by_bone(role), keys);
         }
+        // The root's own location: where the clip stands, plus a straight
+        // walk along +X spread over its keys. The object node above the
+        // skeleton carries a 0.01 scale, so a local step is 100x its world
+        // one.
+        let root = by_bone(TOP);
+        let standing =
+            self.rig.rest_translation(&root) + DVec3::Y * (self.lift() / super::rigs::OBJECT_SCALE);
+        let last = clip.seconds.len().saturating_sub(1).max(1) as f64;
+        let step = DVec3::X * (self.travel() * self.travel_sized_by / super::rigs::OBJECT_SCALE);
+        clip.translations.insert(
+            root,
+            (0..clip.seconds.len())
+                .map(|key| standing + step * (key as f64 / last))
+                .collect(),
+        );
         self.rig.to_glb(&clip)
     }
 
@@ -380,7 +490,13 @@ impl CrossRig {
                 })
             })
             .collect();
-        serde_json::json!({ "rest": rows(&self.rest, true), "frames": frames }).to_string()
+        serde_json::json!({
+            "rest": rows(&self.rest, true),
+            "frames": frames,
+            "travel": SOURCE_TRAVEL_METERS,
+            "stride_segment": self.femur() / FEMUR_RATIO,
+        })
+        .to_string()
     }
 }
 

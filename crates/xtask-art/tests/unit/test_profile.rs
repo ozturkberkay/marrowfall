@@ -42,6 +42,8 @@ twist_degrees = 15.0
 fps_grid_frames = 1e-4
 root_travel_meters = 0.02
 root_bob_meters = 0.15
+floor_snap_meters = 0.005
+stride_percent = 2.0
 loop_degrees = 2.0
 
 [profile.source]
@@ -113,6 +115,8 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.clip.fps_grid_frames, 1e-4);
     assert_eq!(profile.clip.root_travel_meters, 0.02);
     assert_eq!(profile.clip.root_bob_meters, 0.15);
+    assert_eq!(profile.clip.floor_snap_meters, 0.005);
+    assert_eq!(profile.clip.stride_percent, 2.0);
     assert_eq!(profile.clip.loop_degrees, 2.0);
     assert_eq!(profile.source.travel_meters, 0.02);
 }
@@ -436,6 +440,30 @@ fn a_limit_that_is_not_a_positive_number_is_refused() {
     ] {
         let error = refused(&[(band, &format!("humerus_below_horizontal = {broken}"))]);
         assert!(error.contains(field), "{field}: {error}");
+    }
+}
+
+/// And the clip tolerances. Each one is a calibrated band no correct clip
+/// ever reaches exactly, so a zero would reject every one of them.
+#[test]
+fn a_clip_limit_that_is_not_a_positive_number_is_refused() {
+    for (field, declared) in [
+        ("swing_degrees", "0.01"),
+        ("twist_degrees", "15.0"),
+        ("fps_grid_frames", "1e-4"),
+        ("root_travel_meters", "0.02"),
+        ("root_bob_meters", "0.15"),
+        ("floor_snap_meters", "0.005"),
+        ("stride_percent", "2.0"),
+        ("loop_degrees", "2.0"),
+    ] {
+        for value in ["0.0", "-1.0", "nan"] {
+            let error = refused(&[(
+                &format!("{field} = {declared}"),
+                &format!("{field} = {value}"),
+            )]);
+            assert!(error.contains(field), "clip.{field} = {value}: {error}");
+        }
     }
 }
 

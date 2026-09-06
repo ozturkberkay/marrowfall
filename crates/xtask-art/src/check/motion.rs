@@ -17,8 +17,13 @@
 //! under a change of world frame, so measuring one side in glTF Y-up and the
 //! other in Blender would produce precise, wrong numbers.
 //!
-//! Rotations only. Both rules read where a bone points and how far it is
-//! rolled about its own length, and neither reads a position.
+//! [`Motion`] is rotations only. Both rules read where a bone points and how
+//! far it is rolled about its own length, and neither reads a position.
+//!
+//! The same sidecar carries two lengths beside them, in [`SourceLengths`],
+//! because `clip.stride` and `clip.stride_ratio` also measure the fit against
+//! a file no Rust reader opens. They are a separate type read from the same
+//! schema, so neither rule can be handed the other's numbers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -55,6 +60,53 @@ pub struct Motion {
 struct SourceMotionFile {
     rest: BTreeMap<String, [f64; 4]>,
     frames: Vec<FrameFile>,
+    travel: f64,
+    stride_segment: f64,
+}
+
+/// The two lengths of the source clip, in meters, which no rotation carries.
+///
+/// `clip.stride` holds the fit's own travel to the source's sized by the
+/// femur, and `clip.stride_ratio` records that ratio, so both need a length
+/// out of the FBX. Read here rather than hung off [`Motion`] because a
+/// [`Motion`] read out of the delivered GLB has neither.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceLengths {
+    /// How far the source's own root got from where it started,
+    /// horizontally. The same reading `source.traveling` takes at the fetch.
+    pub travel: f64,
+    /// The source rig's two `stride_segment` joints at rest, apart.
+    pub stride_segment: f64,
+}
+
+impl SourceLengths {
+    pub fn read(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading the source motion {}", path.display()))?;
+        Self::parse(&text).with_context(|| format!("in {}", path.display()))
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        let file: SourceMotionFile =
+            serde_json::from_str(text).context("parsing the source motion")?;
+        ensure!(
+            file.travel.is_finite() && file.travel >= 0.0,
+            "the source travels {} m, which is no distance at all",
+            file.travel
+        );
+        // Zero would make the femur ratio a division by nothing, and the
+        // rule that divides is three functions away from this file.
+        ensure!(
+            file.stride_segment.is_finite() && file.stride_segment > 0.0,
+            "the source's stride segment is {} m, so no ratio can be taken \
+             against it",
+            file.stride_segment
+        );
+        Ok(Self {
+            travel: file.travel,
+            stride_segment: file.stride_segment,
+        })
+    }
 }
 
 #[derive(Deserialize)]

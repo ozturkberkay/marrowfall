@@ -794,6 +794,42 @@
       "attempt": 1,
       "measured_on": "the frames the retarget samples, against the source's own key times",
       "message": "the retarget samples 21 frame(s) and the source has 21 key time(s)"
+    },
+    {
+      "rule": "clip.floor_snap",
+      "severity": "info",
+      "subject": "RightToeBase at frame 2",
+      "measured": 0.0,
+      "limit": 0.005,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "every ground joint at every frame of the clip, in Blender Z-up world space, after the floor snap",
+      "message": "RightToeBase at frame 2 is the lowest any ground joint of the clip gets, 0.0000 m from the rest height the snap aims at"
+    },
+    {
+      "rule": "clip.stride",
+      "severity": "skipped",
+      "subject": "run",
+      "measured": 0.0,
+      "limit": 2.0,
+      "comparison": "le",
+      "unit": "percent",
+      "attempt": 1,
+      "measured_on": "the root joint's horizontal travel, first frame to last, against the source's own travel sized by the femur ratio, in Blender Z-up world space",
+      "message": "the library declares travels: false, so run has no source travel to be sized against"
+    },
+    {
+      "rule": "clip.stride_ratio",
+      "severity": "info",
+      "subject": "run",
+      "measured": 1.0000204384738902,
+      "limit": 100.0,
+      "comparison": "le",
+      "unit": "ratio",
+      "attempt": 1,
+      "measured_on": "the two stride_segment joints of each rig at rest, in Blender Z-up world space",
+      "message": "our stride segment is 0.3579 m against the source's 0.3579 m, so every length of run is sized by 1.0000"
     }
   ]
 }

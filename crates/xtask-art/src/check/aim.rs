@@ -56,14 +56,17 @@ pub const AIM_TABLE: Rule = Rule {
 /// Every rule this module owns, in the order `--list-rules` prints them.
 pub const RULES: [&Rule; 1] = [&AIM_TABLE];
 
-/// The tables the retarget reads: which bone fills each role, and where each
-/// role's bone must point.
+/// The role tables the retarget reads: which bone fills each role, where each
+/// role's bone must point, which roles stand on the floor, and which two size
+/// a step.
 #[derive(Debug, Clone)]
 pub struct AimTable {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
     /// Role to its aim, as a unit direction in Blender Z-up world space.
     aims: BTreeMap<String, DVec3>,
+    ground: Vec<String>,
+    stride: [String; 2],
 }
 
 /// Only what this reader owns. `[profile]` belongs to the rig gates and the
@@ -73,6 +76,8 @@ struct SkeletonFile {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
     aim_table: BTreeMap<String, Vec<f64>>,
+    ground_roles: Vec<String>,
+    stride_segment: [String; 2],
 }
 
 impl AimTable {
@@ -106,6 +111,8 @@ impl AimTable {
             .collect();
         Ok(Self {
             aims: aims(&roles, &file.aim_table)?,
+            ground: ground(&roles, file.ground_roles)?,
+            stride: stride(&roles, file.stride_segment)?,
             canonical: file.canonical,
             conventions: file.conventions,
         })
@@ -126,6 +133,19 @@ impl AimTable {
         self.aims.get(role).copied()
     }
 
+    /// The roles that stand on the floor, which `clip.floor_snap` reads.
+    /// Skeleton data, not a name: a quadruped has four of them.
+    pub fn ground_roles(&self) -> &[String] {
+        &self.ground
+    }
+
+    /// The two roles a clip's travel is sized by, which `clip.stride_ratio`
+    /// measures on each rig. A femur: total height carries the head and the
+    /// feet, and neither one takes a step.
+    pub fn stride_segment(&self) -> &[String; 2] {
+        &self.stride
+    }
+
     /// One convention's role to bone name map.
     pub fn bones(&self, convention: &str) -> Result<&BTreeMap<String, String>> {
         self.conventions.get(convention).with_context(|| {
@@ -136,6 +156,46 @@ impl AimTable {
             )
         })
     }
+}
+
+/// The roles that stand on the floor, refused unless every one is a role this
+/// skeleton has and no two are the same joint.
+///
+/// A skeleton with none has no floor to sit on.
+fn ground(roles: &BTreeSet<String>, named: Vec<String>) -> Result<Vec<String>> {
+    ensure!(
+        !named.is_empty(),
+        "a skeleton with no ground role has no floor to sit on"
+    );
+    each_a_role(roles, &named, "ground_roles")?;
+    Ok(named)
+}
+
+/// The two roles a step is measured across, refused unless both are roles
+/// this skeleton has and they are two different joints.
+fn stride(roles: &BTreeSet<String>, named: [String; 2]) -> Result<[String; 2]> {
+    each_a_role(roles, &named, "stride_segment")?;
+    Ok(named)
+}
+
+/// Every named role is a role of this skeleton, and none is named twice.
+///
+/// A repeat is refused because both readers take one number over the set: the
+/// lowest of one joint and itself is that joint, and the distance from a
+/// joint to itself is zero.
+fn each_a_role(roles: &BTreeSet<String>, named: &[String], field: &str) -> Result<()> {
+    let unknown: Vec<&String> = named.iter().filter(|role| !roles.contains(*role)).collect();
+    ensure!(
+        unknown.is_empty(),
+        "{field} names {unknown:?}, which no convention maps"
+    );
+    for role in named {
+        ensure!(
+            named.iter().filter(|other| *other == role).count() == 1,
+            "{field} names {role} twice"
+        );
+    }
+    Ok(())
 }
 
 /// Every row read as a direction, refusing everything the table has to be

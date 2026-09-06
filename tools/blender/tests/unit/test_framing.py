@@ -16,6 +16,7 @@ from framing import (
     FRAMING_MARGIN,
     KEY_LIGHT_AZIMUTH_DEG,
     KEY_LIGHT_ELEVATION_DEG,
+    SAME_BODY,
     BakeSettings,
     Bounds,
     Framing,
@@ -26,6 +27,7 @@ from framing import (
     is_forearm,
     key_light_rotation,
     missing_bones,
+    off_this_body,
     pin_horizontally,
     rest_height,
     root_channel_fault,
@@ -579,3 +581,32 @@ def test_three_empty_location_channels_are_refused_too() -> None:
 
     assert fault is not None
     assert "[0]" in fault
+
+
+# --- the body a clip was authored for -------------------------------------
+
+
+def test_a_clip_fitted_to_this_body_is_no_distance_from_it() -> None:
+    """The retarget already sized every length by the femur, so a clip that
+    reaches the bake is on this rig and the bake scales nothing."""
+    assert off_this_body(1.7, 1.7) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "expected"),
+    [(1.7, 1.87, 0.1), (1.7, 1.53, 0.1), (2.0, 1.0, 0.5)],
+)
+def test_a_clip_authored_on_another_rig_is_a_distance_from_this_one(
+    source: float, target: float, expected: float
+) -> None:
+    assert off_this_body(source, target) == pytest.approx(expected)
+
+
+def test_the_f32_a_glb_stores_is_still_the_same_body() -> None:
+    """What the three committed clips really read against the committed
+    character: 1.227e-6, which is the `f32` a joint position is stored in."""
+    assert off_this_body(166.516_913_65, 166.516_709_33) < SAME_BODY
+
+
+def test_a_rig_a_tenth_of_a_percent_out_is_another_body() -> None:
+    assert off_this_body(1.7, 1.7017) > SAME_BODY

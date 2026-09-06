@@ -52,6 +52,7 @@ extra-paths = ["tools/blender/src"]
 # Inside a running Blender they are always present.
 [[tool.ty.overrides]]
 include = [
+    "tools/blender/src/actions.py",
     "tools/blender/src/bake_sprites.py",
     "tools/blender/src/check_source.py",
     "tools/blender/src/retarget_animation.py",
