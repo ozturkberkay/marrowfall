@@ -12,7 +12,7 @@ use glam::{DQuat, DVec3};
 use xtask_art::check::aim::{self, AimTable, mirrored_role};
 use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Finding, Rule, Severity, rig};
+use xtask_art::check::{Finding, Rule, Severity, Symmetry, rig};
 use xtask_art::library::HUMANOID;
 
 use crate::rigs::{HEIGHT_METERS, SyntheticRig};
@@ -575,7 +575,14 @@ fn a_bone_turned_off_its_aim_is_rejected_on_that_role_alone() {
     // joint sits exactly where it did, and `LeftHand` is a leaf, so nothing
     // measures a direction toward it. If a `rig.*` rule fired here,
     // `rig.aim_table` would be a second copy of that rule.
-    let elsewhere = rig::check("fixture.gltf", &skeleton, &profile(), HEIGHT_METERS, 1);
+    let elsewhere = rig::check(
+        "fixture.gltf",
+        &skeleton,
+        &profile(),
+        HEIGHT_METERS,
+        Symmetry::Enforced,
+        1,
+    );
     assert_eq!(broken(&elsewhere), Vec::<String>::new(), "{elsewhere:#?}");
 }
 

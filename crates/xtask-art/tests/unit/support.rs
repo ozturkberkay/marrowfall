@@ -105,6 +105,8 @@ pub fn a_spec(name: &str) -> CharacterSpec {
             description: "a lean, weathered survivor in torn shorts".to_owned(),
             height_meters: 1.7,
             skeleton: xtask_art::library::HUMANOID.to_owned(),
+            cleanup: true,
+            symmetry: true,
         },
         animations: vec!["idle".to_owned()],
         remesh: Remesh {
@@ -154,6 +156,20 @@ pub fn install_skeleton(root: &std::path::Path) {
         skeletons.join(&name),
     )
     .expect("copying the committed skeleton profile");
+}
+
+/// The mesh as the model stage downloads it: textured, unskinned, and
+/// carrying one hole and one piece of debris for the fixer to remove.
+pub fn a_bare_mesh() -> Vec<u8> {
+    crate::meshes::SyntheticMesh::figure()
+        .without_a_face()
+        .plus_debris()
+        .to_glb()
+}
+
+/// And what a fixer writes from it: the same figure, whole.
+pub fn a_cleaned_mesh() -> Vec<u8> {
+    crate::meshes::SyntheticMesh::figure().to_glb()
 }
 
 /// Every subject the bake's own rules report on: one per axis of every clip.

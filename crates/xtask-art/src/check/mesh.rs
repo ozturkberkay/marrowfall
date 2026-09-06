@@ -1,4 +1,4 @@
-//! The mesh gates: thirteen rules, every limit read from `[profile]`.
+//! The mesh gates: fifteen rules, every limit read from `[profile]`.
 //!
 //! These rules exist because the last mesh audit was **confidently wrong**.
 //! It read 13,368 boundary edges on a mesh that has 171, and a second tool
@@ -26,10 +26,24 @@ use serde::Deserialize;
 use super::gltf_mesh::{self, Surface};
 use super::gltf_world::{SHORTEST_SEGMENT_METERS, blender_to_gltf};
 use super::profile::{Axis, Profile};
-use super::{Comparison, Finding, Rule, Severity, relative_to};
+use super::{Comparison, Finding, NOT_MIRRORED, Rule, Severity, Symmetry, relative_to};
 
 /// The stage these findings belong to, which names their report file.
+///
+/// Three of them, because each carries one fixed rule set: [`FILE_RULES`] on
+/// the mesh as it arrived, [`CLEANED_RULES`] on the file the fixer wrote, and
+/// [`CLEANUP_RULES`] on the pair. One report for both files would carry
+/// `mesh.texture` twice on a subject called `char1`, which is in both.
 pub const STAGE: &str = "mesh";
+
+/// [`CLEANED_RULES`], on the file the fixer wrote.
+pub const CLEANED_STAGE: &str = "cleaned";
+
+/// [`CLEANUP_RULES`], which read the two files against each other.
+///
+/// Not a `Stage`: the lock keeps its six, and this runs inside the rig stage,
+/// between the mesh arriving and the credits being spent on it.
+pub const CLEANUP_STAGE: &str = "cleanup";
 
 /// How much of the height, measured from the lowest vertex, is the feet.
 ///
@@ -56,6 +70,12 @@ const MATERIALS: &str = "the base color texture of each primitive's material";
 const MODES: &str = "the primitive modes in the glTF node graph";
 const REMOTE: &str = "Meshy print/analyze, which counts boundary and true non-manifold edges \
                       together, on the model task";
+/// The two post-cleanup rules read the file the fixer wrote, in the same
+/// representation as everything else. The second names the pair, because a
+/// number that is only meaningful beside another one has to say so.
+const CLEANED: &str = "the surface the fixer wrote, in world space and welded at 1e-5 m";
+const AGAINST_THE_BARE_MESH: &str = "the surface the fixer wrote against the surface it was \
+                                     given, both in world space and welded at 1e-5 m";
 
 pub const HOLES: Rule = Rule {
     id: "mesh.holes",
@@ -165,8 +185,60 @@ pub const PRINTABILITY: Rule = Rule {
     limit: |profile| profile.mesh.printability_edges,
 };
 
+/// What filling a hole leaves behind: closing it lays a face that can meet
+/// two others, so the count after the fixer has a ceiling of its own rather
+/// than the one [`NON_MANIFOLD`] is read against.
+pub const NON_MANIFOLD_POST: Rule = Rule {
+    id: "mesh.non_manifold_post",
+    comparison: Comparison::Le,
+    unit: "edges",
+    space: CLEANED,
+    limit: |profile| profile.mesh.non_manifold_post,
+};
+
+/// Whether the fixer did anything: the defects it left, over the defects it
+/// was given. **Strictly less than**, because a stub that wrote its input
+/// back reads the same number it was given and `le` would pass it.
+///
+/// Holes and pieces only, summed. The fixer is measured to make the other
+/// two classes worse and each has a ceiling of its own, and one reading per
+/// class would refuse a mesh that arrived clean in one. Corrections 1 and 2
+/// of T10 in the design have the numbers.
+///
+/// The limit is the subject's own count, so this rule publishes none:
+/// [`Rule::against`] builds its findings, and [`Rule::measured`] would file
+/// the `NaN` below, which a report refuses.
+pub const CLEANUP_EFFECTIVE: Rule = Rule {
+    id: "mesh.cleanup_effective",
+    comparison: Comparison::Lt,
+    unit: "defects",
+    space: AGAINST_THE_BARE_MESH,
+    limit: |_| f64::NAN,
+};
+
 /// Every mesh rule, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 13] = [
+pub const RULES: [&Rule; 15] = [
+    &HOLES,
+    &NON_MANIFOLD,
+    &ISLANDS,
+    &SELF_INTERSECT,
+    &MIRROR,
+    &WORLD_SIZE,
+    &FACING,
+    &STRAY_OBJECT,
+    &BUDGET,
+    &UV,
+    &TEXTURE,
+    &QUADS,
+    &PRINTABILITY,
+    &NON_MANIFOLD_POST,
+    &CLEANUP_EFFECTIVE,
+];
+
+/// The rules [`check`] reads off one file, which is every one the fixer does
+/// not leave behind. [`CLEANED_RULES`] is which of them a cleaned file is
+/// read against.
+pub const FILE_RULES: [&Rule; 13] = [
     &HOLES,
     &NON_MANIFOLD,
     &ISLANDS,
@@ -181,6 +253,42 @@ pub const RULES: [&Rule; 13] = [
     &QUADS,
     &PRINTABILITY,
 ];
+
+/// The same rules on the file the fixer wrote, less the two a cleaned mesh
+/// cannot honestly be read against.
+///
+/// [`NON_MANIFOLD`]'s ceiling is calibrated on the mesh as it arrived, and
+/// filling a hole raises that count on purpose: after the fixer it belongs
+/// to [`NON_MANIFOLD_POST`], and one count against two limits is one of them
+/// wrong. [`PRINTABILITY`] asks about a model task, and a file the fixer
+/// wrote has none, so it could only ever warn that nobody answered.
+pub const CLEANED_RULES: [&Rule; 11] = [
+    &HOLES,
+    &ISLANDS,
+    &SELF_INTERSECT,
+    &MIRROR,
+    &WORLD_SIZE,
+    &FACING,
+    &STRAY_OBJECT,
+    &BUDGET,
+    &UV,
+    &TEXTURE,
+    &QUADS,
+];
+
+/// And the two [`check_cleanup`] reads off the pair the fixer produced.
+pub const CLEANUP_RULES: [&Rule; 2] = [&NON_MANIFOLD_POST, &CLEANUP_EFFECTIVE];
+
+/// One file's reading, cut down to the rules a report owns.
+///
+/// [`check_file`] measures a whole file in one pass, so what does not apply
+/// is dropped here rather than left out of the pass.
+pub fn only(rules: &[&Rule], findings: Vec<Finding>) -> Vec<Finding> {
+    findings
+        .into_iter()
+        .filter(|finding| rules.iter().any(|rule| rule.id == finding.rule))
+        .collect()
+}
 
 /// Why `mesh.printability` has nothing to read, in the one case that is not
 /// a network error: nobody has asked yet.
@@ -199,6 +307,7 @@ pub fn check_file(
     repo_root: &Path,
     profile: &Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     printability: Option<&str>,
     attempt: u32,
 ) -> Result<Vec<Finding>> {
@@ -209,6 +318,7 @@ pub fn check_file(
             &surface,
             profile,
             height_meters,
+            symmetry,
             printability,
             attempt,
         )),
@@ -233,6 +343,7 @@ pub fn check(
     surface: &Surface,
     profile: &Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     printability: Option<&str>,
     attempt: u32,
 ) -> Vec<Finding> {
@@ -241,6 +352,7 @@ pub fn check(
         surface,
         profile,
         height_meters,
+        symmetry,
         attempt,
     };
     [
@@ -266,12 +378,159 @@ fn remote(file: &str, profile: &Profile, printability: Option<&str>, attempt: u3
     }
 }
 
+/// What the fixer left behind, or why there is nothing to read.
+///
+/// Named rather than a pair of arguments, because the whole point of
+/// [`CLEANUP_EFFECTIVE`] is which of the two surfaces is read against which.
+pub enum Fixed<'a> {
+    /// The mesh the fixer was given, and the mesh it wrote.
+    Cleaned {
+        before: &'a Surface,
+        after: &'a Surface,
+    },
+    /// `spec.subject.cleanup` is false, so no fixer ran.
+    Declined,
+    /// One of the two files holds no readable surface, and why.
+    Unreadable(String),
+}
+
+/// The two counts [`CLEANUP_EFFECTIVE`] adds up, in the order [`defects`]
+/// returns them. Named in the message, so a reader sees which class moved.
+const CLASSES: [&str; 2] = ["holes", "islands"];
+
+/// The two post-cleanup rules, read off the files themselves.
+///
+/// `after` is `None` when `spec.subject.cleanup` is false, which is the one
+/// reason nothing was written. An unreadable file is an error finding and
+/// never a skip, the way it is in [`check_file`].
+pub fn check_cleanup_files(
+    before: &Path,
+    after: Option<&Path>,
+    repo_root: &Path,
+    profile: &Profile,
+    attempt: u32,
+) -> Vec<Finding> {
+    let subject = relative_to(after.unwrap_or(before), repo_root);
+    let Some(after) = after else {
+        return check_cleanup(&subject, Fixed::Declined, profile, attempt);
+    };
+    let read = |file: &Path| {
+        Surface::read(file).map_err(|error| {
+            format!(
+                "{} holds no readable surface: {error:#}",
+                relative_to(file, repo_root)
+            )
+        })
+    };
+    match (read(before), read(after)) {
+        (Ok(before), Ok(after)) => check_cleanup(
+            &subject,
+            Fixed::Cleaned {
+                before: &before,
+                after: &after,
+            },
+            profile,
+            attempt,
+        ),
+        (Err(why), _) | (_, Err(why)) => {
+            check_cleanup(&subject, Fixed::Unreadable(why), profile, attempt)
+        }
+    }
+}
+
+/// The two rules that read what the fixer wrote. Pure: both files are read
+/// and welded already.
+pub fn check_cleanup(
+    subject: &str,
+    fixed: Fixed<'_>,
+    profile: &Profile,
+    attempt: u32,
+) -> Vec<Finding> {
+    let (before, after) = match fixed {
+        Fixed::Cleaned { before, after } => (before, after),
+        Fixed::Declined => {
+            return CLEANUP_RULES
+                .into_iter()
+                .map(|rule| rule.skipped(profile, subject, attempt, DECLINED.to_owned()))
+                .collect();
+        }
+        Fixed::Unreadable(why) => return undefined_pair(subject, &why, attempt),
+    };
+    // Zero non-manifold edges on no triangles is the shape of a fixer that
+    // emptied the file, so neither rule reports a number on one.
+    for (surface, which) in [(after, "wrote"), (before, "was given")] {
+        if surface.triangles().is_empty() {
+            let why = format!(
+                "the mesh the fixer {which} holds no triangle, so there is nothing \
+                 to measure"
+            );
+            return undefined_pair(subject, &why, attempt);
+        }
+    }
+    let non_manifold = |surface: &Surface| {
+        gltf_mesh::edge_use(surface)
+            .values()
+            .filter(|used| **used >= 3)
+            .count()
+    };
+    let (left, right) = (non_manifold(after), non_manifold(before));
+    let mut findings = vec![NON_MANIFOLD_POST.measured(
+        profile,
+        subject,
+        left as f64,
+        attempt,
+        format!(
+            "{left} edges are shared by three or more faces once the fixer has run, \
+             against {right} before it"
+        ),
+    )];
+    let (left, right) = (defects(after), defects(before));
+    let per_class: Vec<String> = CLASSES
+        .into_iter()
+        .zip(left.into_iter().zip(right))
+        .map(|(class, (left, right))| format!("{class} {right} to {left}"))
+        .collect();
+    findings.push(CLEANUP_EFFECTIVE.against(
+        subject,
+        left.iter().sum::<usize>() as f64,
+        right.iter().sum::<usize>() as f64,
+        attempt,
+        format!("the fixer took {}", per_class.join(", ")),
+    ));
+    findings
+}
+
+/// Both post-cleanup rules, on every subject they own, with one reason.
+fn undefined_pair(subject: &str, why: &str, attempt: u32) -> Vec<Finding> {
+    CLEANUP_RULES
+        .into_iter()
+        .map(|rule| rule.undefined(subject, attempt, why.to_owned()))
+        .collect()
+}
+
+/// What [`CLEANUP_EFFECTIVE`] counts on one surface, in [`CLASSES`] order.
+///
+/// The two the fixer exists to remove. The two it makes worse have their own
+/// ceilings, which is [`CLEANUP_EFFECTIVE`]'s own documentation.
+fn defects(surface: &Surface) -> [usize; 2] {
+    let boundary = gltf_mesh::edge_use(surface)
+        .values()
+        .filter(|used| **used == 1)
+        .count();
+    [boundary, gltf_mesh::islands(surface)]
+}
+
+/// Why nothing was measured, when the spec asked for no fixer at all.
+const DECLINED: &str =
+    "spec.subject.cleanup is false, so no fixer ran and nothing was written to measure";
+
 /// One surface, one profile, one pass.
 struct Measured<'a> {
     file: &'a str,
     surface: &'a Surface,
     profile: &'a Profile,
     height_meters: f64,
+    symmetry: Symmetry,
     attempt: u32,
 }
 
@@ -354,6 +613,14 @@ impl Measured<'_> {
 
     /// How far the mesh is from its own reflection.
     fn mirror(&self) -> Vec<Finding> {
+        if self.symmetry == Symmetry::Declined {
+            return vec![MIRROR.skipped(
+                self.profile,
+                self.file,
+                self.attempt,
+                NOT_MIRRORED.to_owned(),
+            )];
+        }
         let Some(spread) = mirror_spread(self.surface) else {
             return vec![self.undefined(
                 &MIRROR,

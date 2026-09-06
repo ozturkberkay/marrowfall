@@ -1,6 +1,6 @@
 use serde_json::json;
 use xtask_art::providers::meshy::{
-    Task, TaskStatus, animation_body, image_to_3d_body, rigging_body,
+    Task, TaskStatus, animation_body, image_to_3d_body, rigging_body, to_model_uri,
 };
 use xtask_art::spec::TextureResolution;
 
@@ -106,11 +106,30 @@ fn triangle_topology_is_selectable() {
 /// The rigging endpoint has no body-plan field; sending one risks a 400.
 #[test]
 fn rigging_body_has_no_body_plan_field() {
-    let body = rigging_body("task-1", 1.7);
-    assert_eq!(body["input_task_id"], "task-1");
+    let body = rigging_body("data:model/gltf-binary;base64,Zm9v", 1.7);
     let height = body["height_meters"].as_f64().unwrap();
     assert!((height - 1.7).abs() < 1e-6, "got {height}");
     assert!(body.get("character_type").is_none());
+}
+
+/// The mesh is sent by value, and `input_task_id` wins if both are sent, so
+/// the cleaned mesh is the only thing in the body. With it there, Meshy
+/// would rig the mesh it generated and the whole fixer would be discarded.
+#[test]
+fn rigging_sends_the_mesh_itself_and_never_a_task_to_go_and_fetch_one() {
+    let body = rigging_body("data:model/gltf-binary;base64,Zm9v", 1.7);
+
+    assert_eq!(body["model_url"], "data:model/gltf-binary;base64,Zm9v");
+    assert!(body.get("input_task_id").is_none(), "{body}");
+    assert_eq!(body.as_object().unwrap().len(), 2, "{body}");
+}
+
+/// The one spelling Meshy documents for a GLB by value. The mime type is
+/// not the image one the concept views use, and a wrong one is a 400 after
+/// the upload has already been sent.
+#[test]
+fn a_mesh_is_inlined_as_a_binary_gltf_data_uri() {
+    assert_eq!(to_model_uri(b"foo"), "data:model/gltf-binary;base64,Zm9v");
 }
 
 /// Animations are selected by numeric id against `rig_task_id`.

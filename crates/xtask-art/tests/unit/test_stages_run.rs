@@ -4,18 +4,23 @@
 //! exercised without a network: the providers are served locally and the
 //! filesystem is a temporary directory.
 
+use std::path::PathBuf;
+
 use base64::Engine as _;
 use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+use xtask_art::check::{Artifacts, Report, Severity, mesh};
 use xtask_art::library::{Animation, HUMANOID, MotionSource};
 use xtask_art::lock::TaskRef;
-use xtask_art::providers::meshy::Endpoint;
+use xtask_art::providers::meshy::{self, Endpoint};
 use xtask_art::spec::View;
 use xtask_art::spec::{CharacterType, Paths};
 use xtask_art::stages;
 
-use crate::support::{EnvGuard, a_library, a_png, a_spec};
+use crate::support::{
+    EnvGuard, a_bare_mesh, a_cleaned_mesh, a_library, a_png, a_spec, install_skeleton,
+};
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -106,9 +111,19 @@ async fn model_uploads_every_concept_view_and_records_the_task() {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "id": "m1", "status": "SUCCEEDED", "progress": 100,
             "consumed_credits": 20,
-            "model_urls": {"glb": "https://example.test/m.glb"},
-            "thumbnail_url": "https://example.test/t.png"
+            "model_urls": {"glb": format!("{}/files/m.glb", server.uri())},
+            "thumbnail_url": format!("{}/files/t.png", server.uri())
         })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/files/m\.glb$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_bare_mesh()))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/files/t\.png$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_png()))
         .mount(&server)
         .await;
 
@@ -123,6 +138,51 @@ async fn model_uploads_every_concept_view_and_records_the_task() {
 
     assert_eq!(record.credits, Some(20));
     assert!(matches!(record.tasks.as_slice(), [TaskRef::Model { id }] if id == "m1"));
+    // The mesh gates and the fixer both run on this file, so the stage that
+    // generated it is the stage that has to fetch it.
+    assert_eq!(
+        std::fs::read(paths.bare_glb()).unwrap(),
+        a_bare_mesh(),
+        "the bare mesh was not downloaded"
+    );
+    assert!(
+        record
+            .note
+            .unwrap()
+            .contains("art/staging/survivor/bare.glb")
+    );
+}
+
+/// A finished task with no GLB behind it is a stage that would report success
+/// having downloaded nothing.
+#[tokio::test]
+async fn model_refuses_a_finished_task_that_exposes_no_mesh() {
+    let server = MockServer::start().await;
+    serve_images(&server).await;
+    Mock::given(method("POST"))
+        .and(path(Endpoint::MultiImageTo3d.path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "m1"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/v1/multi-image-to-3d/m1$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "m1", "status": "SUCCEEDED", "progress": 100
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri());
+    let spec = a_spec("survivor");
+    stages::concept(&spec, &paths, false).await.unwrap();
+
+    let error = stages::model(&spec, &paths).await.unwrap_err().to_string();
+
+    assert!(error.contains("exposes no GLB url"), "got: {error}");
+    assert!(!paths.bare_glb().exists());
 }
 
 #[tokio::test]
@@ -168,9 +228,9 @@ async fn rig_creates_a_rig_then_one_animation_per_entry() {
         .await;
 
     let dir = tempfile::tempdir().unwrap();
-    let _paths = Paths::new(dir.path(), "survivor");
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
+    install_bare_mesh(dir.path(), "survivor", &mut env);
     let mut persisted = Vec::new();
     let record = stages::rig(
         &a_spec("survivor"),
@@ -278,8 +338,9 @@ async fn changing_the_height_forces_a_new_rig_rather_than_reusing_the_old_one() 
 
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    let mut spec = a_spec("survivor");
-    spec.subject.height_meters = 2.1;
+    // The spec's own height, because the mesh gates the rig stage runs first
+    // read the mesh against it and this fixture is 1.70 m tall.
+    let spec = a_spec("survivor");
     let already = vec![
         TaskRef::Model {
             id: "m1".to_owned(),
@@ -287,12 +348,12 @@ async fn changing_the_height_forces_a_new_rig_rather_than_reusing_the_old_one() 
         // Recorded against the *old* height.
         TaskRef::Rig {
             id: "r1".to_owned(),
-            height_meters: 1.7,
+            height_meters: 1.6,
         },
     ];
 
     let dir = tempfile::tempdir().unwrap();
-    let _paths = Paths::new(dir.path(), "survivor");
+    install_bare_mesh(dir.path(), "survivor", &mut env);
     let record = stages::rig(&spec, &library, dir.path(), &already, |_| {})
         .await
         .unwrap();
@@ -519,7 +580,6 @@ async fn an_animation_already_in_the_library_is_not_bought_again() {
     // No mock for POST /v1/animations at all: reaching it is the failure.
 
     let dir = tempfile::tempdir().unwrap();
-    let _paths = Paths::new(dir.path(), "skeleton");
     let spec = a_spec("skeleton");
     let shared = a_library().glb(dir.path(), &spec.animations[0]);
     std::fs::create_dir_all(shared.parent().unwrap()).unwrap();
@@ -527,6 +587,7 @@ async fn an_animation_already_in_the_library_is_not_bought_again() {
 
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
+    install_bare_mesh(dir.path(), "skeleton", &mut env);
     let mut persisted = Vec::new();
     let record = stages::rig(
         &spec,
@@ -551,6 +612,409 @@ async fn an_animation_already_in_the_library_is_not_bought_again() {
             .all(|t| !matches!(t, TaskRef::Animation { .. })),
         "no animation was charged for"
     );
+}
+
+/// What the rig stage needs before it can spend anything: the mesh the model
+/// stage downloaded, the profile its gates read, and a fixer that writes the
+/// cleaned mesh Blender would have written.
+fn install_bare_mesh(root: &std::path::Path, name: &str, env: &mut EnvGuard) {
+    let cleaned = root.join("cleaned.glb");
+    std::fs::write(&cleaned, a_cleaned_mesh()).unwrap();
+    install_fixer(
+        root,
+        name,
+        env,
+        &format!("cp {:?} \"$out\"\n", cleaned.display()),
+    );
+}
+
+/// The same, with the fixer's last act replaced. `$out` is whatever the
+/// runner passed as `--out`, and the argv lands in `$MARROWFALL_STUB_ARGV`.
+fn install_fixer(root: &std::path::Path, name: &str, env: &mut EnvGuard, last: &str) {
+    let paths = Paths::new(root, name);
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(paths.bare_glb(), a_bare_mesh()).unwrap();
+    install_skeleton(root);
+
+    let src = root.join("tools/blender/src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("mesh_clean.py"), "").unwrap();
+    std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
+
+    let stub = root.join("fixer-stub.sh");
+    std::fs::write(
+        &stub,
+        format!(
+            r#"#!/bin/sh
+echo "$@" > "$MARROWFALL_STUB_ARGV"
+out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--out" ]; then out="$2"; fi
+  shift
+done
+{last}
+: > "$MARROWFALL_SENTINEL"
+exit 0
+"#
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &stub,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set("MARROWFALL_STUB_ARGV", argv_dump(root).to_str().unwrap());
+}
+
+/// Where the fixer stub writes the arguments it was given.
+fn argv_dump(root: &std::path::Path) -> PathBuf {
+    root.join("fixer-argv.txt")
+}
+
+// --- the fixer, between the mesh arriving and the credits being spent -----
+
+/// Every number the fixer runs on is published to it, so no script here
+/// holds a size of its own.
+#[test]
+fn the_fixer_is_handed_every_number_it_runs_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let fed = stages::clean_mesh(&a_spec("survivor"), &paths, dir.path()).unwrap();
+
+    assert_eq!(
+        fed,
+        paths.clean_glb(),
+        "rigging is fed what the fixer wrote"
+    );
+    let argv = std::fs::read_to_string(argv_dump(dir.path())).unwrap();
+    for published in [
+        "--meshes char1",
+        "--weld 0.00001",
+        "--island-volume 0.000001",
+        "--symmetry-threshold 0.001",
+        "--symmetry true",
+    ] {
+        assert!(argv.contains(published), "{published} is not in {argv}");
+    }
+}
+
+/// And every mesh rule reports there, so the step cannot go quiet on one.
+/// The file rules read **both** meshes, the cleaned one less the two it
+/// cannot answer: the file rigging is sent has to have passed them too.
+#[test]
+fn the_fixer_step_reports_every_file_rule_on_both_meshes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let paths = Paths::new(dir.path(), "survivor");
+
+    stages::clean_mesh(&a_spec("survivor"), &paths, dir.path()).unwrap();
+
+    // One report per file, because four of the thirteen name the object they
+    // read and both files hold an object called `char1`. The hole count is
+    // the discriminator: the fixture the fixer wrote is whole.
+    for (stage, file, holes, rules) in [
+        (mesh::STAGE, paths.bare_glb(), 3.0, &mesh::FILE_RULES[..]),
+        (
+            mesh::CLEANED_STAGE,
+            paths.clean_glb(),
+            0.0,
+            &mesh::CLEANED_RULES[..],
+        ),
+    ] {
+        let report = a_report(dir.path(), stage);
+        for rule in rules {
+            assert!(
+                report
+                    .findings()
+                    .iter()
+                    .any(|finding| finding.rule == rule.id),
+                "{} reported nothing under {stage}",
+                rule.id
+            );
+        }
+        assert_eq!(report.findings().len(), rules.len(), "{stage}");
+        let boundary = report
+            .findings()
+            .iter()
+            .find(|finding| finding.rule == "mesh.holes")
+            .expect("the hole count");
+        assert_eq!(
+            (boundary.subject.clone(), boundary.measured),
+            (paths.relative(&file), holes)
+        );
+    }
+
+    let pair = a_report(dir.path(), mesh::CLEANUP_STAGE);
+    for rule in mesh::CLEANUP_RULES {
+        assert!(
+            pair.findings()
+                .iter()
+                .any(|finding| finding.rule == rule.id),
+            "{} reported nothing at all",
+            rule.id
+        );
+    }
+    assert_eq!(pair.findings().len(), 2);
+}
+
+/// Two producers write these reports: the fixer step inside `rig`, and
+/// `cargo art check` by hand. Each stage name has to carry the same rule set
+/// from both, or whichever ran last overwrites the other's report with a
+/// different shape under the same path.
+#[test]
+fn checking_by_hand_writes_the_same_reports_the_fixer_step_did() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let paths = Paths::new(dir.path(), "survivor");
+    let spec = a_spec("survivor");
+    spec.save(&paths.spec()).unwrap();
+    let reports = [mesh::STAGE, mesh::CLEANED_STAGE, mesh::CLEANUP_STAGE];
+    stages::clean_mesh(&spec, &paths, dir.path()).unwrap();
+    let by_the_step = reports.map(|stage| rules_of(dir.path(), stage));
+    // Removed, so a producer that writes nothing reads as a missing report
+    // rather than as the other producer's file.
+    std::fs::remove_dir_all(
+        Artifacts::new(dir.path(), mesh::STAGE, "survivor", 1)
+            .unwrap()
+            .dir(),
+    )
+    .unwrap();
+
+    xtask_art::cli::check(dir.path(), None, false).unwrap();
+
+    assert_eq!(
+        reports.map(|stage| rules_of(dir.path(), stage)),
+        by_the_step
+    );
+}
+
+/// `symmetry: false` reaches the fixer as well as the mirror rules, because
+/// mirroring a character that is asymmetric on purpose is the damage.
+#[test]
+fn a_spec_that_declines_symmetry_asks_the_fixer_not_to_mirror() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let mut spec = a_spec("survivor");
+    spec.subject.symmetry = false;
+
+    stages::clean_mesh(&spec, &Paths::new(dir.path(), "survivor"), dir.path()).unwrap();
+
+    let argv = std::fs::read_to_string(argv_dump(dir.path())).unwrap();
+    assert!(argv.contains("--symmetry false"), "got {argv}");
+    for stage in [mesh::STAGE, mesh::CLEANED_STAGE] {
+        let report = a_report(dir.path(), stage);
+        let mirror = report
+            .findings()
+            .iter()
+            .find(|finding| finding.rule == "mesh.mirror")
+            .expect("the mirror rule still reports");
+        assert_eq!(mirror.severity, Severity::Skipped, "{stage}: {mirror:#?}");
+    }
+}
+
+/// `cleanup: false` runs no Blender at all, and rigging is fed the mesh as
+/// it arrived.
+#[test]
+fn a_spec_that_declines_the_cleanup_runs_no_fixer() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let mut spec = a_spec("survivor");
+    spec.subject.cleanup = false;
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let fed = stages::clean_mesh(&spec, &paths, dir.path()).unwrap();
+
+    assert_eq!(fed, paths.bare_glb());
+    assert!(!paths.clean_glb().exists(), "nothing was written");
+    assert!(
+        !argv_dump(dir.path()).exists(),
+        "Blender was invoked for a character that asked for no fixer"
+    );
+    for rule in ["mesh.non_manifold_post", "mesh.cleanup_effective"] {
+        let finding = a_report(dir.path(), mesh::CLEANUP_STAGE)
+            .findings()
+            .iter()
+            .find(|finding| finding.rule == rule)
+            .unwrap_or_else(|| panic!("{rule} reported nothing"))
+            .clone();
+        assert_eq!(finding.severity, Severity::Skipped, "{finding:#?}");
+    }
+}
+
+/// The gate is before the money: a mesh that fails a pre-cleanup rule stops
+/// the stage, and the report says which rule.
+#[test]
+fn a_mesh_that_fails_a_gate_stops_the_stage_before_rigging() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let paths = Paths::new(dir.path(), "survivor");
+    // A second object the profile does not name, which is debris the rigger
+    // would be paid to skin.
+    std::fs::write(
+        paths.bare_glb(),
+        crate::meshes::SyntheticMesh::figure()
+            .plus_an_object("Icosphere")
+            .to_glb(),
+    )
+    .unwrap();
+
+    let error = stages::clean_mesh(&a_spec("survivor"), &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("mesh.stray_object"), "got: {error}");
+    assert!(error.contains("not worth its credits"), "got: {error}");
+}
+
+/// A fixer that finished and wrote nothing is a fixer nothing can measure.
+#[test]
+fn a_fixer_that_wrote_no_mesh_stops_the_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_fixer(dir.path(), "survivor", &mut env, "");
+
+    let error = stages::clean_mesh(
+        &a_spec("survivor"),
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains("wrote no art/staging/survivor/clean.glb"),
+        "got: {error}"
+    );
+}
+
+/// A fixer that wrote a file nothing can read: the error a human needs is
+/// the defect and the report it is written in, not the ten rules that had
+/// nothing left to read.
+#[test]
+fn a_fixer_that_wrote_an_unreadable_mesh_says_so_rather_than_naming_every_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_fixer(
+        dir.path(),
+        "survivor",
+        &mut env,
+        "echo not-a-glb > \"$out\"\n",
+    );
+
+    let error = stages::clean_mesh(
+        &a_spec("survivor"),
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("1 defect(s) on mesh.holes"), "got: {error}");
+    assert!(error.contains("cleaned.survivor.1.json"), "got: {error}");
+    assert!(!error.contains("never read"), "got: {error}");
+}
+
+/// And a fixer that measured something has taken over a job that is not
+/// its: rule three of the design.
+#[test]
+fn a_fixer_that_reported_a_finding_stops_the_stage() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    install_fixer(
+        dir.path(),
+        "survivor",
+        &mut env,
+        "printf '{\"stage\":\"cleanup\",\"item\":\"survivor\",\"attempt\":1,\"findings\":[]}' \
+         > \"$MARROWFALL_REPORT\"\n",
+    );
+
+    let error = stages::clean_mesh(
+        &a_spec("survivor"),
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("the fixer measures nothing"), "got: {error}");
+}
+
+/// Rigging is sent the mesh itself, and never a task id: `input_task_id`
+/// wins if both are sent, so the cleanup would be thrown away.
+#[tokio::test]
+async fn rigging_sends_the_cleaned_mesh_as_a_data_uri() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(Endpoint::Rigging.path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "r1"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/v1/rigging/r1$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "SUCCEEDED", "progress": 100
+        })))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri());
+    install_bare_mesh(dir.path(), "survivor", &mut env);
+    let mut spec = a_spec("survivor");
+    spec.animations.clear();
+
+    stages::rig(
+        &spec,
+        &a_library(),
+        dir.path(),
+        &[TaskRef::Model {
+            id: "m1".to_owned(),
+        }],
+        |_| {},
+    )
+    .await
+    .unwrap();
+
+    let sent: serde_json::Value = server
+        .received_requests()
+        .await
+        .expect("the requests are recorded")
+        .iter()
+        .find(|request| request.url.path() == Endpoint::Rigging.path())
+        .expect("one rigging request")
+        .body_json()
+        .unwrap();
+    let cleaned = std::fs::read(Paths::new(dir.path(), "survivor").clean_glb()).unwrap();
+    assert_eq!(sent["model_url"], meshy::to_model_uri(&cleaned));
+    assert!(sent.get("input_task_id").is_none(), "{sent}");
+}
+
+/// One report the fixer step writes, for a test to read a finding out of.
+fn a_report(root: &std::path::Path, stage: &str) -> Report {
+    Report::read(&Artifacts::new(root, stage, "survivor", 1).unwrap().report())
+        .unwrap_or_else(|error| panic!("reading the {stage} report: {error:#}"))
+}
+
+/// Every rule one report carries, once per subject it reported on.
+fn rules_of(root: &std::path::Path, stage: &str) -> Vec<String> {
+    let mut rules: Vec<String> = a_report(root, stage)
+        .findings()
+        .iter()
+        .map(|finding| format!("{} on {}", finding.rule, finding.subject))
+        .collect();
+    rules.sort();
+    rules
 }
 
 /// Downloading an animation strips it in Blender, so tests need a stand-in.

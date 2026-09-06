@@ -154,6 +154,26 @@ pub struct MeshLimits {
     /// Meshy's own edge count, which adds boundary and true non-manifold
     /// edges together.
     pub printability_edges: f64,
+    /// Edges shared by three or more faces **after** the fixer ran. Its own
+    /// ceiling, because filling a hole closes it with a face that can meet
+    /// two others.
+    pub non_manifold_post: f64,
+}
+
+/// The `[profile.cleanup]` table: the numbers the Blender fixer runs on.
+///
+/// Not ceilings. The fixer measures nothing, so nothing here is read against
+/// a measurement: these are the two sizes it acts at, published as data so no
+/// script holds a copy.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupParams {
+    /// An island smaller than this is debris and is dropped. 1e-6 is about a
+    /// 1 cm cube.
+    pub smallest_island_cubic_meters: f64,
+    /// How far a vertex may sit from its own reflection and still be mirrored
+    /// onto it, in meters.
+    pub symmetrize_meters: f64,
 }
 
 /// The `[profile.clip]` table: what a fitted clip may differ from the file it
@@ -245,6 +265,8 @@ pub struct Profile {
     /// Every published mesh limit. The mesh gates run on the character, not
     /// on the skeleton, and they read these.
     pub mesh: MeshLimits,
+    /// What the fixer welds, drops and mirrors at, handed to Blender on argv.
+    pub cleanup: CleanupParams,
     /// Every published clip limit, read by the retarget's own gates.
     pub clip: ClipLimits,
     /// Every published source limit, read at fetch time before a clip is
@@ -443,6 +465,15 @@ impl Profile {
             ("mesh.mirror_percent", self.mesh.mirror_percent),
             ("mesh.triangles", self.mesh.triangles),
             ("mesh.printability_edges", self.mesh.printability_edges),
+            ("mesh.non_manifold_post", self.mesh.non_manifold_post),
+            // The fixer's own sizes. A floor of zero drops nothing and a
+            // mirror threshold of zero mirrors nothing, so the fixer would
+            // report success having changed the mesh not at all.
+            (
+                "cleanup.smallest_island_cubic_meters",
+                self.cleanup.smallest_island_cubic_meters,
+            ),
+            ("cleanup.symmetrize_meters", self.cleanup.symmetrize_meters),
             // A clip limit of zero would fail every correct clip: each is a
             // calibrated tolerance and none is ever exactly reached.
             ("clip.swing_degrees", self.clip.swing_degrees),

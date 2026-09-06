@@ -119,6 +119,15 @@ pub struct Subject {
     /// The skeleton this character is rigged onto. It can only play motion
     /// built for the same one, since animations address bones by name.
     pub skeleton: String,
+    /// Weld, drop debris and fill holes before rigging. The fixer edits
+    /// geometry, so it is asked for rather than assumed.
+    #[serde(default)]
+    pub cleanup: bool,
+    /// Mirror the mesh about X = 0, and hold the mirror rules to it. A
+    /// monster can be asymmetric on purpose, which is why this is per
+    /// character.
+    #[serde(default)]
+    pub symmetry: bool,
 }
 
 /// Retopology settings applied during generation.
@@ -178,6 +187,7 @@ pub struct CharacterSpec {
 impl CharacterSpec {
     /// Defaults matching the settings validated while building the survivor.
     pub fn template(name: &str, kind: CharacterType) -> Self {
+        let bilateral = matches!(kind, CharacterType::Humanoid);
         Self {
             name: name.to_owned(),
             subject: Subject {
@@ -185,6 +195,10 @@ impl CharacterSpec {
                 description: "TODO: describe the character".to_owned(),
                 height_meters: 1.7,
                 skeleton: crate::library::HUMANOID.to_owned(),
+                // Only a humanoid is auto-rigged and bilateral, so only it is
+                // cleaned and mirrored without someone saying so.
+                cleanup: bilateral,
+                symmetry: bilateral,
             },
             animations: if kind.can_be_rigged() {
                 vec!["idle".to_owned(), "run".to_owned()]
@@ -308,8 +322,8 @@ impl CharacterSpec {
     }
 }
 
-/// Directory layout for one character. Centralised so every stage agrees on
-/// where things live.
+/// Directory layout for one character. Owned in one place, so every stage
+/// agrees on where things live.
 pub struct Paths {
     pub root: PathBuf,
     pub name: String,
@@ -354,6 +368,12 @@ impl Paths {
     /// skin weights. Derived; gitignored.
     pub fn bare_glb(&self) -> PathBuf {
         self.staging().join("bare.glb")
+    }
+
+    /// What the fixer wrote from [`Paths::bare_glb`], and what rigging is
+    /// sent. Derived; gitignored.
+    pub fn clean_glb(&self) -> PathBuf {
+        self.staging().join("clean.glb")
     }
 
     /// Raw bake output. Derived; gitignored.

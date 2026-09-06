@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 
 use crate::check::aim::{self, AimTable};
 use crate::check::profile::Profile;
-use crate::check::{self, Finding, Report, Severity, mesh, rig};
+use crate::check::{self, Finding, Report, Severity, Symmetry, mesh, rig};
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
 use crate::lock::{Lock, Provider, Stage, TaskRef};
 use crate::providers::mixamo::{self, session};
@@ -610,7 +610,12 @@ pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
                 continue;
             }
         };
-        for measured in [check_rig(root, &spec)?, check_mesh(root, &spec)?] {
+        for measured in [
+            check_rig(root, &spec)?,
+            check_mesh(root, &spec)?,
+            check_cleaned(root, &spec)?,
+            check_cleanup(root, &spec)?,
+        ] {
             match measured {
                 Some(count) => defects += count,
                 None => unbuilt += 1,
@@ -650,6 +655,7 @@ fn check_rig(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
             root,
             &profile,
             f64::from(spec.subject.height_meters),
+            Symmetry::declared(spec.subject.symmetry),
             FIRST_ATTEMPT,
         )?,
         // The rig stage writes our own rig, so it is named in the canonical
@@ -677,19 +683,69 @@ fn check_mesh(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
         println!("      no bare mesh yet at {}", paths.relative(&glb));
         return Ok(None);
     }
+    let findings = file_rules(root, spec, &glb)?;
+    report_on(root, &paths, mesh::STAGE, findings).map(Some)
+}
+
+/// Measures the mesh the fixer wrote against the same rules, because that is
+/// the file rigging is sent. `None` when no fixer was asked for, or when one
+/// was and has not run yet: the rig stage is what runs it.
+fn check_cleaned(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    let paths = Paths::new(root, &spec.name);
+    let glb = paths.clean_glb();
+    if !spec.subject.cleanup {
+        println!("      no cleaned mesh: spec.subject.cleanup is false");
+        return Ok(None);
+    }
+    if !glb.exists() {
+        println!("      no cleaned mesh yet at {}", paths.relative(&glb));
+        return Ok(None);
+    }
+    let findings = mesh::only(&mesh::CLEANED_RULES, file_rules(root, spec, &glb)?);
+    report_on(root, &paths, mesh::CLEANED_STAGE, findings).map(Some)
+}
+
+/// Measures what the fixer wrote against what it was given. `None` when
+/// there is no pair to read: no mesh at all, or a cleanup that has not run.
+fn check_cleanup(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    let paths = Paths::new(root, &spec.name);
+    let (bare, clean) = (paths.bare_glb(), paths.clean_glb());
+    for file in [Some(&bare), spec.subject.cleanup.then_some(&clean)]
+        .into_iter()
+        .flatten()
+    {
+        if !file.exists() {
+            println!("      no cleanup yet, no {}", paths.relative(file));
+            return Ok(None);
+        }
+    }
     let profile = Profile::of(root, &spec.subject.skeleton)?;
-    let findings = mesh::check_file(
-        &glb,
+    let findings = mesh::check_cleanup_files(
+        &bare,
+        spec.subject.cleanup.then_some(clean.as_path()),
+        root,
+        &profile,
+        FIRST_ATTEMPT,
+    );
+    report_on(root, &paths, mesh::CLEANUP_STAGE, findings).map(Some)
+}
+
+/// Every file rule on one mesh, at the height and the symmetry the spec
+/// declares.
+fn file_rules(root: &Path, spec: &CharacterSpec, glb: &Path) -> Result<Vec<Finding>> {
+    let profile = Profile::of(root, &spec.subject.skeleton)?;
+    mesh::check_file(
+        glb,
         root,
         &profile,
         f64::from(spec.subject.height_meters),
+        Symmetry::declared(spec.subject.symmetry),
         // `check` measures what is on disk and calls nothing, so
         // `mesh.printability` reports as unavailable. The model stage is
         // where the response comes from.
         None,
         FIRST_ATTEMPT,
-    )?;
-    report_on(root, &paths, mesh::STAGE, findings).map(Some)
+    )
 }
 
 /// Prints the defects of one stage's findings and writes its report.
@@ -765,7 +821,7 @@ fn print_rule_list(root: &Path) -> Result<()> {
                 "{:<width$} {} {:<8} {:<units$} {}",
                 rule.id,
                 rule.comparison.as_str(),
-                (rule.limit)(&profile),
+                rule.printed_limit(&profile),
                 rule.unit,
                 rule.space,
             );

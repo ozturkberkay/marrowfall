@@ -7,14 +7,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 
 use crate::blender::{self, BLENDER_SRC};
 use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
-use crate::check::{Artifacts, Finding, Report, Rule, Severity, clip, source};
+use crate::check::{
+    Artifacts, Finding, Report, Rule, Severity, Symmetry, clip, gltf_mesh, mesh, source,
+};
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -107,6 +109,14 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
         )
         .await?;
 
+    // The mesh gates and the fixer both run on the bare mesh, so the stage
+    // that generated it is the stage that fetches it. Cleaning the rigged
+    // file instead would desync the skin weights it carries (fact 10).
+    let url = task
+        .glb_url()
+        .context("the finished model task exposes no GLB url")?;
+    client.download(url, &paths.bare_glb()).await?;
+
     // Meshy renders turntable thumbnails for free; fetching them makes the
     // mesh reviewable without downloading it.
     let mut thumbnails = Vec::new();
@@ -122,8 +132,148 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
             id: task.id.clone(),
         }],
         credits: task.credits,
+        note: Some(format!(
+            "bare mesh at {}",
+            paths.relative(&paths.bare_glb())
+        )),
         ..StageRecord::default()
     })
+}
+
+/// Measures the bare mesh, cleans it, and measures what the fixer wrote.
+///
+/// Returns the file rigging is fed: `clean.glb`, or the bare mesh itself when
+/// the spec declares no cleanup. Both files are held to every file rule,
+/// because the one that gets rigged is the one that has to have passed. The
+/// fixer measures nothing, which is why this refuses a report it wrote
+/// nothing into.
+pub fn clean_mesh(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Result<PathBuf> {
+    let bare = paths.bare_glb();
+    anyhow::ensure!(
+        bare.exists(),
+        "no bare mesh at {}, run the model stage first",
+        paths.relative(&bare)
+    );
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    let artifacts = Artifacts::new(repo_root, mesh::CLEANUP_STAGE, &spec.name, FIRST_ATTEMPT)?;
+    let cleaned = spec
+        .subject
+        .cleanup
+        .then(|| run_fixer(spec, paths, repo_root, &profile, &artifacts))
+        .transpose()?;
+
+    // `print/analyze` needs a task or a URL and this runs on files, so the
+    // remote rule has nothing to read either time.
+    let read = |file: &Path| {
+        mesh::check_file(
+            file,
+            repo_root,
+            &profile,
+            f64::from(spec.subject.height_meters),
+            Symmetry::declared(spec.subject.symmetry),
+            None,
+            FIRST_ATTEMPT,
+        )
+    };
+    // The mesh as it arrived, then the mesh the fixer wrote, then the pair.
+    // The second is measured because the file that gets rigged is the file
+    // that has to have passed.
+    let mut measured = vec![(mesh::STAGE, "mesh", &mesh::FILE_RULES[..], read(&bare)?)];
+    if let Some(clean) = &cleaned {
+        measured.push((
+            mesh::CLEANED_STAGE,
+            "cleaned mesh",
+            &mesh::CLEANED_RULES[..],
+            read(clean)?,
+        ));
+    }
+    measured.push((
+        mesh::CLEANUP_STAGE,
+        "cleanup",
+        &mesh::CLEANUP_RULES[..],
+        mesh::check_cleanup_files(
+            &bare,
+            cleaned.as_deref(),
+            repo_root,
+            &profile,
+            FIRST_ATTEMPT,
+        ),
+    ));
+
+    // Every report on disk before any of them is refused: a stage that stops
+    // on a gate still leaves what it measured for a human to read.
+    let mut filed = Vec::new();
+    for (stage, what, rules, findings) in measured {
+        let mut report = Report::new(stage, &spec.name, FIRST_ATTEMPT);
+        report.extend(mesh::only(rules, findings))?;
+        filed.push((report.write(repo_root)?, report, rules, what));
+    }
+    for (written, report, rules, what) in filed {
+        // The defects first: an unreadable file leaves most rules with
+        // nothing to read, and "the file is broken" is the useful half.
+        anyhow::ensure!(
+            !report.has_errors(),
+            "the {what} of {} left {}, listed in {}. Rigging is not worth its \
+             credits on a mesh that fails a gate",
+            spec.name,
+            defects(&report),
+            written.display()
+        );
+        refuse_unread_rules(&report, rules, &spec.name, what)?;
+    }
+    Ok(cleaned.unwrap_or(bare))
+}
+
+/// Runs the Blender fixer and returns what it wrote.
+fn run_fixer(
+    spec: &CharacterSpec,
+    paths: &Paths,
+    repo_root: &Path,
+    profile: &Profile,
+    artifacts: &Artifacts,
+) -> Result<PathBuf> {
+    let script = repo_root.join(BLENDER_SRC).join("mesh_clean.py");
+    anyhow::ensure!(
+        script.exists(),
+        "missing the mesh fixer at {}",
+        script.display()
+    );
+    let clean = paths.clean_glb();
+    let args = vec![
+        OsString::from("--glb"),
+        paths.bare_glb().into(),
+        OsString::from("--out"),
+        clean.clone().into(),
+        OsString::from("--meshes"),
+        profile.meshes.join(",").into(),
+        // The distance the gates weld at, so the fixer merges exactly what
+        // they count. The other two are profile data.
+        OsString::from("--weld"),
+        gltf_mesh::WELD_METERS.to_string().into(),
+        OsString::from("--island-volume"),
+        profile
+            .cleanup
+            .smallest_island_cubic_meters
+            .to_string()
+            .into(),
+        OsString::from("--symmetry-threshold"),
+        profile.cleanup.symmetrize_meters.to_string().into(),
+        OsString::from("--symmetry"),
+        spec.subject.symmetry.to_string().into(),
+    ];
+    let findings = blender::run(&script, &args, artifacts, repo_root)
+        .with_context(|| format!("cleaning {}", paths.relative(&paths.bare_glb())))?;
+    anyhow::ensure!(
+        findings.is_none(),
+        "the fixer wrote a report, and the fixer measures nothing: \
+         check/mesh.rs is what reads the pair it produced"
+    );
+    anyhow::ensure!(
+        clean.exists(),
+        "the fixer finished and wrote no {}",
+        paths.relative(&clean)
+    );
+    Ok(clean)
 }
 
 /// Attaches a skeleton, then buys any animation the shared library lacks.
@@ -150,14 +300,16 @@ pub async fn rig(
             existing
         }
         None => {
-            let model = already_done
-                .iter()
-                .find(|task| matches!(task, TaskRef::Model { .. }))
-                .context("no model task recorded, run the model stage first")?;
+            // The cleaned mesh goes to the rigger by value. Rigging by task
+            // id would rig the mesh Meshy generated instead, and everything
+            // the fixer did would be thrown away.
+            let mesh = clean_mesh(spec, &Paths::new(root, &spec.name), root)?;
+            let glb =
+                std::fs::read(&mesh).with_context(|| format!("reading {}", mesh.display()))?;
             let task = client
                 .run(
                     Endpoint::Rigging,
-                    meshy::rigging_body(model.id(), height),
+                    meshy::rigging_body(&meshy::to_model_uri(&glb), height),
                     |progress| println!("  rig {progress}%"),
                 )
                 .await?;
@@ -378,8 +530,9 @@ fn refuse_off_registry(report: &Report, profile: &Profile, name: &str, what: &st
     Ok(())
 }
 
-/// Refuses a report that carries no finding for one of the rules its script
-/// was given a limit for.
+/// Refuses a report that carries no finding for one of the rules the stage
+/// owes: the ones a Blender script was published a limit for, or the whole
+/// family a Rust pass measures.
 ///
 /// A gate that goes quiet cannot be told from one that never ran, so deleting
 /// the call that measures is a failing stage rather than a quiet pass.
@@ -396,9 +549,9 @@ fn refuse_unread_rules(report: &Report, rules: &[&Rule], item: &str, what: &str)
         .collect();
     anyhow::ensure!(
         missing.is_empty(),
-        "the {what} of {item} was published a limit for {} and reported no \
-         finding under it, so that rule was never read: a gate that goes \
-         quiet cannot be told from one that never ran",
+        "the {what} of {item} reported no finding under {}, so that rule was \
+         never read: a gate that goes quiet cannot be told from one that \
+         never ran",
         missing.join(", ")
     );
     Ok(())

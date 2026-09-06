@@ -59,6 +59,35 @@ pub enum Severity {
     Skipped,
 }
 
+/// Whether a character is declared bilaterally symmetric.
+///
+/// Per character, not global: a monster can be asymmetric on purpose, and a
+/// one-armed thing with a tail must not fail a rule written for a human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Symmetry {
+    /// `spec.subject.symmetry` is true: the fixer mirrors the mesh and every
+    /// mirror rule measures it.
+    Enforced,
+    /// It is false: nothing mirrors the character and every mirror rule
+    /// reports [`Severity::Skipped`] on that declaration.
+    Declined,
+}
+
+impl Symmetry {
+    pub const fn declared(symmetry: bool) -> Self {
+        if symmetry {
+            Self::Enforced
+        } else {
+            Self::Declined
+        }
+    }
+}
+
+/// What every mirror rule files when a spec declines symmetry. One sentence,
+/// so the mesh side and the rig side say the same thing.
+pub const NOT_MIRRORED: &str = "spec.subject.symmetry is false, so this character is not mirrored \
+                                and nothing reads it against its own reflection";
+
 /// How a measurement is read against its limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -169,7 +198,8 @@ pub struct Rule {
     /// holes read as 13,368.
     pub space: &'static str,
     /// Every published limit is profile data, so the rule reads it rather
-    /// than holding a copy.
+    /// than holding a copy. One rule publishes none and answers `NaN`, which
+    /// [`Rule::publishes_a_limit`] is how anything else asks.
     pub limit: fn(&Profile) -> f64,
 }
 
@@ -203,10 +233,66 @@ impl Rule {
         }
     }
 
+    /// One measurement read against a limit this subject sets rather than the
+    /// profile: what a fixer left, against what it was given.
+    ///
+    /// Everything else is as [`Rule::measured`], the comparison included, so
+    /// a fixer that changed nothing cannot file its own result as
+    /// information.
+    pub fn against(
+        &self,
+        subject: &str,
+        measured: f64,
+        limit: f64,
+        attempt: u32,
+        message: String,
+    ) -> Finding {
+        Finding {
+            rule: self.id.to_owned(),
+            severity: if self.comparison.holds(measured, limit) {
+                Severity::Info
+            } else {
+                Severity::Error
+            },
+            subject: subject.to_owned(),
+            measured,
+            limit,
+            comparison: self.comparison,
+            unit: self.unit.to_owned(),
+            attempt,
+            measured_on: self.space.to_owned(),
+            message,
+        }
+    }
+
+    /// Whether the profile publishes this rule's limit.
+    ///
+    /// One rule does not: `mesh.cleanup_effective` publishes no number and
+    /// answers `false` here, which is what lets [`Report::off_registry`] read
+    /// the limit its findings carry and what `--list-rules` prints instead of
+    /// a figure.
+    pub fn publishes_a_limit(&self, profile: &Profile) -> bool {
+        (self.limit)(profile).is_finite()
+    }
+
+    /// The limit column `--list-rules` prints: a number, or the word
+    /// `before` for the one rule read against the subject's own count as it
+    /// stood before a fixer ran.
+    pub fn printed_limit(&self, profile: &Profile) -> String {
+        if self.publishes_a_limit(profile) {
+            (self.limit)(profile).to_string()
+        } else {
+            "before".to_owned()
+        }
+    }
+
     /// A rule a declaration switched off for this subject, which is the one
     /// thing a number cannot say. It still carries this rule's own limit, so
     /// the registry reads it like any other finding, and only the message
     /// says why nothing was measured.
+    ///
+    /// The rule that publishes no limit files zero: a skip took no
+    /// measurement, so there is nothing for one to be read against.
     pub fn skipped(
         &self,
         profile: &Profile,
@@ -219,7 +305,11 @@ impl Rule {
             severity: Severity::Skipped,
             subject: subject.to_owned(),
             measured: 0.0,
-            limit: (self.limit)(profile),
+            limit: if self.publishes_a_limit(profile) {
+                (self.limit)(profile)
+            } else {
+                0.0
+            },
             comparison: self.comparison,
             unit: self.unit.to_owned(),
             attempt,
@@ -365,7 +455,10 @@ impl Report {
         let wrong = [
             ("comparison", finding.comparison != rule.comparison),
             ("unit", finding.unit != rule.unit),
-            ("limit", finding.limit != limit),
+            (
+                "limit",
+                rule.publishes_a_limit(profile) && finding.limit != limit,
+            ),
             ("measured_on", finding.measured_on != rule.space),
             ("severity", !Self::severity_follows(finding)),
         ]

@@ -355,11 +355,17 @@ pub fn image_to_3d_body(
     })
 }
 
-/// Body for auto-rigging a generated mesh. No body-plan parameter: the
-/// endpoint only supports bipedal humanoids.
-pub fn rigging_body(model_task_id: &str, height_meters: f32) -> Value {
+/// Body for auto-rigging a mesh. No body-plan parameter: the endpoint only
+/// supports bipedal humanoids.
+///
+/// The mesh goes in by value, as [`to_model_uri`] writes it, and
+/// `input_task_id` is **absent**: it wins if both are sent, so with it there
+/// Meshy would rig the mesh it generated and everything the fixer did would
+/// be thrown away. Sending the mesh this way requires it to face +Z in glTF
+/// Y-up and to carry a texture, which `mesh.facing` and `mesh.texture` are.
+pub fn rigging_body(model_uri: &str, height_meters: f32) -> Value {
     json!({
-        "input_task_id": model_task_id,
+        "model_url": model_uri,
         "height_meters": height_meters,
     })
 }
@@ -376,9 +382,20 @@ pub fn animation_body(rig_task_id: &str, action_id: u32) -> Value {
 /// Inlines an image into a request body. The API documents data URIs as an
 /// accepted form of `image_urls`, so concepts need no hosting.
 pub fn to_data_uri(png: &[u8]) -> String {
+    encoded("image/png", png)
+}
+
+/// Inlines a GLB into a request body, which is how a locally cleaned mesh
+/// reaches rigging with nothing hosting it. The mime type is glTF's own,
+/// never the image one above.
+pub fn to_model_uri(glb: &[u8]) -> String {
+    encoded("model/gltf-binary", glb)
+}
+
+fn encoded(mime: &str, bytes: &[u8]) -> String {
     use base64::Engine as _;
     format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(png)
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
     )
 }

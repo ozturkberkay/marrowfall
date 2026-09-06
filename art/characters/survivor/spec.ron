@@ -4,6 +4,8 @@ CharacterSpec(
         kind: Humanoid,
         height_meters: 1.7,
         skeleton: "humanoid",
+        cleanup: true,
+        symmetry: true,
         description: "an adult male survivor in his mid-thirties, starting from nothing. Lean and wiry, hard but underfed — a survivor's body, not a bodybuilder. Weathered, dirt-smudged skin with a few faint old scars. Short, unkempt dark hair and light stubble. He wears ONLY a pair of torn, filthy cloth shorts with a frayed ripped hem, dirt-stained. Bare chest, bare arms, bare legs, barefoot. No weapon, no armour, no shirt, no shoes, no jewellery.",
     ),
     animations: ["idle", "run", "walk_back"],

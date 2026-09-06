@@ -13,7 +13,8 @@ use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
 use crate::support::{
-    EnvGuard, a_bake_report, a_library, a_png, a_spec, install_library, install_skeleton,
+    EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_library, a_png, a_spec,
+    install_library, install_skeleton,
 };
 
 fn options(from: Option<Stage>, only: Option<Stage>, retry: bool) -> RunOptions {
@@ -55,6 +56,13 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
         })))
         .mount(server)
         .await;
+    // The mesh gates and the fixer run on what this serves, so it is a real
+    // GLB. The thumbnail beside it stays a PNG, which is what preview reads.
+    Mock::given(method("GET"))
+        .and(path_regex(r"/files/x\.glb$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_bare_mesh()))
+        .mount(server)
+        .await;
     Mock::given(method("GET"))
         .and(path_regex(r"/files/.+$"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(a_png()))
@@ -68,6 +76,7 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
     std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
     std::fs::create_dir_all(root.join("tools/blender/src")).unwrap();
     std::fs::write(root.join("tools/blender/src/bake_sprites.py"), "").unwrap();
+    std::fs::write(root.join("tools/blender/src/mesh_clean.py"), "").unwrap();
     a_spec("survivor")
         .save(&Paths::new(root, "survivor").spec())
         .unwrap();
@@ -76,10 +85,14 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
     dir
 }
 
-/// A stub that writes the frames the packer expects, so the bake "succeeds".
+/// A stub that writes the frames the packer expects, so the bake "succeeds",
+/// and the cleaned mesh the fixer would write. The two are told apart by
+/// what `--out` names: a directory of frames, or one GLB.
 fn install_blender_stub(root: &std::path::Path, env: &mut EnvGuard) {
     let prepared = root.join("prepared.json");
     std::fs::write(&prepared, a_bake_report("survivor", &["idle"])).unwrap();
+    let cleaned = root.join("cleaned.glb");
+    std::fs::write(&cleaned, a_cleaned_mesh()).unwrap();
     let stub = root.join("blender-stub.sh");
     std::fs::write(
         &stub,
@@ -90,6 +103,13 @@ while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
   shift
 done
+case "$out" in
+  *.glb)
+    cp {cleaned:?} "$out"
+    : > "$MARROWFALL_SENTINEL"
+    exit 0
+    ;;
+esac
 mkdir -p "$out"
 for d in s se e ne n nw w sw; do
   for i in 00 01; do
@@ -100,7 +120,8 @@ cat {prepared:?} > "$MARROWFALL_REPORT"
 : > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
-            prepared = prepared.display()
+            prepared = prepared.display(),
+            cleaned = cleaned.display()
         ),
     )
     .unwrap();
@@ -298,6 +319,9 @@ async fn a_paid_stage_failing_partway_still_records_what_was_charged() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
+    // The rig stage cleans the mesh before it spends anything, so it needs
+    // the fixer even on the way to a failure further down.
+    install_blender_stub(dir.path(), &mut env);
     let paths = Paths::new(dir.path(), "survivor");
 
     // Get as far as the model, then make animation submissions fail.
