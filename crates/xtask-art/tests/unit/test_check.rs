@@ -54,8 +54,9 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        46,
-        "13 rig rules, the aim table, 13 mesh rules, 6 source rules and 13 clip rules"
+        49,
+        "13 rig rules, the aim table, 13 mesh rules, 6 source rules, 13 clip \
+         rules and the 3 foot contact ones"
     );
     assert_eq!(
         ids.iter()
@@ -76,6 +77,9 @@ fn every_family_reaches_the_printed_rule_list() {
         "clip.floor_snap",
         "clip.stride",
         "clip.stride_ratio",
+        "clip.foot_contact.plants",
+        "clip.foot_contact.skate",
+        "clip.foot_contact.penetration",
     ] {
         assert!(ids.contains(&expected), "{expected} is not in the list");
     }
@@ -104,9 +108,9 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
     assert_eq!((report.stage(), report.item()), ("retarget", "run"));
     assert_eq!(
         report.findings().len(),
-        69,
-        "22 bones on two rules, 21 keys on the grid, its range, and the three \
-         the fit's own placement reports"
+        75,
+        "22 bones on two rules, 21 keys on the grid, its range, the three the \
+         fit's own placement reports, and three per foot on the ground"
     );
     assert!(!report.has_errors(), "the refit of our own clip is clean");
     assert_eq!(
@@ -800,8 +804,10 @@ fn the_python_report_has_exactly_the_fields_rust_parses() {
     assert_eq!(rust, python);
 }
 
-/// The three Blender modules that declare a `Rule` of their own.
-const BLENDER_MODULES: [&str; 3] = [
+/// The Blender modules that declare a `Rule` of their own.
+/// `every_module_that_declares_a_rule_is_in_the_parity_set` holds this list
+/// to the directory, so a module added later cannot be forgotten here.
+const BLENDER_MODULES: [&str; 4] = [
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../tools/blender/src/clip.py"
@@ -809,6 +815,10 @@ const BLENDER_MODULES: [&str; 3] = [
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../tools/blender/src/framing.py"
+    )),
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tools/blender/src/plant.py"
     )),
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -900,9 +910,29 @@ fn every_blender_rule_says_what_the_registry_publishes() {
     assert_eq!(spelled, published);
     assert_eq!(
         spelled.len(),
-        15,
-        "7 at the retarget, 2 at the bake and 6 at the fetch"
+        18,
+        "10 at the retarget, 2 at the bake and 6 at the fetch"
     );
+}
+
+/// And the list above is held to the directory itself, so a module that
+/// declares rules cannot sit outside the parity check above.
+#[test]
+fn every_module_that_declares_a_rule_is_in_the_parity_set() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/blender/src");
+    let mut missed: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("the Blender source directory") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_none_or(|kind| kind != "py") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("a readable module");
+        if source.contains("= Rule(") && !BLENDER_MODULES.contains(&source.as_str()) {
+            missed.push(path.display().to_string());
+        }
+    }
+
+    assert!(missed.is_empty(), "{missed:?} declare rules nothing checks");
 }
 
 #[test]

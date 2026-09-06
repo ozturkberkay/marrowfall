@@ -59,6 +59,31 @@ const STRIDE_SEGMENT: [&str; 2] = ["left_upper_leg", "left_leg"];
 /// `clip.swing` and `clip.twist` need rotations and nothing else.
 const SOURCE_TRAVEL_METERS: f64 = 2.3117;
 
+/// And how far a standing pair travels instead, in meters.
+///
+/// A strafe crosses 2.04 m in a third of a second, which is 6 m/s of foot,
+/// so a foot riding along with it never comes to rest. A pair that stands
+/// still needs a travel the contact threshold can hold, and it cannot be zero
+/// either: `clip.stride` has nothing to size a fit against a source that
+/// never moved.
+const STANDING_TRAVEL_METERS: f64 = 0.004;
+
+/// The roles a standing pair holds at rest, so both feet keep the floor.
+///
+/// The hips as well as the legs: every joint below a turned hips is carried
+/// by it, so a swinging root would take both feet off the ground with it.
+const STANDING_ROLES: [&str; 9] = [
+    "hips",
+    "left_upper_leg",
+    "left_leg",
+    "left_foot",
+    "left_toe",
+    "right_upper_leg",
+    "right_leg",
+    "right_foot",
+    "right_toe",
+];
+
 /// How much shorter our femur is than the vendor's, which is what every
 /// length of a correct fit is sized by. The real Mixamo pair reads this.
 const FEMUR_RATIO: f64 = 0.8815;
@@ -133,6 +158,10 @@ pub struct CrossRig {
     /// wrong femur leaves. The floor snap runs after the sizing, so the
     /// standing part of the same keys is left alone.
     travel_sized_by: f64,
+    /// How far the vendor clip's own root gets, in meters.
+    source_travel: f64,
+    /// How far the whole clip is keyed under the floor it stands on.
+    sunk: f64,
 }
 
 impl CrossRig {
@@ -173,7 +202,40 @@ impl CrossRig {
             interpolation: Interpolation::Linear,
             broken_key: false,
             travel_sized_by: 1.0,
+            source_travel: SOURCE_TRAVEL_METERS,
+            sunk: 0.0,
         }
+    }
+
+    /// Both feet flat on the floor for the whole clip, creeping forward.
+    ///
+    /// The hips and the eight leg bones are held at rest and the travel comes
+    /// down to something a planted foot can hold, so the three foot contact
+    /// rules have a pair that plants. Every other bone still moves.
+    pub fn standing(mut self) -> Self {
+        let rest = self.rest.clone();
+        for (_, posed) in &mut self.frames {
+            for role in STANDING_ROLES {
+                if let Some(world) = rest.get(role) {
+                    posed.insert(role.to_owned(), *world);
+                }
+            }
+        }
+        self.creeping(STANDING_TRAVEL_METERS)
+    }
+
+    /// How far the vendor clip's own root gets, in meters. Both sides move
+    /// together, so a correct fit still reads nothing on `clip.stride`.
+    pub fn creeping(mut self, meters: f64) -> Self {
+        self.source_travel = meters;
+        self
+    }
+
+    /// Keys the whole clip below the floor its own rig rests on, which is
+    /// what puts a sole through the ground.
+    pub fn sunk(mut self, meters: f64) -> Self {
+        self.sunk = meters;
+        self
     }
 
     /// The root's travel scaled, leaving the source's alone. `clip.stride`
@@ -194,7 +256,7 @@ impl CrossRig {
     /// How far a correct fit of this pair travels: the vendor's own travel
     /// sized by the femur ratio, which is what `clip.stride` reads.
     pub fn travel(&self) -> f64 {
-        SOURCE_TRAVEL_METERS * FEMUR_RATIO
+        self.source_travel * FEMUR_RATIO
     }
 
     /// Rolls one role's output bone about its own +Y, on every frame, leaving
@@ -405,8 +467,8 @@ impl CrossRig {
         // skeleton carries a 0.01 scale, so a local step is 100x its world
         // one.
         let root = by_bone(TOP);
-        let standing =
-            self.rig.rest_translation(&root) + DVec3::Y * (self.lift() / super::rigs::OBJECT_SCALE);
+        let standing = self.rig.rest_translation(&root)
+            + DVec3::Y * ((self.lift() - self.sunk) / super::rigs::OBJECT_SCALE);
         let last = clip.seconds.len().saturating_sub(1).max(1) as f64;
         let step = DVec3::X * (self.travel() * self.travel_sized_by / super::rigs::OBJECT_SCALE);
         clip.translations.insert(
@@ -493,7 +555,7 @@ impl CrossRig {
         serde_json::json!({
             "rest": rows(&self.rest, true),
             "frames": frames,
-            "travel": SOURCE_TRAVEL_METERS,
+            "travel": self.source_travel,
             "stride_segment": self.femur() / FEMUR_RATIO,
         })
         .to_string()

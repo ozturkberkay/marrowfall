@@ -830,6 +830,78 @@
       "attempt": 1,
       "measured_on": "the two stride_segment joints of each rig at rest, in Blender Z-up world space",
       "message": "our stride segment is 0.3579 m against the source's 0.3579 m, so every length of run is sized by 1.0000"
+    },
+    {
+      "rule": "clip.foot_contact.plants",
+      "severity": "skipped",
+      "subject": "LeftToeBase",
+      "measured": 0.0,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "plant runs",
+      "attempt": 1,
+      "measured_on": "each foot's sole point under the toe, at every frame of the clip, in Blender Z-up world space, against the ground plane at zero",
+      "message": "the library declares travels: false, so LeftToeBase stands on ground that moves under it and cannot plant"
+    },
+    {
+      "rule": "clip.foot_contact.skate",
+      "severity": "skipped",
+      "subject": "LeftToeBase",
+      "measured": 0.0,
+      "limit": 0.025,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "each foot's sole point under the toe, inside one plant run, against where the run's first frame put it, horizontally, in Blender Z-up world space",
+      "message": "the library declares travels: false, so LeftToeBase stands on ground that moves under it and cannot plant"
+    },
+    {
+      "rule": "clip.foot_contact.penetration",
+      "severity": "info",
+      "subject": "LeftToeBase",
+      "measured": -0.007415728643536568,
+      "limit": 0.005,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the two sole points of each foot, under the ankle and under the toe, at every frame, against the ground plane at zero, in Blender Z-up world space",
+      "message": "the sole of LeftToeBase under the toe gets to 0.0074 m over the ground at frame 13"
+    },
+    {
+      "rule": "clip.foot_contact.plants",
+      "severity": "skipped",
+      "subject": "RightToeBase",
+      "measured": 0.0,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "plant runs",
+      "attempt": 1,
+      "measured_on": "each foot's sole point under the toe, at every frame of the clip, in Blender Z-up world space, against the ground plane at zero",
+      "message": "the library declares travels: false, so RightToeBase stands on ground that moves under it and cannot plant"
+    },
+    {
+      "rule": "clip.foot_contact.skate",
+      "severity": "skipped",
+      "subject": "RightToeBase",
+      "measured": 0.0,
+      "limit": 0.025,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "each foot's sole point under the toe, inside one plant run, against where the run's first frame put it, horizontally, in Blender Z-up world space",
+      "message": "the library declares travels: false, so RightToeBase stands on ground that moves under it and cannot plant"
+    },
+    {
+      "rule": "clip.foot_contact.penetration",
+      "severity": "info",
+      "subject": "RightToeBase",
+      "measured": -0.0005301208584569395,
+      "limit": 0.005,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the two sole points of each foot, under the ankle and under the toe, at every frame, against the ground plane at zero, in Blender Z-up world space",
+      "message": "the sole of RightToeBase under the toe gets to 0.0005 m over the ground at frame 2"
     }
   ]
 }

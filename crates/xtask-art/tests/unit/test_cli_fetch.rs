@@ -10,7 +10,7 @@ use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Finding, Rule, clip, source};
+use xtask_art::check::{Finding, Report, Rule, Severity, clip, foot, source};
 use xtask_art::cli::{FetchStep, fetch, fetch_plan};
 use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
 use xtask_art::providers::mixamo::client::CHARACTER_ID;
@@ -281,10 +281,15 @@ fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
 /// Blender as the fetch path uses it: it writes the clip, the source motion
 /// beside it, the report and the sentinel.
 ///
-/// The clip and the sidecar are the synthetic cross-rig pair, so the three
-/// file-side `clip.*` rules measure a real fit rather than a stub string.
+/// The clip and the sidecar are the synthetic cross-rig pair, standing, so
+/// every file-side `clip.*` rule measures a real fit rather than a stub
+/// string and the three foot contact ones have a foot that plants.
 fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
-    let pair = crate::clips::CrossRig::new(a_convention());
+    a_blender_stub_of(dir, &crate::clips::CrossRig::new(a_convention()).standing())
+}
+
+/// The same stub handing back a pair a test chose.
+fn a_blender_stub_of(dir: &Path, pair: &crate::clips::CrossRig) -> std::path::PathBuf {
     std::fs::write(dir.join("fitted.glb"), pair.output_glb()).unwrap();
     std::fs::write(dir.join("source.json"), pair.source_motion()).unwrap();
     a_stub(
@@ -334,7 +339,8 @@ fn a_retarget_report(measured: f64) -> String {
             // the seven sits near 1, and everything else reads none of what
             // it measures.
             id if id == clip::INTERPOLATION.id => measured,
-            id if id == clip::STRIDE_RATIO.id => 1.0,
+            // The one ratio, and the one foot that has to plant at least once.
+            id if id == clip::STRIDE_RATIO.id || id == foot::PLANTS.id => 1.0,
             _ => 0.0,
         }
     }))
@@ -490,6 +496,9 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         "clip.floor_snap=0.005",
         "clip.stride=2",
         "clip.stride_ratio=100",
+        "clip.foot_contact.plants=1",
+        "clip.foot_contact.skate=0.025",
+        "clip.foot_contact.penetration=0.005",
     ] {
         assert!(argv.contains(limit), "{limit} is not published: {argv}");
     }
@@ -620,7 +629,7 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
 
     // The clip gates are what report it: a missing input is an error with a
     // stated reason, never a skip.
-    assert!(error.contains("left 8 defect(s)"), "got: {error}");
+    assert!(error.contains("left 11 defect(s)"), "got: {error}");
     let report = std::fs::read_to_string(
         dir.path()
             .join("art/staging/reports/retarget.walk_back.1.json"),
@@ -665,6 +674,85 @@ async fn a_retarget_that_breaks_a_rule_is_not_recorded_as_fetched() {
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }
 
+/// `[synth]` a fit whose feet ride along with its root, which breaks two
+/// rules on two feet each. The refusal names each rule once, sorted, so a
+/// reader knows what to open the report for.
+#[tokio::test]
+async fn the_refusal_names_each_failing_rule_once() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub_of(dir.path(), &crate::clips::CrossRig::new(a_convention()));
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(0.0));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains(
+            "left 4 defect(s) on clip.foot_contact.plants, clip.foot_contact.skate, listed in"
+        ),
+        "got: {error}"
+    );
+}
+
+/// `[synth]` the same one defect on a clip the library declares in place,
+/// where both stance rules file themselves as `skipped`. A skip is a rule
+/// that chose not to measure, so it is not a defect, and counting one would
+/// make the refusal name a number no reader can find in the report.
+#[tokio::test]
+async fn a_skipped_rule_is_not_counted_among_the_defects() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let mut library = a_library();
+    library.animations.get_mut("walk_back").unwrap().travels = false;
+    let dir = a_repo(&library);
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(4.0));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    let report = Report::read(
+        &dir.path()
+            .join("art/staging/reports/retarget.walk_back.1.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        report
+            .findings()
+            .iter()
+            .filter(|finding| finding.severity == Severity::Skipped && !finding.holds())
+            .count(),
+        2,
+        "one skipped plant per foot, each reading 0 against a limit of 1"
+    );
+    assert!(
+        error.contains("left 1 defect(s) on clip.interpolation, listed in"),
+        "got: {error}"
+    );
+}
+
 /// A retarget that reported nothing about one of its own rules. This is what
 /// deleting the retarget's own `placed` call looks like from here: a gate
 /// that goes quiet cannot be told from one that never ran.
@@ -690,6 +778,34 @@ async fn a_retarget_that_leaves_one_of_its_rules_unread_is_refused() {
         .to_string();
 
     assert!(error.contains("clip.floor_snap"), "got: {error}");
+    assert!(error.contains("never read"), "got: {error}");
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// And the same for the plant, which is the newest of the retarget's rules
+/// and the one whose measurement is furthest from where the report is built.
+#[tokio::test]
+async fn a_retarget_that_never_reads_a_foot_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &without(foot::PLANTS.id));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains(foot::PLANTS.id), "got: {error}");
     assert!(error.contains("never read"), "got: {error}");
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }

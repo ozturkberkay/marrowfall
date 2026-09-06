@@ -21,6 +21,7 @@ under `crates/xtask-art/src/check/`.
 | Module | `bpy` | What it is |
 | --- | --- | --- |
 | `transfer.py` | no | the retarget maths: world matrices in, local poses out |
+| `plant.py` | no | where a foot touches the ground: contact, the lock, the leg solve |
 | `clip.py` | no | what the retarget reports: the two counts, the frame grid, where the fit ended up, and the source motion sidecar |
 | `source.py` | no | what a vendor clip is, measured before anything is fitted to it |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
@@ -32,9 +33,19 @@ under `crates/xtask-art/src/check/`.
 | `bake_sprites.py` | yes | renders the sprite sheet |
 | `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
 
-The six `bpy`-free modules are unit tested by `uv run pytest` at 100 percent
-coverage, with no Blender anywhere. That split is not tidiness: `bpy` only
-exists inside Blender, so a module that imports it cannot be tested at all.
+The seven `bpy`-free modules are unit tested by `uv run pytest` at 100
+percent coverage, with no Blender anywhere. That split is not tidiness: `bpy`
+only exists inside Blender, so a module that imports it cannot be tested at
+all.
+
+`transfer.py` and `plant.py` are the two that most need it. Both are pure
+geometry with an answer that is right or wrong by a number, and both are
+wrong in ways that look plausible: a retarget composed in the wrong order
+still produces a posed character, and a foot solve that picks the wrong bend
+plane still produces a leg. Neither needs a scene, only matrices and points,
+so `retarget_animation.py` reads Blender and hands them plain numbers, and
+every case they answer is a pytest one that runs in CI where there is no
+Blender at all.
 
 ## Three things a script never does
 
@@ -94,6 +105,18 @@ it plants its left one on. It is applied to the root's location keys in world
 space, for the same reason `strip_root_motion` pins in world space, and the
 pose is then evaluated again so the report is what the file carries rather
 than what the lift was asked for.
+
+## Why the foot is planted on its sole and not its toe
+
+What `plant.py` is handed is a **sole point**, two per foot, under the ankle
+and under the toe, and never the joint itself. Corrections 1 and 2 of T9 in
+`docs/design/2026_08_20_art_pipeline_foundations.md` own the measurements that
+say why, and correction 4 owns the model's limit.
+
+The lock holds the ball still through a run, with two frame ramps either side,
+and a two bone analytic solve moves the knee so the ankle carries the foot
+there with its own world orientation held. A target outside the leg's reach is
+reported as the distance it fell short by, never as a NaN.
 
 ## Why the bake scales nothing
 

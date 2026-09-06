@@ -36,7 +36,7 @@ regenerate (Mixamo's `Neck` axis sits 16.933 degrees off the direction to its
 own `Head`, and it always will) and because an in-place cycle wanders 0.0276 m
 against a strafe's 2.3117, which no one threshold reads.
 
-Eleven `clip.*` rules run at the **retarget** boundary. `clip.swing` and
+Fourteen `clip.*` rules run at the **retarget** boundary. `clip.swing` and
 `clip.twist` measure the delivered GLB against the file its motion was bought
 in; that file is an FBX, so `retarget_animation.py` writes the source's own
 world orientations to `art/staging/reports/retarget.<clip>.1.source.json` and
@@ -63,6 +63,15 @@ CI, and it re-derives our own stride segment off the rig GLB rather than
 trusting the length the retarget wrote, so the two sides of the ratio have two
 readers. The source's own travel and femur cannot be re-derived, because the
 vendor file is an FBX, so both ride in the sidecar beside its rotations.
+
+`clip.foot_contact.plants`, `.skate` and `.penetration` are requirement 6.
+The retarget finds the frames each foot is on the ground, holds it there
+through them, and reports how often it planted, how far it slid while it was
+down and how far its sole got under the ground plane at zero. All three read a
+**sole point** rather than the toe joint; corrections 1 and 2 of T9 in
+`docs/design/2026_08_20_art_pipeline_foundations.md` say why. A clip the
+library declares in place has a ground that moves under it, so `travels`
+reports the first two as `skipped`.
 
 `clip.root_travel` and `clip.root_bob` run at the **bake**, on the copy
 `strip_root_motion` has just pinned, because that copy is never written to

@@ -18,6 +18,7 @@ mod test_cli_fetch;
 mod test_cli_prompts;
 mod test_cli_run;
 mod test_clip;
+mod test_foot;
 mod test_gltf_mesh;
 mod test_gltf_world;
 mod test_http;

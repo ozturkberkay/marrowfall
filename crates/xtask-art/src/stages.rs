@@ -14,7 +14,7 @@ use anyhow::{Context as _, Result};
 use crate::blender::{self, BLENDER_SRC};
 use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
-use crate::check::{Artifacts, Report, Rule, clip, source};
+use crate::check::{Artifacts, Finding, Report, Rule, Severity, clip, source};
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -341,9 +341,8 @@ pub fn check_source(
     refuse_unread_rules(&report, &source::RULES, name, "source check")?;
     anyhow::ensure!(
         !report.has_errors(),
-        "{name} is not the clip the library declares it is, {} defect(s) \
-         listed in {}",
-        defect_count(&report),
+        "{name} is not the clip the library declares it is, {}, listed in {}",
+        defects(&report),
         artifacts.report().display()
     );
     Ok(())
@@ -431,13 +430,24 @@ fn refuse_unreported_subjects(report: &Report, names: &[&str], item: &str) -> Re
     Ok(())
 }
 
-/// How many of a report's findings are outside their own limit.
-fn defect_count(report: &Report) -> usize {
-    report
+/// A report's defects, counted and named: "2 defect(s) on rule.a, rule.b".
+///
+/// Errors only, which is what [`Report::has_errors`] gates on. A `skipped`
+/// rule chose not to measure and files a reading of zero, so counting it
+/// would name a number no reader can find in the report. The rules go in
+/// too, because a count alone says nothing about what to open.
+fn defects(report: &Report) -> String {
+    let broken: Vec<&Finding> = report
         .findings()
         .iter()
-        .filter(|finding| !finding.holds())
-        .count()
+        .filter(|finding| finding.severity == Severity::Error)
+        .collect();
+    let rules: BTreeSet<&str> = broken.iter().map(|finding| finding.rule.as_str()).collect();
+    format!(
+        "{} defect(s) on {}",
+        broken.len(),
+        rules.into_iter().collect::<Vec<&str>>().join(", ")
+    )
 }
 
 /// Fits a downloaded clip onto the skeleton's canonical rig, writing the
@@ -512,8 +522,8 @@ pub fn retarget(
     report.write(repo_root)?;
     anyhow::ensure!(
         !report.has_errors(),
-        "the retarget of {name} left {} defect(s), listed in {}",
-        defect_count(&report),
+        "the retarget of {name} left {}, listed in {}",
+        defects(&report),
         artifacts.report().display()
     );
     Ok(())
@@ -585,9 +595,9 @@ pub fn bake(
     refuse_off_registry(&report, &profile, &spec.name, "bake")?;
     anyhow::ensure!(
         !report.has_errors(),
-        "the bake of {} left {} defect(s), listed in {}",
+        "the bake of {} left {}, listed in {}",
         spec.name,
-        defect_count(&report),
+        defects(&report),
         artifacts.report().display()
     );
     refuse_unreported_subjects(&report, &names, &spec.name)?;

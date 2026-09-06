@@ -11,6 +11,7 @@
 
 pub mod aim;
 pub mod clip;
+pub mod foot;
 pub mod gltf_clip;
 pub mod gltf_mesh;
 pub mod gltf_world;
@@ -260,6 +261,7 @@ pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
         .chain(mesh::RULES)
         .chain(source::RULES)
         .chain(clip::RULES)
+        .chain(foot::RULES)
 }
 
 /// Every finding one stage attempt produced, for one item.

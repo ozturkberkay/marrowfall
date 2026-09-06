@@ -747,7 +747,7 @@ fn a_source_motion_that_travels_a_negative_distance_is_refused() {
 }
 
 #[test]
-fn a_clip_that_is_not_on_disk_is_eight_errors_and_never_a_skip() {
+fn a_clip_that_is_not_on_disk_is_eleven_errors_and_never_a_skip() {
     let root = repo_root();
     let (sidecar, rig) = beside(&root);
     let findings = xtask_art::check::clip::check_files(
@@ -766,7 +766,7 @@ fn a_clip_that_is_not_on_disk_is_eight_errors_and_never_a_skip() {
     )
     .expect("the gate itself runs");
 
-    assert_eq!(errors(&findings).len(), 8);
+    assert_eq!(errors(&findings).len(), 11);
     assert!(
         findings[0]
             .message

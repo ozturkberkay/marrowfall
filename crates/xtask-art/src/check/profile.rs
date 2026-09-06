@@ -189,6 +189,14 @@ pub struct ClipLimits {
     pub stride_percent: f64,
     /// How far a looping clip's last pose may sit from its first, per bone.
     pub loop_degrees: f64,
+    /// How often each foot must come to rest on the ground over one cycle.
+    pub foot_plants: f64,
+    /// How far a planted foot may slide while it is down, in meters, at the
+    /// 180 cm the contact thresholds are published against.
+    pub foot_skate_meters: f64,
+    /// How far the lowest point of a sole may go under the ground plane, in
+    /// meters. Negative readings are clearance and always hold.
+    pub foot_penetration_meters: f64,
 }
 
 /// The `[profile.source]` table: what a vendor file must be before anything
@@ -445,6 +453,12 @@ impl Profile {
             ("clip.floor_snap_meters", self.clip.floor_snap_meters),
             ("clip.stride_percent", self.clip.stride_percent),
             ("clip.loop_degrees", self.clip.loop_degrees),
+            ("clip.foot_plants", self.clip.foot_plants),
+            ("clip.foot_skate_meters", self.clip.foot_skate_meters),
+            (
+                "clip.foot_penetration_meters",
+                self.clip.foot_penetration_meters,
+            ),
             // And a travel threshold of zero would call every clip traveling,
             // because no two frames of real motion sit at the same place.
             ("source.travel_meters", self.source.travel_meters),

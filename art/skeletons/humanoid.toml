@@ -301,6 +301,20 @@ stride_percent = 2.0
 # bones, which is the hitch `art/animations/library.ron` has recorded in prose
 # all along and which nothing could measure until now.
 loop_degrees = 2.0
+# How often each foot must come to rest on the ground over one cycle. A clip
+# the library declares in place has a ground that moves under it, so its feet
+# must slide and both stance rules report themselves switched off.
+foot_plants = 1
+# How far a planted foot may slide while it is down. With the lock in, the
+# three Mixamo fits read exactly 0.0000 m; with it removed the same fits read
+# 0.0207 (strafe_left), 0.0148 (walk_back) and 0.0027 m (strafe_right).
+foot_skate_meters = 0.025
+# How far the lowest point of a sole may go under the ground plane at zero.
+# The vendor's own `strafe_left.fbx` reads 0.0000 m at every planted frame and
+# 0.0038 at worst, and a refit of `run.glb` onto its own rig clears the floor
+# by 0.0074 and 0.0005 m. The three cross-rig Mixamo fits read 0.0200 to
+# 0.0203 m, which is what correction 4 of T9 records.
+foot_penetration_meters = 0.005
 
 # Every published source limit, read at fetch time before a clip is fitted to
 # anything. `crates/xtask-art/src/check/source.rs` publishes them and
