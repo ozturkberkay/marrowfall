@@ -25,11 +25,22 @@ use glam::DVec3;
 use super::gltf_world::{
     SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, degrees_between, gltf_to_blender,
 };
-use super::profile::{Axis, LEFT, Profile, RIGHT};
+use super::profile::{Axis, LEFT, Profile, RIGHT, reflected};
 use super::{Comparison, Finding, HALF_A_TURN, NOT_MIRRORED, Rule, Symmetry, relative_to};
 
-/// The stage these findings belong to, which names their report file.
+/// The stage these findings belong to, which names their report file: the
+/// rigged file as the vendor shipped it.
 pub const STAGE: &str = "rig";
+
+/// The same rules on the file the rename and the conform wrote, which is the
+/// one that gates. Two stage names over one rule set, the way `mesh` and
+/// `cleaned` already read the mesh before and after the fixer.
+pub const CONFORMED_STAGE: &str = "conformed";
+
+/// What each of those two files is called in a sentence. A stage name is not
+/// one: "no conformed yet at ..." reads as a missing word.
+pub const NOUN: &str = "vendor rig";
+pub const CONFORMED_NOUN: &str = "conformed rig";
 
 /// The upper arm. Its angle below horizontal is what the concept prompt asks
 /// for and what nothing ever checked.
@@ -180,6 +191,11 @@ pub const RULES: [&Rule; 14] = [
     &WORLD_HEIGHT,
     &OBJECT_TRANSFORM,
 ];
+
+/// The three rules a rename closes, and the only ones a bought rig is held to
+/// before the conform runs: every profile row below them is keyed by bone
+/// name, so a rename that half worked would measure the wrong joints.
+pub const NAME_RULES: [&Rule; 3] = [&NAMES_STANDARD, &BONE_SET, &PARENTS];
 
 /// Runs every rig rule on one file.
 ///
@@ -433,10 +449,7 @@ impl<'a> Measured<'a> {
 
     fn mirror_direction(&self) -> Vec<Finding> {
         self.mirrored(&MIRROR_DIRECTION, |left, right| {
-            // X = 0 is the mirror plane, so the reflection of the right
-            // segment is its direction with the X part negated.
-            let reflected = right * DVec3::new(-1.0, 1.0, 1.0);
-            let apart = degrees_between(left.normalize(), reflected.normalize());
+            let apart = degrees_between(left.normalize(), reflected(right).normalize());
             (apart, format!("{apart:.3} degrees apart once reflected"))
         })
     }

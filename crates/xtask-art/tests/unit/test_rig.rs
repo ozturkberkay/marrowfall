@@ -958,6 +958,24 @@ fn the_severity_of_every_finding_follows_from_its_own_comparison() {
     }
 }
 
+/// Each stage's report file is named by its stage, and a sentence about it by
+/// its noun. `cargo art check` prints "no conformed rig yet at ...", which the
+/// stage name alone does not read as.
+#[test]
+fn each_rig_stage_has_a_name_for_its_file_and_a_noun_for_a_sentence() {
+    assert_eq!(rig::STAGE, "rig");
+    assert_eq!(rig::CONFORMED_STAGE, "conformed");
+    assert_eq!(rig::NOUN, "vendor rig");
+    assert_eq!(rig::CONFORMED_NOUN, "conformed rig");
+    assert_eq!(
+        format!(
+            "no {} yet at art/characters/survivor/model.glb",
+            rig::CONFORMED_NOUN
+        ),
+        "no conformed rig yet at art/characters/survivor/model.glb"
+    );
+}
+
 /// Every finding has to survive the harness, which is what enforces a named
 /// space, a message, and a number that is not a NaN.
 #[test]

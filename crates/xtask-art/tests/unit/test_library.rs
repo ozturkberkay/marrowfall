@@ -191,6 +191,11 @@ fn only_motion_we_own_may_be_published_with_the_art() {
 
 /// Two rigs can use one bone name for different bones, so the retarget is told
 /// which convention a file uses rather than guessing from the names in it.
+///
+/// What it names is the file the vendor delivers, which is what the source
+/// check and the retarget open: Meshy animates the rig it sold, Mixamo ships
+/// its own FBX, and authored motion is made on ours. The committed copy is in
+/// the standard convention either way, and `[fingerprints]` says so.
 #[test]
 fn each_provider_declares_how_it_names_bones() {
     assert_eq!(a_mixamo_source().bone_convention(), "mixamo");
@@ -200,8 +205,8 @@ fn each_provider_declares_how_it_names_bones() {
     );
     assert_eq!(
         MotionSource::Authored.bone_convention(),
-        "meshy",
-        "hand-built motion is made on the canonical rig, which Meshy named"
+        "standard",
+        "hand-built motion is made on the canonical rig"
     );
 }
 
@@ -238,13 +243,21 @@ fn the_canonical_rig_is_named_after_the_skeleton_it_defines() {
     assert!(rig.ends_with("art/skeletons/humanoid.glb"), "{rig:?}");
 }
 
+/// One directory for every provider's own download, and the extension is the
+/// provider's: Mixamo exports FBX and Meshy delivers GLB.
 #[test]
 fn a_download_is_staged_where_derived_art_goes() {
-    let staged = AnimationLibrary::staged_download(std::path::Path::new("/repo"), "walk_back");
-    assert!(
-        staged.ends_with("art/staging/downloads/walk_back.fbx"),
-        "gitignored, so a provider's own file is never committed: {staged:?}"
-    );
+    let root = std::path::Path::new("/repo");
+    for (extension, tail) in [
+        ("fbx", "art/staging/downloads/walk_back.fbx"),
+        ("glb", "art/staging/downloads/walk_back.glb"),
+    ] {
+        let staged = AnimationLibrary::staged_download(root, "walk_back", extension);
+        assert!(
+            staged.ends_with(tail),
+            "gitignored, so a provider's own file is never committed: {staged:?}"
+        );
+    }
 }
 
 // --- The library lock -----------------------------------------------------

@@ -222,6 +222,14 @@ pub fn a_bare_mesh() -> Vec<u8> {
         .to_glb()
 }
 
+/// The rigged character as a vendor returns it: a conformant skeleton, its
+/// inverse bind matrices, and the one-key bind-pose action Meshy ships beside
+/// every rig.
+pub fn a_rigged_character() -> Vec<u8> {
+    let rig = crate::rigs::SyntheticRig::conformant();
+    rig.to_glb(&rig.bind_pose_clip())
+}
+
 /// And what a fixer writes from it: the same figure, whole.
 pub fn a_cleaned_mesh() -> Vec<u8> {
     crate::meshes::SyntheticMesh::figure().to_glb()

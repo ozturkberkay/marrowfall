@@ -510,7 +510,10 @@ model stage -> download bare.glb  (new: the model stage fetches its own GLB)
             -> mesh gates on bare.glb, world space, then welded
             -> blender fixer -> clean.glb -> 11 of those 13 gates again
             -> POST /rigging { model_url: "data:model/gltf-binary;base64,..." }
-            -> rigged.glb -> rig gates -> rename -> characters/<char>/model.glb
+            -> rigged.glb -> rig gates -> rename -> conform -> conformed gates
+            -> characters/<char>/model.glb
+            -> each bought clip -> source gates -> retarget onto the canonical
+               rig -> clip gates -> art/animations/<clip>.glb
 ```
 
 About 60 lines of plain `bmesh`. No addon, no credits, 55 ms. On `model.glb`
@@ -1461,6 +1464,15 @@ which need no Blender.
 **`mesh.quads` was in that sentence and T3 took it out:** a rule that can
 only report `info` is failure shape one from the section above, and the thing
 it can honestly measure does fail. See the correction below.
+
+**The conform's proof that no vertex moved is the vertex one, not the render.**
+`the_conform_leaves_every_vertex_accessor_byte_identical` compares each vertex
+accessor's own bytes and
+`the_conform_moves_the_joints_and_leaves_every_vertex_where_it_was` skins the
+whole rest pose through the joints, both in Rust, both exact, and both run in
+CI. `the_conform_renders_the_rest_pose_to_the_same_pixels` needs Blender,
+which CI does not use, so it prints why and passes on a machine without one:
+it is local proof and never the gate. Correction 10 of T15a is what it draws.
 
 | Rule | Positive | Negative fixture it must reject | Calibration |
 |---|---|---|---|
@@ -3430,11 +3442,322 @@ committed concept views, and every one names the report it came from.
     forever. A poll that never landed clears nothing: resuming is what it is
     for.
 
+### Corrections T15a made to this document
+
+T15 is split. **T15a is the pipeline half**: the rename step this document
+drew and nobody built, plus a conform step beside it. **T15b is the art half**,
+the one deliberate operation that regenerates the survivor and moves committed
+bytes. T15a moves no committed art at all.
+
+1. **Every fresh rig fails the same gates, and the rename was never built.**
+   T12 rigged three fresh meshes and every one reads the same way. Read from
+   `art/staging/reports/rig.survivor-unset.1.json` and
+   `rig.survivor-a-pose.1.json`:
+
+   | Rule | Subjects on a fresh rig | Reading |
+   |---|---|---|
+   | `rig.names_standard` | `Spine02`, `Spine01`, `neck` | 3 names no convention had |
+   | `rig.bone_set` | `Spine1`, `Spine2`, `Neck` | 3 bones absent |
+   | `rig.parents` | `Head`, both shoulders, `Spine` | 4 bones hanging elsewhere |
+   | `rig.child_axis` | `Hips` 95.680, `Head` 29.902 | limit 2.0 |
+   | `rig.aim_table` | `hips` 95.721 | limit 75 |
+   | `rig.mirror_length` | Arm, ForeArm, Leg, Shoulder, UpLeg | 1.056 to 3.660, limit 1 |
+   | `rig.mirror_direction` | ForeArm 1.214 | limit 1 |
+
+   Meshy ships `Hips, LeftUpLeg, LeftLeg, LeftFoot, LeftToeBase, RightUpLeg,
+   RightLeg, RightFoot, RightToeBase, Spine02, Spine01, Spine, LeftShoulder,
+   LeftArm, LeftForeArm, LeftHand, RightShoulder, RightArm, RightForeArm,
+   RightHand, neck, Head, head_end, headfront`, where `Spine02` is the lowest
+   spine bone and `Spine` the highest, which is the inversion this document
+   opens with. The flow near "Local cleanup and symmetrize" draws
+   `rigged.glb -> rig gates -> rename -> characters/<char>/model.glb` and
+   `grep -n rename crates/xtask-art/src/stages.rs` found nothing: T5 renamed
+   the committed rig once, by hand, through the sequence in
+   `art/skeletons/README.md`.
+
+2. **Regenerating the rig does not close the geometry rules, and T12 proved
+   it.** `art/skeletons/README.md` says "Regenerating the rig is what closes
+   them". It does not. Meshy's rigger points `Hips` at a hip socket on every
+   generation, pitches `Head` off its own end, and places limb joints 1 to 4
+   percent asymmetric **on a mesh whose own `mesh.mirror` reads 0.000**, which
+   is `clean.glb`. Symmetrizing the mesh does not symmetrize the skeleton the
+   rigger derives from it. So the rig has to be conformed after rigging, or it
+   never conforms at all.
+
+3. **The rig gates cannot gate before the rename. They record there and gate
+   after.** A fresh Meshy rig fails `rig.names_standard`, `rig.bone_set` and
+   `rig.parents` by construction, and the rename is what closes them, so a
+   gate in front of the rename would stop every run this pipeline can make.
+   The rule set therefore runs twice, under two stage names, exactly the way
+   `mesh` and `cleaned` already work: **`rig` on `rigged.glb` as it arrived**,
+   which records and refuses nothing, and **`conformed` on the file the step
+   wrote**, which is the gate. Nothing can pass unmeasured, because every
+   defect the rename and the conform close is one that only the vendor's own
+   file carries and the conformed file is measured whole.
+
+4. **The defect table says "irrelevant" and two published rules say "error",
+   about the same geometry.** "What do we do about the survivor's mesh?" puts
+   the sideways `Hips` axis and the arm angle in the row marked *Irrelevant.
+   No code reads a bone axis or a tail as a world axis.* That sentence stopped
+   being true in T4: `[aim_table]` reads every bone's rest axis as a world
+   axis, and it is the single source of every constant offset in the transfer.
+   Two error rules sit on the `Hips` row, `rig.child_axis` at 97.618 and
+   `rig.aim_table` at 97.801, and a third sits on the arm row,
+   `rig.humerus_angle` at 19.141 and 19.350 against a tolerance of 15.
+
+   The two `Hips` rules are the ones this task closes, and correction 5 is why
+   they were never irrelevant. The arm row is not: see correction 9.
+
+5. **What `transfer.py` does with a bone's rest axis, measured.** The
+   sideways `Hips` is the hypothesis for T9's 18 cm pelvis tilt, and the code
+   says exactly where it lands.
+
+   - **Not in the constant offset.** `reference_pose`
+     (`tools/blender/src/transfer.py:346`) reads each role's rest world matrix
+     at line 365, carries it under its parent's already-aimed frame at lines
+     366 to 370, and at line 374 keeps **only the swing** that puts local +Y
+     on the aim, dropping the twist. Both rigs therefore reach a reference
+     pose whose +Y is the same world direction, so `offsets` (line 379,
+     the product at lines 392 to 395) can only differ by a rotation about that
+     shared axis. Measured on the committed rig's own `Hips` frame against a
+     vendor frame 7.05 degrees off up, which is what `source.child_axis` reads
+     on Mixamo's `Hips`: the offset turns **77.066 degrees and its swing is
+     0.000000000**. It is pure twist, which is correction 3 of T5 restated as
+     a number on the real frame.
+   - **In the local-space conversion of the keys.** Line 439 sets
+     `world_out = world_src @ Offset`, whose +Y is therefore the **vendor's**
+     +Y, near vertical. Lines 440 to 442 express that against our own rest
+     basis, and line 445 keys the result. On the same frames our `Hips` key
+     turns **96.954 degrees**. Line 427 then makes that frame the one every
+     child composes from, so the hip sockets ride it: the right socket rises
+     **+0.1880 m** and the left **+0.0051 m** off their own rest heights of
+     0.8696 and 0.8712 m, which are the two rest heights correction 3 of T9
+     records to the digit. T9 measured 0.1956 and 0.0157 on a posed frame of
+     a real clip; this is the same fault with the clip taken out of it.
+
+   So the tilt is not a bug in the transfer. It is the correct local pose for
+   a rest frame that points 97.8 degrees away from where the body continues,
+   and the only fix is to move the rest frame, which is what the conform step
+   does. **T15b measures the fitted clips again and reports what is left.**
+
+6. **The decision: a rename step and a conform step, both bpy-free byte
+   edits.**
+
+   ```text
+   rigged.glb -> rig gates (record) -> rename -> conform -> conformed gates
+              -> art/characters/<char>/model.glb
+   ```
+
+   - **Rename**, as this document already drew it. The file's own convention
+     is read from `[fingerprints]`, and every joint name is rewritten by role
+     through that convention and the canonical one. It is a JSON chunk edit
+     and the BIN chunk is byte identical, which is the reason
+     `art/skeletons/README.md` gives for the hand rename it replaces.
+   - **Conform**, new. For every bone whose own `child_axis` is further from
+     the direction to its `[profile.tails]` child than
+     `child_axis_tolerance_degrees`, the joint's rest orientation is turned by
+     the smallest rotation that puts that axis on that direction, about
+     `old x new`. Every joint keeps its world position, every child's local
+     transform is re-expressed so no world transform moves by accident, and
+     every inverse bind matrix is recomputed so that the joint's **skinning
+     matrix**, `world(joint) @ inverseBind(joint)`, is the one the file
+     already carried. That is the inverse of the new world matrix on a file
+     whose bind pose is its rest pose, which is every file this pipeline
+     rigs, and it stays right on one whose is not. When
+     `spec.subject.symmetry` is on, the mirror pairs `rig.mirror_length`
+     already compares are averaged onto X = 0 first, left against the
+     reflected right, and the axis pass then runs on the moved positions.
+
+   **In Rust, not in a new `conform.py`.** The rename is a JSON chunk edit
+   either way, the inverse bind matrices and the bind-pose keys are `f32`
+   arrays inside the BIN chunk, and `xtask-art` already carries `gltf` for
+   reading and `glam` for the matrix algebra, so the Python module would have
+   to grow a second glTF reader and a second quaternion library to reach the
+   same place.
+
+   **The mesh does not move, and holding that product is why.** No vertex,
+   weight, UV or texel is read at all. What is left is the `f32` a GLB stores:
+   on the committed rig the joints move **millimeters** and the furthest rest
+   vertex moves **1.57e-7 m**, 6.4x under `SHORTEST_SEGMENT_METERS`, the
+   shortest step this repository will call a direction. Both files also
+   satisfy `inverseBind = inverse(world)` to 5.8e-5, which is the same
+   storage. Correction 10 is what Blender draws of it.
+
+7. **`[conventions.meshy]` says what Meshy ships again, and the standard gets
+   a table of its own.** T5 renamed the committed rig and pointed the vendor's
+   table at the new names, so a fresh Meshy file matched no convention and the
+   rename had nothing to read. The file now carries three tables:
+   `[conventions.meshy]` with the vendor's names, `[conventions.mixamo]` with
+   the vendor's, and `[conventions.standard]`, which is `canonical` and is
+   what this project ships. `[fingerprints]` is what tells them apart and it
+   is load bearing now rather than decorative: `Spine02` is Meshy's,
+   `HeadTop_End` is Mixamo's, and the standard is `Spine1` **and**
+   `headfront`, because no single bone separates it from both of the others.
+   A convention matches a file when **every** bone it fingerprints is there.
+
+   **`MotionSource::bone_convention` names what the vendor ships**, because
+   that is the file the source check and the retarget open: `meshy` for
+   Meshy, which animates the rig it sold and delivers it under its own names,
+   `mixamo` for Mixamo's own FBX, and `standard` for `Authored`, which is made
+   on our rig. The copy this repository commits under `art/animations/` is in
+   the standard convention whoever sold the motion, and `[fingerprints]` is
+   what says so about a file in hand. Correction 14 is the step that puts it
+   there.
+
+   **It fixes a reading that was quietly wrong.** T12 measured `rig.aim_table`
+   on three fresh rigs in the canonical convention, and the canonical
+   convention was Meshy's names, so `spine_lower` resolved to Meshy's `Spine`,
+   which is its **highest** spine bone, and `spine_middle`, `spine_upper` and
+   `neck` resolved to nothing at all: `rig.survivor-unset.1.json` carries 19
+   `rig.aim_table` subjects where the committed rig carries 22. A file is now
+   measured in the convention its own fingerprint names, so a vendor rig reads
+   all 22 and reads them on the right bones.
+
+8. **Report plumbing, and what the lock now reads.** `rig` and `conformed`
+   are two stage names over one rule set, `<stage>.<item>.<attempt>.json`
+   under `art/staging/reports/` as everything else. Both are held to
+   `refuse_unread_rules` over the 14 rig rules and to
+   `refuse_unreported_subjects` over every joint the file carries, so a rule
+   that stops measuring and a joint that stops being read are both a failing
+   stage. `cargo art check` writes the same pair from disk, the way it already
+   writes `mesh` beside `cleaned`.
+
+   `Stage::Download` runs code of ours now, so it joins `Stage::is_versioned`
+   beside `Model`, `Bake` and `Pack`, and its fingerprint reads `rigged.glb`
+   and the skeleton profile the conform is driven by. `Stage::Rig` reads
+   neither: it is the paid one, and a `[profile.tails]` edit must not bill.
+
+9. **The conform closes twelve of the committed rig's fourteen defects, and
+   the two that are left are not a rig defect.** Measured on a copy of
+   `art/characters/survivor/model.glb`:
+
+   | Rule | Before | After | Limit |
+   |---|---|---|---|
+   | `rig.child_axis` | `Hips` 97.618, `Head` 26.002, `Spine2` 10.157 | worst 1.100 on `LeftFoot` | 2.0 |
+   | `rig.mirror_length` | 1.722 to 3.676 on five segments | 0.000 on all six | 1.0 |
+   | `rig.mirror_direction` | 1.042 to 2.160 on three | 0.000 on all six | 1.0 |
+   | `rig.aim_table` | `hips` 97.801 | worst 34.861 on `right_hand` | 75 |
+   | `rig.humerus_angle` | 19.141 and 19.350 | **19.245 and 19.245** | 15 |
+
+   `rig.humerus_angle` reads the direction from the shoulder joint to the
+   elbow joint, and on a correctly skinned rig that direction is where the
+   mesh's arm is. This survivor's arms hang 59.2 degrees below horizontal and
+   the prompt asked for 40. **Nothing that leaves the mesh where it is can
+   move that number**, and moving the joints to reach it would put the bones
+   outside the arms they deform. The conform therefore does not touch it, and
+   the same reading comes back on the fresh rig: 19.120 and 19.531 before,
+   19.324 and 19.324 after.
+
+   Every `rig.*` reading of the fresh rig T15b starts from,
+   `art/staging/survivor/spike/unset/rigged.glb`, before against after, worst
+   subject first and the defect count beside it:
+
+   | Rule | Before | After |
+   |---|---|---|
+   | `rig.names_standard` | 3 defects, `Spine02` | 0 |
+   | `rig.bone_set` | 3 defects, `Spine1` absent | 0 |
+   | `rig.parents` | 4 defects, `Head` | 0 |
+   | `rig.child_axis` | 95.680 `Hips`, 2 defects | 0.614 `LeftForeArm`, 0 |
+   | `rig.aim_table` | 95.721 `hips`, 1 defect | 32.926 `right_hand`, 0 |
+   | `rig.mirror_length` | 3.660 `Leg`, 5 defects | 0.000, 0 |
+   | `rig.mirror_direction` | 1.214 `ForeArm`, 1 defect | 0.000, 0 |
+   | `rig.humerus_angle` | 19.531 `RightArm`, 2 defects | **19.324, 2 defects** |
+   | `rig.elbow_bend` | 24.001, info | 23.749, info |
+   | `rig.bind_deviation` | 2.412 | 2.412 |
+   | `rig.world_height` | 1.835 | 1.835 |
+   | `rig.facing`, `up_axis`, `single_root`, `object_transform` | 0 | 0 |
+
+   That is the arm row of correction 4, and it is a **generation** defect, not
+   a rig one. Correction 8 of T12 already measured the only lever that moves
+   it: `pose_mode: "a-pose"` lands the humerus at 5.1 and 5.6 degrees off
+   target, inside the band for the first time, on a mesh carrying 1288
+   boundary edges against a limit of 200. So T15b inherits one open question
+   and three answers, and it is not T15a's to pick: adopt a pose mode whose
+   topology can be held, recalibrate `humerus_below_horizontal` against art
+   that exists, or ship with the rule failing. **No waiver, no lowered
+   severity and no widened limit was taken here**, which is why
+   `cargo art check survivor` still reads 14 defects on the committed art and
+   the conformed copy reads 2.
+
+10. **Exact pixel equality is not reachable, and the reason is the number
+    above.** Rendering the committed rig and its conformed copy through
+    `mesh_sheet.py`, five views at 256 px, and comparing the decoded pixels:
+    **103 of 1,310,720 components differ, 0.00786 percent, and the worst by 3
+    of 255**. Blender is deterministic here, so that is not noise: it is a
+    handful of antialiased silhouette pixels sitting on a quantization
+    boundary while the body under them moves 0.157 microns. The two limits the
+    test publishes sit 6.4x and 2.7x over those readings, and the reading that
+    actually gates is the vertex one, which needs no Blender and is exact.
+
+11. **The mirror moves joints inside a mesh it does not move.** Averaging a
+    limb joint with its reflection shifts it by up to half of the 3.676
+    percent `rig.mirror_length` reads, which on the 0.404 m left shin is about
+    7 mm. The mesh stays exactly where it was, so a joint ends up a few
+    millimeters off the center of the limb it drives. That is the trade the
+    "Asymmetry, up to 3.02 percent of width" row already accepted in the other
+    direction: an auto-rigger assumes bilateral symmetry, every published
+    mirror limit is 1 percent, and a rig that fails its own gate cannot be
+    retargeted onto. The rest pose is unchanged pixels either way, and the
+    difference shows only in a posed frame.
+
+12. **The vendor ships a bind-pose action, and the conform re-keys it.** Both
+    `model.glb` and every `rigged.glb` carry one animation,
+    `Armature|clip0|baselayer`, 72 channels of one key each at 0.3 s, and
+    every key is the node's own rest transform to 5.2e-5. Left alone through a
+    rest-frame edit it would become an action that puts the old rest pose
+    back. So the step rewrites each key from the new local transform, and
+    **refuses any channel that is not that shape**: more than one key, or a
+    key that is not the node's own rest, is motion, and motion belongs in
+    `art/animations/`.
+
+13. **No new rule.** Every reading this task needs is one of the fourteen
+    `rig.*` rules already published, run on a second file under a second stage
+    name. `cargo art check --list-rules` still prints 67.
+
+14. **A bought clip takes the same detour the rig does, and a rename would not
+    have been enough.** Meshy animates the rig it sold, so a delivered clip
+    carries the vendor's bone names **and** the vendor's rest pose, and
+    `actions.py::assign_action` keys an action rest-relative. Renaming the
+    joints would leave the vendor's local keys on a body whose rest frames the
+    conform has just moved, which is the same pose error correction 5
+    measures on the rig itself. So the download stage stages each clip under
+    `art/staging/downloads/<clip>.glb` as a **source** and runs the path a
+    Mixamo clip runs: `stages::check_source` on the file as it arrived, then
+    `stages::retarget` onto the canonical rig with `--convention meshy`, then
+    the fourteen `clip.*` rules, and the fit is what lands in
+    `art/animations/<clip>.glb`. Nothing bought reaches the library unmeasured
+    or unfitted, and one path serves both providers.
+
+    **The separate strip step is gone with it.** `strip_animation.py` existed
+    because a provider ships the whole character with each clip; the retarget
+    already empties the scene of everything but the armature and exports it
+    through the same one-triangle skin carrier, so running it afterwards was a
+    second Blender start that rewrote the file it had just written. The module
+    stays: `retarget_animation.py` imports `skin_carrier` from it.
+
+15. **The download stage keeps the vendor's own bytes, and that is what makes
+    it safe to version.** `Stage::Download` runs three pieces of our code now,
+    so a fix to `conform.rs` has to re-run it, and a fingerprint over inputs
+    cannot say that. But a Meshy task URL expires, so re-running it must not
+    ask the provider for anything: the stage now checks each destination
+    before it polls, and downloads only what is not already on disk. That was
+    chosen over giving the conform a seventh stage of its own because the
+    re-download is the only thing the version guard was costing, and one file
+    check removes it without adding a stage to `Stage::all`, the plan, the
+    status table and every match on it.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
   and the "regenerate in one deliberate operation" sequence, which is also the
-  only way `humanoid.glb` is promoted.
+  only way `humanoid.glb` is promoted. **T15a replaces "Regenerating the rig
+  is what closes them"**, which T12 measured false, with what the conform
+  closes and what it cannot, and says the pipeline renames now and refits a
+  bought clip rather than renaming it.
+- `crates/xtask-art/README.md` gains "Renaming and conforming the rig", which
+  is the flow from `rigged.glb` to `model.glb`, the two stage names over one
+  rule set, the one defect no rest-frame edit can close, and the same detour a
+  bought clip takes from `art/staging/downloads/` to `art/animations/`.
 - `art/characters/README.md`: `model.glb` is the rigged, skinned file the rig
   stage writes, and `art/staging/<char>/bare.glb` is the mesh before rigging.
 - `crates/xtask-art/README.md`: the `model` stage now downloads and cleans,
@@ -3501,8 +3824,8 @@ committed concept views, and every one names the report it came from.
 
 ## Tasks
 
-Sixteen vertical slices, 28.0 engineer days. Per decision 11 no gate is a
-required CI check until T15, the pull request that regenerates the survivor
+Seventeen vertical slices, 29.0 engineer days. Per decision 11 no gate is a
+required CI check until T15b, the pull request that regenerates the survivor
 through the full gated pipeline. Until then each gate ships as a test whose
 negative fixture is the current art, so nothing is ever red and nothing is
 waived.
@@ -3519,7 +3842,8 @@ T7 ──▶ T8 femur + floor ──▶ T9 planting
 T2 + T3 ──▶ T12 pose_mode spike
 T1 + T6 + T7 ──▶ T14 bake, atlas, sheet, goldens
 
-T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ──▶ T16
+T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15a rename + conform
+                                        └─▶ T15b regenerate + gates required ──▶ T16
 ```
 
 | #   | Task | Cost | Description | Success Criteria | Deps |
@@ -3539,5 +3863,6 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T12 | `pose_mode` spike | 0.5 d, 105 credits spent of 90 estimated | **Done.** Step 0 read the API's own refusal: the field is inherited, validated by name, and takes `a-pose` or `t-pose`. `Subject::pose_mode` rides in the `Model` fingerprint, `cargo art spike-pose` runs all three end to end, and T10's blocked recalibration is done on a real bare mesh at last. `mesh.world_size` gained a band of its own and `[profile] meshes` three names, both for measured reasons. | **The field stays unset.** `a-pose` fails two acceptance items and `t-pose` three; no mode passes the elbow one. Every number, both balances and what the three contact sheets show are in the T12 corrections. `rig.elbow_bend` is the fourteenth rig rule, recording. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, `model.glb`, every animation GLB, the two staging meshes, the Blender build and every script into the right stages, and destructure `CharacterSpec`, `Subject` and `Bake` so a field added later cannot be forgotten. Add `Model` to the version guard. Add `verdict` and `fingerprint` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. A replaced `model.glb` invalidates `Bake` and nothing paid. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. `cargo art status` reports without Blender and never recommends a command that spends. | T1 |
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.<clip>.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |
-| T15 | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, refit `idle.glb` and `run.glb`, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 |
-| T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15 |
+| T15a | The rename and the conform steps | 1.5 d, 0 credits | The pipeline half of T15, and it moves no committed art. `[conventions.meshy]` says what Meshy ships again, `[conventions.standard]` is the canonical table, and `[fingerprints]` is what tells a file's convention apart. `stages::conform_rig` runs between the download and `model.glb`: the 14 `rig.*` rules on `rigged.glb` under the `rig` stage as a record, a JSON-chunk rename by role, a conform that turns each joint's rest axis onto its own tail and mirrors the pairs `rig.mirror_length` compares, then the same 14 rules under the `conformed` stage as the gate. Every clip Meshy animated then takes the path a Mixamo clip takes, `check_source` then `retarget --convention meshy` onto the canonical rig, and the fit is what lands in `art/animations/`. `Stage::Download` joins the version guard and fingerprints `rigged.glb` and the profile, and keeps the vendor's own files so re-running it asks the provider for nothing. | Three name rules fail on `humanoid_before_rename.glb` and pass on what the rename writes, with the BIN chunk byte identical. A downloaded Meshy clip leaves an argv with `--convention meshy` against `art/skeletons/humanoid.glb`, and the library file is the retarget's output rather than the download. A file already on disk is never asked for again. A copy of the committed `model.glb` goes from 14 defects to 2, both of them `rig.humerus_angle`, which no rig edit can move; every vertex accessor is byte identical, the furthest rest vertex moves 1.57e-7 m, and Blender draws the two files 0.00786 percent of a component apart. `--list-rules` still prints 67. | T2, T4, T12, T13 |
+| T15b | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | **T15a already built the rename and the conform, and this keeps every one of them**: the regeneration runs through `stages::conform_rig` rather than renaming anything by hand. One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, let the download stage refit `idle.glb`, `run.glb` and `walk_back.glb` onto it, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15a |
+| T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15b |

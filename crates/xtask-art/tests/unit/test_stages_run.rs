@@ -4,7 +4,8 @@
 //! exercised without a network: the providers are served locally and the
 //! filesystem is a temporary directory.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use serde_json::json;
@@ -12,16 +13,17 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::check::{Artifacts, Report, Severity, mesh};
 use xtask_art::cli::Asked;
-use xtask_art::library::{Animation, HUMANOID, MotionSource};
+use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, MotionSource};
 use xtask_art::lock::TaskRef;
 use xtask_art::providers::meshy::{self, Endpoint};
 use xtask_art::spec::View;
 use xtask_art::spec::{CharacterType, Paths};
 use xtask_art::stages;
 
+use crate::stubs::a_blender_stub;
 use crate::support::{
-    EnvGuard, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_spec,
-    install_skeleton,
+    EnvGuard, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_rigged_character,
+    a_spec, install_skeleton,
 };
 
 fn b64(bytes: &[u8]) -> String {
@@ -364,60 +366,136 @@ async fn changing_the_height_forces_a_new_rig_rather_than_reusing_the_old_one() 
 
 // --- download -------------------------------------------------------------
 
-#[tokio::test]
-async fn download_writes_the_character_and_one_file_per_animation() {
-    let server = MockServer::start().await;
+/// The one bought clip these tests fit.
+const CLIP: &str = "walk_back";
+
+/// A library of one Meshy clip, described the way the synthetic cross-rig
+/// pair the Blender stub hands back really is: 8 frames at 24 fps off an open
+/// curve, traveling.
+fn a_bought_clip_library() -> AnimationLibrary {
+    AnimationLibrary {
+        animations: BTreeMap::from([(
+            CLIP.to_owned(),
+            Animation {
+                skeleton: HUMANOID.to_owned(),
+                loops: false,
+                fps: 20,
+                source_fps: 24,
+                travels: true,
+                source: MotionSource::Meshy { action_id: 544 },
+            },
+        )]),
+    }
+}
+
+/// What Meshy delivers for an animation: the rig it sold, under its own bone
+/// names, with the motion inside.
+fn a_vendor_clip() -> Vec<u8> {
+    a_vendor_rig()
+}
+
+/// The two tasks a rigged character with one bought clip leaves behind.
+fn a_rig_and_a_clip() -> Vec<TaskRef> {
+    vec![
+        TaskRef::Rig {
+            id: "r1".to_owned(),
+            height_meters: 1.7,
+        },
+        TaskRef::Animation {
+            id: "a1".to_owned(),
+            name: CLIP.to_owned(),
+            action_id: 544,
+        },
+    ]
+}
+
+/// Meshy answering for both tasks, and serving both files.
+async fn serve_a_rig_and_a_clip(server: &MockServer, clip: &[u8]) {
     let rig_url = format!("{}/files/rig.glb", server.uri());
-    let anim_url = format!("{}/files/anim.glb", server.uri());
+    let clip_url = format!("{}/files/clip.glb", server.uri());
     Mock::given(method("GET"))
         .and(path_regex(r"/v1/rigging/r1$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status": "SUCCEEDED",
             "result": {"rigged_character_glb_url": rig_url}
         })))
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(method("GET"))
         .and(path_regex(r"/v1/animations/a1$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "status": "SUCCEEDED",
-            "result": {"animation_glb_url": anim_url}
+            "result": {"animation_glb_url": clip_url}
         })))
-        .mount(&server)
+        .mount(server)
         .await;
     Mock::given(method("GET"))
-        .and(path_regex(r"/files/.+$"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"glTF".to_vec()))
-        .mount(&server)
+        .and(path_regex(r"/files/rig\.glb$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_rigged_character()))
+        .mount(server)
         .await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"/files/clip\.glb$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(clip.to_vec()))
+        .mount(server)
+        .await;
+}
+
+/// Everything the fit needs: the skeleton the rename and the conform read,
+/// the canonical rig the clip gates measure a fit against, the two scripts,
+/// and Blender as a stub. Returns where that stub logs its argv.
+fn install_the_fit(root: &Path, env: &mut EnvGuard) -> PathBuf {
+    install_skeleton(root);
+    // The rig the stub's own pair was built on, in place of the committed
+    // one: `clip.object_transform` reads the fit against this file.
+    std::fs::write(
+        AnimationLibrary::reference_rig(root, HUMANOID),
+        crate::rigs::SyntheticRig::conformant().to_gltf(),
+    )
+    .unwrap();
+    let src = root.join("tools/blender/src");
+    std::fs::create_dir_all(&src).unwrap();
+    for script in ["check_source.py", "retarget_animation.py"] {
+        std::fs::write(src.join(script), "").unwrap();
+    }
+    std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
+
+    let stub = a_blender_stub(root);
+    let argv = root.join("argv.txt");
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set("MARROWFALL_STUB_ARGV", argv.to_str().unwrap());
+    argv
+}
+
+#[tokio::test]
+async fn download_writes_the_character_and_one_file_per_animation() {
+    let server = MockServer::start().await;
+    serve_a_rig_and_a_clip(&server, &a_vendor_clip()).await;
 
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::new(dir.path(), "survivor");
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_strip_stub(dir.path(), &mut env);
+    install_the_fit(dir.path(), &mut env);
 
     let record = stages::download(
-        &a_library(),
+        &a_spec("survivor"),
+        &a_bought_clip_library(),
         &paths,
         dir.path(),
-        &[
-            TaskRef::Rig {
-                id: "r1".to_owned(),
-                height_meters: 1.7,
-            },
-            TaskRef::Animation {
-                id: "a1".to_owned(),
-                name: "idle".to_owned(),
-                action_id: 251,
-            },
-        ],
+        &a_rig_and_a_clip(),
     )
     .await
     .unwrap();
 
+    // The vendor's file in staging, and the conformed character beside it.
+    assert!(paths.rigged_glb().exists());
     assert!(paths.character_glb().exists());
-    assert!(a_library().glb(dir.path(), "idle").exists());
+    assert!(
+        AnimationLibrary::staged_download(dir.path(), CLIP, "glb").exists(),
+        "the vendor's own clip is kept for a look"
+    );
+    assert!(a_bought_clip_library().glb(dir.path(), CLIP).exists());
     assert!(record.note.unwrap().contains("2 GLB"));
 }
 
@@ -435,7 +513,7 @@ async fn a_rigged_character_supersedes_the_bare_mesh() {
         .await;
     Mock::given(method("GET"))
         .and(path_regex(r"/files/.+$"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"rigged".to_vec()))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_rigged_character()))
         .mount(&server)
         .await;
 
@@ -443,9 +521,12 @@ async fn a_rigged_character_supersedes_the_bare_mesh() {
     let paths = Paths::new(dir.path(), "survivor");
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_strip_stub(dir.path(), &mut env);
+    // The rename and the conform read the skeleton the spec names, and no
+    // clip means no Blender.
+    install_skeleton(dir.path());
 
     let record = stages::download(
+        &a_spec("survivor"),
         &a_library(),
         &paths,
         dir.path(),
@@ -462,11 +543,11 @@ async fn a_rigged_character_supersedes_the_bare_mesh() {
     .await
     .unwrap();
 
-    assert_eq!(
-        std::fs::read(paths.character_glb()).unwrap(),
-        b"rigged",
-        "the unrigged mesh must not overwrite the rigged one"
+    assert!(
+        !paths.bare_glb().exists(),
+        "the unrigged mesh must not be fetched over the rigged one"
     );
+    assert!(paths.character_glb().exists());
     assert!(record.note.unwrap().contains("1 GLB"));
 }
 
@@ -478,7 +559,7 @@ async fn download_with_nothing_recorded_says_which_stage_to_run() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
 
-    let error = stages::download(&a_library(), &paths, dir.path(), &[])
+    let error = stages::download(&a_spec("survivor"), &a_library(), &paths, dir.path(), &[])
         .await
         .unwrap_err()
         .to_string();
@@ -500,6 +581,7 @@ async fn a_task_that_exposes_no_glb_is_reported_with_its_status() {
     env.with_api(&server.uri());
 
     let error = stages::download(
+        &a_spec("survivor"),
         &a_library(),
         &paths,
         dir.path(),
@@ -1011,23 +1093,6 @@ fn rules_of(root: &std::path::Path, stage: &str) -> Vec<String> {
     rules
 }
 
-/// Downloading an animation strips it in Blender, so tests need a stand-in.
-fn install_strip_stub(root: &std::path::Path, env: &mut EnvGuard) {
-    let src = root.join("tools/blender/src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("strip_animation.py"), "").unwrap();
-    std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
-
-    let stub = root.join("strip-stub.sh");
-    std::fs::write(&stub, "#!/bin/sh\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n").unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
-    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
-}
-
 // --- retarget -------------------------------------------------------------
 
 /// A clip from a provider that names its bones its own way.
@@ -1086,77 +1151,223 @@ fn the_retarget_needs_the_canonical_rig_and_says_where_it_comes_from() {
     assert!(error.contains("art/skeletons/README.md"), "got: {error}");
 }
 
+/// A bought clip is a source, not the library's file: the vendor animates the
+/// rig it sold, so the download carries the vendor's names and the vendor's
+/// rest pose. It goes through the source check and the retarget a Mixamo clip
+/// goes through, and what lands in `art/animations/` is the fit.
 #[tokio::test]
-async fn a_downloaded_animation_is_stripped_but_the_character_is_not() {
+async fn a_bought_clip_is_fitted_onto_the_canonical_rig_and_the_character_is_not() {
     let server = MockServer::start().await;
-    let glb = format!("{}/files/x.glb", server.uri());
-    Mock::given(method("GET"))
-        .and(path_regex(r"/v1/(rigging|animations)/[ra]1$"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "status": "SUCCEEDED",
-            "result": {"rigged_character_glb_url": glb, "animation_glb_url": glb}
-        })))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path_regex(r"/files/.+$"))
-        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"glTF".to_vec()))
-        .mount(&server)
-        .await;
+    let downloaded = a_vendor_clip();
+    serve_a_rig_and_a_clip(&server, &downloaded).await;
 
     let dir = tempfile::tempdir().unwrap();
     let paths = Paths::new(dir.path(), "survivor");
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-
-    // A stub that records every file it was asked to strip.
-    let src = dir.path().join("tools/blender/src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("strip_animation.py"), "").unwrap();
-    std::fs::create_dir_all(dir.path().join(".venv/lib/python3.13/site-packages")).unwrap();
-    let log = dir.path().join("stripped.txt");
-    let stub = dir.path().join("stub.sh");
-    std::fs::write(
-        &stub,
-        "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"--glb\" ]; then \
-         echo \"$2\" >> \"$MARROWFALL_STRIP_LOG\"; fi\n  shift\ndone\n\
-         : > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
-    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
-        .set("MARROWFALL_STRIP_LOG", log.to_str().unwrap());
+    let argv = install_the_fit(dir.path(), &mut env);
 
     stages::download(
-        &a_library(),
+        &a_spec("survivor"),
+        &a_bought_clip_library(),
         &paths,
         dir.path(),
-        &[
-            TaskRef::Rig {
-                id: "r1".to_owned(),
-                height_meters: 1.7,
-            },
-            TaskRef::Animation {
-                id: "a1".to_owned(),
-                name: "idle".to_owned(),
-                action_id: 251,
-            },
-        ],
+        &a_rig_and_a_clip(),
     )
     .await
     .unwrap();
 
-    let stripped = std::fs::read_to_string(&log).unwrap_or_default();
+    // Counted, never printed: two GLBs are a megabyte of numbers nobody reads.
+    let fitted = std::fs::read(a_bought_clip_library().glb(dir.path(), CLIP)).unwrap_or_default();
     assert!(
-        stripped.contains("animations/idle.glb"),
-        "the animation must be stripped: {stripped:?}"
+        fitted != downloaded,
+        "the library file is the retarget's output, not the download, and both \
+         are {} bytes",
+        fitted.len()
     );
+    let staged = std::fs::read(AnimationLibrary::staged_download(dir.path(), CLIP, "glb")).unwrap();
     assert!(
-        !stripped.contains("model.glb"),
-        "the character keeps its mesh, it is what gets rendered: {stripped:?}"
+        staged == downloaded,
+        "the vendor's own bytes are kept beside the fit"
     );
+
+    let argv = std::fs::read_to_string(&argv).unwrap_or_default();
+    // Measured as it arrived, then fitted, in that order.
+    assert!(
+        argv.find("check_source.py") < argv.find("retarget_animation.py"),
+        "got: {argv}"
+    );
+    // In the convention the vendor ships, onto the conformed canonical rig.
+    assert_eq!(
+        argv.matches("--convention\nmeshy").count(),
+        2,
+        "got: {argv}"
+    );
+    let rig = AnimationLibrary::reference_rig(dir.path(), HUMANOID);
+    assert!(
+        argv.contains(&format!("--rig\n{}", rig.display())),
+        "got: {argv}"
+    );
+    // Neither script is ever handed the character: it keeps its mesh, which
+    // is what gets rendered.
+    assert!(!argv.contains("model.glb"), "got: {argv}");
+}
+
+/// The vendor's own bytes are kept, so re-running the stage after a local fix
+/// asks the provider for nothing. A Meshy task URL expires, and the rename,
+/// the conform and the fit are all offline work on files already here.
+#[tokio::test]
+async fn a_download_already_on_disk_is_never_asked_for_again() {
+    // A server with no route at all: reaching it is the failure.
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri());
+    install_the_fit(dir.path(), &mut env);
+
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(paths.rigged_glb(), a_rigged_character()).unwrap();
+    let staged = AnimationLibrary::staged_download(dir.path(), CLIP, "glb");
+    std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+    std::fs::write(&staged, a_vendor_clip()).unwrap();
+
+    stages::download(
+        &a_spec("survivor"),
+        &a_bought_clip_library(),
+        &paths,
+        dir.path(),
+        &a_rig_and_a_clip(),
+    )
+    .await
+    .unwrap();
+
+    assert!(paths.character_glb().exists(), "the conform still ran");
+    assert!(a_bought_clip_library().glb(dir.path(), CLIP).exists());
+}
+
+// --- the rename and the conform, between the download and model.glb -------
+
+/// A rigged file as a vendor returns one: its own spine numbering, a `Hips`
+/// turned off the direction to its child, and one leg longer than the other.
+/// Every one of those is measured on the three rigs T12 generated.
+fn a_vendor_rig() -> Vec<u8> {
+    let rig = crate::rigs::SyntheticRig::conformant()
+        .renamed("Spine", "Spine02")
+        .renamed("Spine1", "Spine01")
+        .renamed("Spine2", "Spine")
+        .renamed("Neck", "neck")
+        .nudged("head_end", glam::DVec3::new(0.05, 0.0, 0.0))
+        .moved("LeftLeg", glam::DVec3::new(0.0, 0.02, 0.0));
+    rig.to_glb(&rig.bind_pose_clip())
+}
+
+/// A repo holding one rigged file and the skeleton the step reads.
+fn a_repo_with_a_rigged_file(rigged: &[u8]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    install_skeleton(dir.path());
+    let paths = Paths::new(dir.path(), "survivor");
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(paths.rigged_glb(), rigged).unwrap();
+    dir
+}
+
+fn report_of(root: &std::path::Path, stage: &str) -> xtask_art::check::Report {
+    xtask_art::check::Report::read(
+        &root.join(format!("art/staging/reports/{stage}.survivor.1.json")),
+    )
+    .unwrap()
+}
+
+fn broken(report: &xtask_art::check::Report) -> std::collections::BTreeSet<&str> {
+    report
+        .findings()
+        .iter()
+        .filter(|finding| finding.severity == xtask_art::check::Severity::Error)
+        .map(|finding| finding.rule.as_str())
+        .collect()
+}
+
+/// The `rig` report records what arrived and refuses nothing, because a
+/// bought rig fails the three name rules by construction and the rename is
+/// what closes them. The `conformed` report is the gate.
+#[test]
+fn the_rig_report_records_the_vendor_and_the_conformed_one_gates() {
+    let dir = a_repo_with_a_rigged_file(&a_vendor_rig());
+    let paths = Paths::new(dir.path(), "survivor");
+
+    stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap();
+
+    let vendor = report_of(dir.path(), "rig");
+    let before = broken(&vendor);
+    for rule in [
+        "rig.names_standard",
+        "rig.bone_set",
+        "rig.child_axis",
+        "rig.mirror_length",
+    ] {
+        assert!(before.contains(rule), "{rule} holds on the vendor's file");
+    }
+    let after = report_of(dir.path(), "conformed");
+    assert!(
+        broken(&after).is_empty(),
+        "the conformed rig still breaks {:?}",
+        broken(&after)
+    );
+
+    // And the file downstream reads is the conformed one, under our names.
+    let names = xtask_art::check::gltf_world::Skeleton::read(&paths.character_glb()).unwrap();
+    assert!(names.get("Spine1").is_some() && names.get("Spine01").is_none());
+}
+
+/// The defect no rest-frame edit can close: the humerus is the direction from
+/// the shoulder joint to the elbow, which is where the mesh's arm is.
+#[test]
+fn a_rig_the_conform_cannot_close_stops_the_step_and_names_the_rule() {
+    let rig = crate::rigs::SyntheticRig::conformant()
+        .moved("LeftForeArm", glam::DVec3::new(0.0, -0.2, 0.0))
+        .moved("RightForeArm", glam::DVec3::new(0.0, -0.2, 0.0));
+    let dir = a_repo_with_a_rigged_file(&rig.to_glb(&rig.bind_pose_clip()));
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let error = stages::conform_rig(&a_spec("survivor"), &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("rig.humerus_angle"), "got: {error}");
+    assert!(error.contains("conformed.survivor.1.json"), "got: {error}");
+}
+
+/// A rig nothing fingerprints is refused rather than renamed by guesswork: a
+/// wrong guess would put a bone under the wrong role and no gate could tell.
+#[test]
+fn a_rig_no_convention_fingerprints_stops_before_anything_is_written() {
+    let rig = crate::rigs::SyntheticRig::conformant().renamed("headfront", "face");
+    let dir = a_repo_with_a_rigged_file(&rig.to_glb(&rig.bind_pose_clip()));
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let error = format!(
+        "{:#}",
+        stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap_err()
+    );
+
+    assert!(error.contains("no convention fingerprints"), "got: {error}");
+    assert!(!paths.character_glb().exists());
+}
+
+/// And a rig the rename leaves under two of one name stops before the
+/// geometry is touched, because every profile row below reads by bone name.
+#[test]
+fn a_rename_that_leaves_a_duplicate_stops_before_the_conform() {
+    let rig = crate::rigs::SyntheticRig::conformant().renamed("LeftHand", "LeftFoot");
+    let dir = a_repo_with_a_rigged_file(&rig.to_glb(&rig.bind_pose_clip()));
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let error = format!(
+        "{:#}",
+        stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap_err()
+    );
+
+    assert!(error.contains("rig.bone_set"), "got: {error}");
+    assert!(!paths.character_glb().exists());
 }

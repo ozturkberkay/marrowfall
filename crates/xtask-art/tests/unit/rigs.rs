@@ -323,11 +323,10 @@ impl SyntheticRig {
         document.to_string()
     }
 
-    /// Every bone's rest world rotation, in glTF Y-up.
-    ///
-    /// Composed the way the file itself is, so a fixture that turns one
-    /// bone's own axes is reported turned rather than as it was declared.
-    pub fn rest_rotations(&self) -> BTreeMap<String, DQuat> {
+    /// Every bone's rest world transform, composed the way the file itself
+    /// composes it, so a fixture that turns one bone's own axes is reported
+    /// turned rather than as it was declared.
+    fn rest_worlds(&self) -> Vec<DMat4> {
         let mut world: Vec<DMat4> = Vec::with_capacity(self.joints.len());
         for (index, joint) in self.joints.iter().enumerate() {
             let above = self
@@ -338,9 +337,14 @@ impl SyntheticRig {
                 .map_or_else(base_object, |parent| self.world(parent));
             world.push(above * parent.inverse() * self.world(index) * joint.local_extra);
         }
+        world
+    }
+
+    /// Every bone's rest world rotation, in glTF Y-up.
+    pub fn rest_rotations(&self) -> BTreeMap<String, DQuat> {
         self.joints
             .iter()
-            .zip(world)
+            .zip(self.rest_worlds())
             .map(|(joint, world)| {
                 let (_, rotation, _) = world.to_scale_rotation_translation();
                 (joint.name.clone(), rotation)
@@ -369,6 +373,27 @@ impl SyntheticRig {
                 (joint.name.clone(), parent)
             })
             .collect()
+    }
+
+    /// The one-key action a rigged file arrives with: every channel repeating
+    /// the node's own rest transform.
+    ///
+    /// Meshy ships exactly this beside every rig it sells, and it is the
+    /// shape the conform re-keys rather than refusing.
+    pub fn bind_pose_clip(&self) -> Clip {
+        let mut clip = Clip {
+            seconds: vec![0.0],
+            rotations: BTreeMap::new(),
+            translations: BTreeMap::new(),
+            interpolation: Interpolation::Linear,
+        };
+        for (index, joint) in self.joints.iter().enumerate() {
+            let (_, rotation, translation) = self.local(index).to_scale_rotation_translation();
+            clip.rotations.insert(joint.name.clone(), vec![rotation]);
+            clip.translations
+                .insert(joint.name.clone(), vec![translation]);
+        }
+        clip
     }
 
     /// The rig as a GLB, with one clip laid on its joints.
@@ -452,6 +477,15 @@ impl SyntheticRig {
                 }));
             }
         }
+        // The bind pose is the rest pose, which is what makes the skinning
+        // an identity there and what the conform recomputes.
+        let bind: Vec<f32> = self
+            .rest_worlds()
+            .iter()
+            .flat_map(|world| world.inverse().to_cols_array().map(|value| value as f32))
+            .collect();
+        let inverse_bind = buffers.push_floats(&bind, "MAT4", self.joints.len());
+
         let mut accessors: Vec<Value> = buffers.accessors().to_vec();
         accessors[input]["min"] = json!([times.first().copied().unwrap_or_default()]);
         accessors[input]["max"] = json!([times.last().copied().unwrap_or_default()]);
@@ -462,6 +496,7 @@ impl SyntheticRig {
             "nodes": nodes,
             "skins": [{
                 "name": "Armature",
+                "inverseBindMatrices": inverse_bind,
                 "joints": (1..=self.joints.len()).collect::<Vec<usize>>(),
             }],
             "animations": [{ "name": "clip", "channels": channels, "samplers": samplers }],

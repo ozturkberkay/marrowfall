@@ -274,7 +274,7 @@ impl Skeleton {
 }
 
 /// One node's own transform, widened to `f64`.
-fn local(node: &gltf::Node<'_>) -> DMat4 {
+pub fn local(node: &gltf::Node<'_>) -> DMat4 {
     let columns = node.transform().matrix();
     DMat4::from_cols_array_2d(&columns.map(|column| column.map(f64::from)))
 }

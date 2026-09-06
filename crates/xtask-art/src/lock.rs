@@ -29,7 +29,9 @@ pub enum Stage {
     Model,
     /// Auto-rig and attach animations (Meshy). Skipped for unriggable bodies.
     Rig,
-    /// Fetch the finished GLB. This is the checkpoint everything downstream rebuilds from.
+    /// Fetch the finished GLBs, rename and conform the rig, and fit each
+    /// bought clip onto it. `model.glb` is the checkpoint everything
+    /// downstream rebuilds from.
     Download,
     /// Render sprite frames from the GLB (Blender, local).
     Bake,
@@ -97,12 +99,18 @@ impl Stage {
 
     /// Whether [`LOCAL_PIPELINE_VERSION`] rides in this stage's fingerprint.
     ///
-    /// The three that run code of ours: the model stage downloads the bare
-    /// mesh every gate and the fixer read, and the bake and the pack produce
-    /// every frame and every atlas. Bumping the version re-runs all three,
-    /// and the model stage spends Meshy credits when it does.
+    /// The four that run code of ours: the model stage downloads the bare
+    /// mesh every gate and the fixer read, the download stage renames and
+    /// conforms the rig it fetched and fits every bought clip onto it, and
+    /// the bake and the pack produce every frame and every atlas. Bumping the
+    /// version re-runs all four, and the model stage spends Meshy credits when
+    /// it does. The download stage spends nothing: it keeps the vendor's own
+    /// files and re-runs the local work on them.
     pub const fn is_versioned(self) -> bool {
-        matches!(self, Stage::Model | Stage::Bake | Stage::Pack)
+        matches!(
+            self,
+            Stage::Model | Stage::Download | Stage::Bake | Stage::Pack
+        )
     }
 
     /// Stages that run after this one, in order.
@@ -397,6 +405,14 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
         }
         Stage::Rig | Stage::Download => {
             parts.push(format!("{height_meters}/{skeleton}/{cleanup}/{symmetry}"));
+            // The download stage renames and conforms what it fetched, so it
+            // reads the vendor's file and the profile that drives both. The
+            // rig stage reads neither: it is the paid one, and editing a
+            // `[profile.tails]` row must not bill.
+            if stage == Stage::Download {
+                parts.push(derived_file(&paths.rigged_glb())?);
+                parts.push(committed_file(&Profile::path(root, skeleton))?);
+            }
             // The action ids, not the names: renaming an animation in the
             // library must not trigger a re-rig, which is several charges.
             // A name that no longer resolves contributes nothing here, the

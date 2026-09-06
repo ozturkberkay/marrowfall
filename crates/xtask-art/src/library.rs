@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::check::{Artifacts, Report, Severity};
 
-/// This project's standard biped: 24 bones, no fingers, named by Meshy's
-/// auto-rigger. A hand-rigged one must match `art/skeletons/humanoid.toml` to
-/// be the same skeleton.
+/// This project's standard biped: 24 bones, no fingers, named by the
+/// canonical `standard` convention. A hand-rigged one must match
+/// `art/skeletons/humanoid.toml` to be the same skeleton.
 pub const HUMANOID: &str = "humanoid";
 
 /// Where a motion comes from, and so how its file gets on disk. Nothing
@@ -55,13 +55,21 @@ impl MotionSource {
         }
     }
 
-    /// How this provider names the bones it ships, a table in
+    /// How the file this motion arrives in names its bones, a table in
     /// `art/skeletons/<skeleton>.toml`. Declared rather than guessed from the
     /// file, so a new provider is a decision the compiler asks for.
+    ///
+    /// What the vendor ships, which is what the source check and the retarget
+    /// open: Meshy animates the rig it sold and delivers it under its own
+    /// names, Mixamo delivers its own FBX, and authored motion is made on our
+    /// rig. The copy this repository commits under `art/animations/` is in the
+    /// standard convention whoever sold the motion, and `[fingerprints]` is
+    /// what says so about a file in hand.
     pub const fn bone_convention(&self) -> &'static str {
         match self {
-            Self::Meshy { .. } | Self::Authored => "meshy",
+            Self::Meshy { .. } => "meshy",
             Self::Mixamo { .. } => "mixamo",
+            Self::Authored => "standard",
         }
     }
 }
@@ -128,9 +136,12 @@ impl AnimationLibrary {
     /// Where a provider's own download is staged before it is fitted to the
     /// canonical rig. Derived and gitignored, and kept after a fetch so a bad
     /// one can be looked at.
-    pub fn staged_download(root: &Path, name: &str) -> PathBuf {
+    ///
+    /// The extension is the caller's because it is the provider's: Mixamo
+    /// exports FBX and Meshy delivers GLB.
+    pub fn staged_download(root: &Path, name: &str, extension: &str) -> PathBuf {
         root.join("art/staging/downloads")
-            .join(format!("{name}.fbx"))
+            .join(format!("{name}.{extension}"))
     }
 
     /// The armature every clip for this skeleton is authored against.

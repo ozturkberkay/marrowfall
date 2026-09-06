@@ -12,11 +12,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 
 use crate::blender::{self, BLENDER_SRC};
-use crate::check::aim::AimTable;
+use crate::check::aim::{self, AimTable};
+use crate::check::gltf_world::Skeleton;
 use crate::check::profile::Profile;
 use crate::check::{
     Artifacts, Finding, Report, Rule, Severity, Symmetry, atlas, bake as bake_check, clip, concept,
-    gltf_mesh, mesh, source,
+    gltf_mesh, mesh, rig, source,
 };
 use crate::library::{Animation, AnimationLibrary, MotionSource, Verdict};
 use crate::lock::{Stage, StageRecord, TaskRef};
@@ -420,66 +421,253 @@ pub async fn rig(
 
 /// Fetches the finished GLBs, the checkpoint everything downstream rebuilds
 /// from: the rigged character, plus one file per animation.
+///
+/// A rigged character lands in staging as `rigged.glb` and reaches
+/// `model.glb` through [`conform_rig`], because the vendor names its bones
+/// its own way and points its joints wherever it likes. Each animation lands
+/// beside it as a vendor download and reaches `art/animations/` through
+/// [`check_source`] and [`retarget`], for the same reason.
 pub async fn download(
+    spec: &CharacterSpec,
     library: &AnimationLibrary,
     paths: &Paths,
     root: &Path,
     tasks: &[TaskRef],
 ) -> Result<StageRecord> {
-    let client = meshy::Client::from_env()?;
-    let mut downloaded = 0;
     // A rigged character supersedes the bare mesh at the same path, so the
     // mesh is fetched only when nothing rigged it.
     let rigged = tasks.iter().any(|task| matches!(task, TaskRef::Rig { .. }));
-
-    for task in tasks {
-        let dest = match task {
-            TaskRef::Model { .. } if rigged => continue,
-            TaskRef::Model { .. } | TaskRef::Rig { .. } => paths.character_glb(),
-            TaskRef::Animation { name, .. } => library.glb(root, name),
-        };
-        let status = client.status(task.endpoint(), task.id()).await?;
-        let url = status.glb_url().with_context(|| {
-            format!(
-                "task {} is {:?} and exposes no GLB url",
-                task.id(),
-                status.status
-            )
-        })?;
-        client.download(url, &dest).await?;
-        // Providers ship the whole character with each animation; committing
-        // ~5 MB of mesh and texture per motion would be permanent in git.
-        if let TaskRef::Animation { name, .. } = task {
-            strip_animation(&dest, name, root)?;
-        }
-        downloaded += 1;
-    }
-
+    let wanted: Vec<(&TaskRef, PathBuf)> = tasks
+        .iter()
+        .filter_map(|task| {
+            let dest = match task {
+                TaskRef::Model { .. } if rigged => return None,
+                TaskRef::Model { .. } => paths.character_glb(),
+                TaskRef::Rig { .. } => paths.rigged_glb(),
+                // Meshy delivers a clip as GLB, and it is a vendor download
+                // rather than the library's file until the fit.
+                TaskRef::Animation { name, .. } => {
+                    AnimationLibrary::staged_download(root, name, "glb")
+                }
+            };
+            Some((task, dest))
+        })
+        .collect();
     anyhow::ensure!(
-        downloaded > 0,
+        !wanted.is_empty(),
         "nothing to download, run the model and rig stages first"
     );
+
+    // The vendor's own bytes are kept, so re-running this stage after a local
+    // fix asks the provider for nothing: a task URL expires and the rename,
+    // the conform and the fit are all offline work on files already here.
+    let missing: Vec<(&TaskRef, &Path)> = wanted
+        .iter()
+        .filter(|(_, dest)| !dest.exists())
+        .map(|(task, dest)| (*task, dest.as_path()))
+        .collect();
+    if !missing.is_empty() {
+        let client = meshy::Client::from_env()?;
+        for (task, dest) in missing {
+            let status = client.status(task.endpoint(), task.id()).await?;
+            let url = status.glb_url().with_context(|| {
+                format!(
+                    "task {} is {:?} and exposes no GLB url",
+                    task.id(),
+                    status.status
+                )
+            })?;
+            client.download(url, dest).await?;
+        }
+    }
+
+    if rigged {
+        conform_rig(spec, paths, root)?;
+    }
+    for (task, download) in &wanted {
+        if let TaskRef::Animation { name, .. } = task {
+            fit_clip(library, root, name, download)?;
+        }
+    }
     Ok(StageRecord {
-        note: Some(format!("{downloaded} GLB(s)")),
+        note: Some(format!("{} GLB(s)", wanted.len())),
         ..StageRecord::default()
     })
 }
 
-/// Rewrites an animation GLB with only its armature and action.
-fn strip_animation(glb: &Path, name: &str, repo_root: &Path) -> Result<()> {
-    let script = repo_root.join(BLENDER_SRC).join("strip_animation.py");
+/// Takes one bought clip from the rig the vendor animated onto ours, which is
+/// the path a Mixamo clip takes.
+///
+/// The delivered file carries the vendor's names and the vendor's rest pose,
+/// and an action's keys are read against a rest pose that [`conform_rig`] has
+/// just moved. The fit also drops the stock character the clip arrives with.
+fn fit_clip(library: &AnimationLibrary, root: &Path, name: &str, download: &Path) -> Result<()> {
+    let animation = library.get(name)?;
+    // Before the retarget: the vendor's own rest geometry is on record from
+    // here, and nothing downstream still carries it.
+    check_source(download, name, animation, root)?;
+    // The verdict has no reader here: the fit is committed and `cargo art
+    // fetch` never looks at a bought clip. Its report is on disk either way.
+    retarget(download, &library.glb(root, name), name, animation, root)?;
+    Ok(())
+}
+
+/// Takes the rigged file the vendor returned to the conformant character
+/// `model.glb`, measuring it at both ends.
+///
+/// The rules run twice under two stage names, the way `mesh` and `cleaned`
+/// read the mesh before and after the fixer. The `rig` report is a record of
+/// what arrived and refuses nothing: a bought rig fails the three name rules
+/// by construction, and the rename is what closes them. The `conformed`
+/// report is the gate.
+pub fn conform_rig(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Result<()> {
+    let rigged = paths.rigged_glb();
+    let bytes =
+        std::fs::read(&rigged).with_context(|| format!("reading {}", paths.relative(&rigged)))?;
+    check_rig(spec, paths, repo_root, rig::STAGE, &rigged, &bytes)?;
+
+    let table = AimTable::of(repo_root, &spec.subject.skeleton)?;
+    let named = crate::conform::rename(&bytes, &table)
+        .with_context(|| format!("renaming the bones of {}", paths.relative(&rigged)))?;
+    // Before the geometry is touched: every rule below reads the profile by
+    // bone name, so a rename that half worked would measure the wrong joints.
+    refuse_defects(
+        &named,
+        spec,
+        repo_root,
+        &rig::NAME_RULES,
+        "the rename of",
+        &paths.relative(&rigged),
+    )?;
+
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    let conformed =
+        crate::conform::conform(&named, &profile, Symmetry::declared(spec.subject.symmetry))
+            .with_context(|| format!("conforming {}", paths.relative(&rigged)))?;
+
+    let out = paths.character_glb();
+    write_file(&out, &conformed)?;
+    let report = check_rig(
+        spec,
+        paths,
+        repo_root,
+        rig::CONFORMED_STAGE,
+        &out,
+        &conformed,
+    )?;
     anyhow::ensure!(
-        script.exists(),
-        "missing strip script at {}",
-        script.display()
+        !report.has_errors(),
+        "the conformed rig of {} left {}, listed in {}",
+        spec.name,
+        defects(&report),
+        report.artifacts(repo_root)?.report().display()
     );
-    let args = vec![OsString::from("--glb"), glb.into()];
-    let artifacts = Artifacts::new(repo_root, Stage::Download.as_str(), name, FIRST_ATTEMPT)?;
-    let findings = blender::run(&script, &args, &artifacts, repo_root)
-        .with_context(|| format!("stripping {}", glb.display()))?;
+    println!("  conformed rig at {}", paths.relative(&out));
+    Ok(())
+}
+
+/// Every `rig.*` rule on one rig in memory, filed under one stage name.
+///
+/// The convention comes from the file's own `[fingerprints]` rather than from
+/// the canonical table, because a bought rig is named the vendor's way until
+/// the rename and reading it as ours resolves `spine_lower` to the wrong bone.
+pub fn check_rig(
+    spec: &CharacterSpec,
+    paths: &Paths,
+    repo_root: &Path,
+    stage: &str,
+    file: &Path,
+    bytes: &[u8],
+) -> Result<Report> {
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    let table = AimTable::of(repo_root, &spec.subject.skeleton)?;
+    let subject = paths.relative(file);
+
+    // A file no rule can read still leaves a report, and it is one error
+    // rather than silence: a gate that goes quiet on unreadable input proves
+    // nothing. Nothing below it ran, so nothing below it is owed either.
+    let refused = |rule: &Rule, why: String| -> Result<Report> {
+        let mut report = Report::new(stage, paths.item(), FIRST_ATTEMPT);
+        report.add(rule.undefined(&subject, FIRST_ATTEMPT, why))?;
+        report.write(repo_root)?;
+        Ok(report)
+    };
+    let skeleton = match Skeleton::from_slice(bytes) {
+        Ok(skeleton) => skeleton,
+        Err(error) => {
+            return refused(
+                &rig::BONE_SET,
+                format!("{subject} holds no readable skeleton: {error:#}"),
+            );
+        }
+    };
+    let joints: Vec<&str> = skeleton
+        .joints()
+        .iter()
+        .map(|joint| joint.name.as_str())
+        .collect();
+    let convention = match table.convention_of(joints.iter().copied()) {
+        Ok(convention) => convention,
+        Err(error) => return refused(&rig::NAMES_STANDARD, format!("{error:#}")),
+    };
+
+    let mut report = Report::new(stage, paths.item(), FIRST_ATTEMPT);
+    report.extend(rig::check(
+        &subject,
+        &skeleton,
+        &profile,
+        f64::from(spec.subject.height_meters),
+        Symmetry::declared(spec.subject.symmetry),
+        FIRST_ATTEMPT,
+    ))?;
+    report.extend(aim::check(
+        &skeleton,
+        &profile,
+        &table,
+        convention,
+        FIRST_ATTEMPT,
+    )?)?;
+    report.write(repo_root)?;
+    refuse_unread_rules(&report, &rig::RULES, paths.item(), "rig check")?;
+    refuse_unread_rules(&report, &aim::RULES, paths.item(), "rig check")?;
+    // Every joint the file carries, so a reader that quietly drops one is a
+    // failing stage rather than a shorter report.
+    let owed: Vec<String> = joints.iter().map(|name| (*name).to_owned()).collect();
+    refuse_unreported_subjects(&report, &owed, paths.item(), "rig check")?;
+    Ok(report)
+}
+
+/// Refuses a rig on a named subset of the rig rules, without filing a report:
+/// the step files one at each end and this is the check in between.
+fn refuse_defects(
+    bytes: &[u8],
+    spec: &CharacterSpec,
+    repo_root: &Path,
+    rules: &[&Rule],
+    what: &str,
+    file: &str,
+) -> Result<()> {
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    let skeleton = Skeleton::from_slice(bytes)?;
+    let broken: Vec<String> = rig::check(
+        file,
+        &skeleton,
+        &profile,
+        f64::from(spec.subject.height_meters),
+        Symmetry::declared(spec.subject.symmetry),
+        FIRST_ATTEMPT,
+    )
+    .into_iter()
+    .filter(|finding| {
+        finding.severity == Severity::Error && rules.iter().any(|rule| rule.id == finding.rule)
+    })
+    .map(|finding| format!("{} on {}", finding.rule, finding.subject))
+    .collect();
     anyhow::ensure!(
-        findings.is_none(),
-        "the strip reported findings nobody reads yet"
+        broken.is_empty(),
+        "{what} {file} left {}, so no profile row can say which joint it is \
+         about",
+        broken.join(", ")
     );
     Ok(())
 }
@@ -1035,5 +1223,9 @@ pub fn check_atlases(spec: &CharacterSpec, manifest: &Path, paths: &Paths) -> Re
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
     std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
 }

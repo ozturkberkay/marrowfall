@@ -13,8 +13,8 @@ use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
 use crate::support::{
-    EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_spec,
-    answers_its_version, inputs, install_library, install_skeleton,
+    EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png,
+    a_rigged_character, a_spec, answers_its_version, inputs, install_library, install_skeleton,
 };
 
 fn options(from: Option<Stage>, only: Option<Stage>, retry: bool) -> RunOptions {
@@ -44,23 +44,45 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
         .mount(server)
         .await;
     let glb = format!("{}/files/x.glb", server.uri());
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"/v1/(multi-image-to-3d|rigging|animations)/t1$",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+    let rigged = format!("{}/files/rigged.glb", server.uri());
+    // One payload per endpoint, the way the API answers: only the rigging
+    // task returns a rigged character, and it is not the mesh the model
+    // stage downloaded.
+    for (endpoint, result) in [
+        (
+            "multi-image-to-3d",
+            json!({"model_urls": {"glb": glb}, "thumbnail_url": format!("{}/files/t.png", server.uri())}),
+        ),
+        (
+            "rigging",
+            json!({"result": {"rigged_character_glb_url": rigged}}),
+        ),
+        ("animations", json!({"result": {"animation_glb_url": glb}})),
+    ] {
+        let mut body = json!({
             "id": "t1", "status": "SUCCEEDED", "progress": 100, "consumed_credits": 5,
-            "model_urls": {"glb": glb},
-            "result": {"rigged_character_glb_url": glb, "animation_glb_url": glb},
-            "thumbnail_url": format!("{}/files/t.png", server.uri())
-        })))
-        .mount(server)
-        .await;
+        });
+        for (key, value) in result.as_object().expect("an object") {
+            body[key] = value.clone();
+        }
+        Mock::given(method("GET"))
+            .and(path_regex(format!(r"/v1/{endpoint}/t1$")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(server)
+            .await;
+    }
     // The mesh gates and the fixer run on what this serves, so it is a real
     // GLB. The thumbnail beside it stays a PNG, which is what preview reads.
     Mock::given(method("GET"))
         .and(path_regex(r"/files/x\.glb$"))
         .respond_with(ResponseTemplate::new(200).set_body_bytes(a_bare_mesh()))
+        .mount(server)
+        .await;
+    // And the rigged file carries a skeleton, because the rename and the
+    // conform run on it before it becomes `model.glb`.
+    Mock::given(method("GET"))
+        .and(path_regex(r"/files/rigged\.glb$"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(a_rigged_character()))
         .mount(server)
         .await;
     Mock::given(method("GET"))

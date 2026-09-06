@@ -63,6 +63,8 @@ pub const RULES: [&Rule; 1] = [&AIM_TABLE];
 pub struct AimTable {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
+    /// Convention to the bones a file must have for it to match.
+    fingerprints: BTreeMap<String, Vec<String>>,
     /// Role to its aim, as a unit direction in Blender Z-up world space.
     aims: BTreeMap<String, DVec3>,
     ground: Vec<String>,
@@ -75,6 +77,7 @@ pub struct AimTable {
 struct SkeletonFile {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
+    fingerprints: BTreeMap<String, Vec<String>>,
     aim_table: BTreeMap<String, Vec<f64>>,
     ground_roles: Vec<String>,
     stride_segment: [String; 2],
@@ -113,6 +116,7 @@ impl AimTable {
             aims: aims(&roles, &file.aim_table)?,
             ground: ground(&roles, file.ground_roles)?,
             stride: stride(&roles, file.stride_segment)?,
+            fingerprints: fingerprints(&file.conventions, file.fingerprints)?,
             canonical: file.canonical,
             conventions: file.conventions,
         })
@@ -156,6 +160,81 @@ impl AimTable {
             )
         })
     }
+
+    /// Which convention a rig in hand is named in, from `[fingerprints]`.
+    ///
+    /// Every bone a convention fingerprints must be there, so a row of two is
+    /// an "and". Naming nothing and naming two are both refused: a rename
+    /// that guessed would rewrite a bone into the wrong role, and there is no
+    /// gate downstream that could tell.
+    pub fn convention_of<'a>(
+        &'a self,
+        bones: impl IntoIterator<Item = &'a str>,
+    ) -> Result<&'a str> {
+        let held: BTreeSet<String> = bones.into_iter().map(bare_bone_name).collect();
+        let matched: Vec<&str> = self
+            .fingerprints
+            .iter()
+            .filter(|(_, wanted)| {
+                wanted
+                    .iter()
+                    .all(|bone| held.contains(&bare_bone_name(bone)))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        match matched[..] {
+            [only] => Ok(only),
+            [] => bail!(
+                "no convention fingerprints this rig, so nothing says which \
+                 bone fills which role. It carries {}",
+                held.iter().cloned().collect::<Vec<String>>().join(", ")
+            ),
+            _ => bail!(
+                "{} all fingerprint this rig, so nothing tells them apart",
+                matched.join(", ")
+            ),
+        }
+    }
+}
+
+/// `mixamorig:LeftArm` becomes `leftarm`: no namespace, no case. The form two
+/// rigs' bone names are compared in, and `skeleton.py::bare_bone_name` is the
+/// other half of it.
+pub fn bare_bone_name(bone: &str) -> String {
+    bone.rsplit(':').next().unwrap_or(bone).to_lowercase()
+}
+
+/// Every convention's fingerprint, refused unless each one names at least one
+/// bone and no bone fingerprints two conventions.
+///
+/// A shared bone tells the two apart from nothing, which is the same refusal
+/// `skeleton.py` makes on the other side of this file.
+fn fingerprints(
+    conventions: &BTreeMap<String, BTreeMap<String, String>>,
+    rows: BTreeMap<String, Vec<String>>,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let declared: BTreeSet<&str> = conventions.keys().map(String::as_str).collect();
+    let covered: BTreeSet<&str> = rows.keys().map(String::as_str).collect();
+    ensure!(
+        declared == covered,
+        "fingerprints covers {covered:?}, and every convention in {declared:?} needs one"
+    );
+    let mut owner: BTreeMap<String, &str> = BTreeMap::new();
+    for (convention, bones) in &rows {
+        ensure!(
+            !bones.is_empty(),
+            "convention {convention:?} has no fingerprint bone"
+        );
+        for bone in bones {
+            if let Some(other) = owner.insert(bare_bone_name(bone), convention) {
+                bail!(
+                    "{bone:?} fingerprints {convention:?} and {other:?}, so it \
+                     tells them apart from nothing"
+                );
+            }
+        }
+    }
+    Ok(rows)
 }
 
 /// The roles that stand on the floor, refused unless every one is a role this

@@ -32,6 +32,12 @@ pub fn mirrored(bone: &str) -> Option<String> {
     }
 }
 
+/// A point or a direction reflected across X = 0, which is the plane the
+/// mesh fixer symmetrizes about and the plane every mirror rule reads.
+pub fn reflected(v: DVec3) -> DVec3 {
+    DVec3::new(-v.x, v.y, v.z)
+}
+
 /// One signed axis, in whatever space the field that holds it names.
 ///
 /// `up_axis = "z"` and `facing_axis_gltf = "+z"` both parse here: an unsigned

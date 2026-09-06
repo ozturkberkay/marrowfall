@@ -17,9 +17,7 @@ use anyhow::{Context as _, Result};
 use serde_json::json;
 
 use crate::blender::{self, BLENDER_SRC};
-use crate::check::aim::{self, AimTable};
-use crate::check::profile::Profile;
-use crate::check::{Artifacts, Finding, Report, Severity, Symmetry, rig};
+use crate::check::{Artifacts, Finding, Report, Severity, rig};
 use crate::preview;
 use crate::providers::meshy::{self, Client, Endpoint};
 use crate::spec::{CharacterSpec, Paths, PoseMode};
@@ -51,11 +49,6 @@ const NOT_A_POSE: &str = "banana";
 pub fn paths_for(paths: &Paths, mode: Option<PoseMode>) -> Paths {
     let named = PoseMode::named(mode);
     paths.variant(Path::new("spike").join(named), named)
-}
-
-/// The rigged GLB one mode's 5 credits bought.
-fn rigged_glb(paths: &Paths) -> PathBuf {
-    paths.staging().join("rigged.glb")
 }
 
 /// The contact sheet a human reads to answer acceptance item 4.
@@ -187,7 +180,7 @@ async fn attach_rig(
     client: &Client,
     mesh: &Path,
 ) -> Result<Report> {
-    let rigged = rigged_glb(paths);
+    let rigged = paths.rigged_glb();
     if rigged.exists() {
         println!("  reusing {}", paths.relative(&rigged));
     } else {
@@ -212,30 +205,11 @@ async fn attach_rig(
         client.download(url, &rigged).await?;
     }
 
-    let profile = Profile::of(root, &spec.subject.skeleton)?;
-    let table = AimTable::of(root, &spec.subject.skeleton)?;
-    let findings = [
-        rig::check_file(
-            &rigged,
-            root,
-            &profile,
-            f64::from(spec.subject.height_meters),
-            Symmetry::declared(spec.subject.symmetry),
-            FIRST_ATTEMPT,
-        )?,
-        aim::check_file(
-            &rigged,
-            root,
-            &profile,
-            &table,
-            table.canonical(),
-            FIRST_ATTEMPT,
-        )?,
-    ]
-    .concat();
-    let mut report = Report::new(rig::STAGE, paths.item(), FIRST_ATTEMPT);
-    report.extend(findings)?;
-    let written = report.write(root)?;
+    // Through the step's own producer, so a mode is measured in the
+    // convention its own bones are named in rather than in ours.
+    let bytes = std::fs::read(&rigged).with_context(|| format!("reading {}", rigged.display()))?;
+    let report = stages::check_rig(spec, paths, root, rig::STAGE, &rigged, &bytes)?;
+    let written = report.artifacts(root)?.report();
     for finding in report.findings() {
         if finding.severity != Severity::Info {
             println!("  {}", one_line(finding));
@@ -273,7 +247,7 @@ pub fn outstanding(paths: &Paths, rig: bool) -> u32 {
         .map(|mode| {
             let mine = paths_for(paths, mode);
             let mesh = u32::from(!mine.bare_glb().exists()) * MODEL_CREDITS;
-            let skeleton = u32::from(rig && !rigged_glb(&mine).exists()) * RIG_CREDITS;
+            let skeleton = u32::from(rig && !mine.rigged_glb().exists()) * RIG_CREDITS;
             mesh + skeleton
         })
         .sum()
