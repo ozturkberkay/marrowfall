@@ -217,6 +217,44 @@ max_bind_deviation_degrees = 75.0
 # The upper arm, measured below the horizontal plane.
 humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 
+# Every published concept limit. Read by
+# `crates/xtask-art/src/check/concept.rs`, on the four committed views under
+# `art/characters/survivor/concept/`, which are the only concept art this
+# repository holds. Every number below is what those four read plus the
+# headroom written beside it, and every negative reading is from the fixtures
+# in `crates/xtask-art/tests/unit/concepts.rs`.
+#
+# `concept.single_figure` has no row: its limit is one figure, and a count of
+# figures has nothing to tune.
+[profile.concept]
+# How uneven the fill behind the figure may be, in levels of 0 to 255. front
+# and left read 3, back and right 6, so this sits 2x over the worst of them.
+# The reading saturates near twice the 12 levels the silhouette is classified
+# at, so it refuses any ramp wider than about 12 levels and cannot tell a
+# large one from a larger: a 30 percent ramp added to front.png reads 24. It
+# reads only the region the border fill reaches, and `concept.cross_view` is
+# what catches a second backdrop tone the fill stopped at.
+background_spread_levels = 12
+# What share of the torso band's rows must show both arms clear of the body.
+# front reads 86.054 percent and back 86.316, and the 14 percent that do not
+# are the shoulder rows at the top of the band, where an A-posed arm still
+# touches the ribcage. This sits 11 points under the worst of the two, and
+# front with the gaps painted shut reads 0.000. A floor, not a ceiling: the
+# only limit here that a reading must reach rather than stay under.
+arm_gap_rows_percent = 75.0
+# How far a view's silhouette may sit from its own reflection, as a percent of
+# its width, at the 99th percentile of its rows. front reads 1.167 and back
+# 1.062, so this sits 2x over the worst of them, and front with its left half
+# stretched 15 percent reads 6.394. Neither the mean nor the outright worst
+# row: the mean reads 0.301 against 1.260, less separation, and the worst row
+# reads 4.669 against 6.522, which is hair against a stretched limb.
+mirror_percent = 2.4
+# How far two views may disagree about the figure's height or where its weight
+# sits, as a percent of the mean of the two heights. The worst of the six
+# pairs is front against back at 3.256 percent, so this sits 1.8x over it,
+# and the left view at 92 percent of its size reads 10.549 against the front.
+cross_view_percent = 6.0
+
 # Every published mesh limit. Read by `crates/xtask-art/src/check/mesh.rs`.
 #
 # PROVISIONAL: the five calibrated values here are measured on the committed

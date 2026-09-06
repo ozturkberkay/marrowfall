@@ -9,7 +9,7 @@ use xtask_art::cli::{RunOptions, repo_root, run};
 use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
-use crate::support::{EnvGuard, a_png, a_spec, install_library};
+use crate::support::{EnvGuard, a_concept_view, a_png, a_spec, install_library, install_skeleton};
 
 #[test]
 fn the_workspace_is_found_by_walking_up_from_the_current_directory() {
@@ -49,12 +49,12 @@ fn a_directory_outside_any_workspace_says_what_it_looked_for() {
 #[tokio::test]
 async fn re_running_a_paid_stage_is_declined_when_the_answer_cannot_be_read() {
     let server = MockServer::start().await;
-    let png = base64::engine::general_purpose::STANDARD.encode(a_png());
+    let view = base64::engine::general_purpose::STANDARD.encode(a_concept_view());
     for route in ["/images/generations", "/images/edits"] {
         Mock::given(method("POST"))
             .and(path(route))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": png}]})),
+                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": view}]})),
             )
             .mount(&server)
             .await;
@@ -83,6 +83,7 @@ async fn re_running_a_paid_stage_is_declined_when_the_answer_cannot_be_read() {
     let paths = Paths::new(dir.path(), "survivor");
     a_spec("survivor").save(&paths.spec()).unwrap();
     install_library(dir.path());
+    install_skeleton(dir.path());
 
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
@@ -127,12 +128,12 @@ async fn re_running_a_paid_stage_is_declined_when_the_answer_cannot_be_read() {
 #[tokio::test]
 async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
     let server = MockServer::start().await;
-    let png = base64::engine::general_purpose::STANDARD.encode(a_png());
+    let view = base64::engine::general_purpose::STANDARD.encode(a_concept_view());
     for route in ["/images/generations", "/images/edits"] {
         Mock::given(method("POST"))
             .and(path(route))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": png}]})),
+                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": view}]})),
             )
             .mount(&server)
             .await;
@@ -149,6 +150,7 @@ async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
     let paths = Paths::new(dir.path(), "survivor");
     a_spec("survivor").save(&paths.spec()).unwrap();
     install_library(dir.path());
+    install_skeleton(dir.path());
 
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
@@ -167,7 +169,7 @@ async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
     .await
     .unwrap();
 
-    // "y" to the re-spend prompt, then Enter to the review pause that follows.
+    // "y" to the re-spend prompt, which is the only thing a run now asks.
     run(
         dir.path(),
         "survivor",
@@ -177,7 +179,7 @@ async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
             retry: true,
         },
         false,
-        &mut "y\n\n".as_bytes(),
+        &mut "y\n".as_bytes(),
     )
     .await
     .expect_err("the run continues past concept and stops at the model stage");
@@ -187,4 +189,110 @@ async fn accepting_the_spend_prompt_re_runs_the_paid_stage() {
         lock.stages.contains_key(&Stage::Concept),
         "the accepted re-run must record the concept again"
     );
+}
+
+/// A terminal that counts how many questions it was asked.
+struct Answers {
+    lines: std::io::Cursor<Vec<u8>>,
+    asked: usize,
+}
+
+impl std::io::Read for Answers {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.lines.read(buf)
+    }
+}
+
+impl std::io::BufRead for Answers {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        self.lines.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.lines.consume(amount);
+    }
+
+    fn read_line(&mut self, out: &mut String) -> std::io::Result<usize> {
+        self.asked += 1;
+        self.lines.read_line(out)
+    }
+}
+
+/// The concept stage retries inside itself, so the one prompt that guards
+/// money is asked once for the whole loop and never once per attempt.
+#[tokio::test]
+async fn the_spend_prompt_is_asked_once_for_all_three_attempts() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("crates")).unwrap();
+    std::fs::write(dir.path().join("Cargo.toml"), "[workspace]\n").unwrap();
+    let paths = Paths::new(dir.path(), "survivor");
+    a_spec("survivor").save(&paths.spec()).unwrap();
+    install_library(dir.path());
+    install_skeleton(dir.path());
+
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri());
+
+    // A first run that passes, so the concept stage is recorded and asking
+    // for it again is a re-spend.
+    serve_views(&server, &a_concept_view()).await;
+    run(
+        dir.path(),
+        "survivor",
+        RunOptions {
+            from: None,
+            only: Some(Stage::Concept),
+            retry: false,
+        },
+        true,
+        &mut std::io::empty(),
+    )
+    .await
+    .unwrap();
+
+    // Then a generator that returns something no gate holds, so all three
+    // attempts fail behind one prompt.
+    server.reset().await;
+    serve_views(&server, &a_png()).await;
+    let mut answers = Answers {
+        lines: std::io::Cursor::new(b"y\n".to_vec()),
+        asked: 0,
+    };
+    let error = run(
+        dir.path(),
+        "survivor",
+        RunOptions {
+            from: None,
+            only: Some(Stage::Concept),
+            retry: true,
+        },
+        false,
+        &mut answers,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("on all 3 attempts"), "got: {error}");
+    assert_eq!(answers.asked, 1, "the loop asked again per attempt");
+}
+
+/// Both image endpoints, answering with one PNG.
+async fn serve_views(server: &MockServer, png: &[u8]) {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+    for route in ["/images/generations", "/images/edits"] {
+        Mock::given(method("POST"))
+            .and(path(route))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": encoded}]})),
+            )
+            .mount(server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/v1/balance"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"balance": 10})))
+        .mount(server)
+        .await;
 }

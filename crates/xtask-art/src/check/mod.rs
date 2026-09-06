@@ -11,6 +11,7 @@
 
 pub mod aim;
 pub mod clip;
+pub mod concept;
 pub mod foot;
 pub mod gltf_clip;
 pub mod gltf_mesh;
@@ -345,8 +346,9 @@ pub const UNDEFINED_UNIT: &str = "undefined measurements";
 /// Every rule the pipeline publishes, in the order `--list-rules` prints
 /// them. One list, so a family cannot ship with its rules unprintable.
 pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
-    rig::RULES
+    concept::RULES
         .into_iter()
+        .chain(rig::RULES)
         .chain(aim::RULES)
         .chain(mesh::RULES)
         .chain(source::RULES)

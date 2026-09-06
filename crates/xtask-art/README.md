@@ -6,14 +6,21 @@ game can load.
 ```sh
 cargo art new skeleton --kind humanoid    # scaffold art/characters/skeleton/spec.ron
 # describe the character in that file
-cargo art run skeleton                    # run the pipeline, pausing for review
+cargo art run skeleton                    # run the pipeline, resuming where it left off
 cargo art status skeleton                 # what is done, stale or pending
 cargo art check                           # validate the specs, measure the art
 cargo art check --list-rules              # every gate: limit, comparison, unit, space
 ```
 
+A run asks nothing except before it re-spends: the one prompt left is
+`ConfirmSpend`, on a paid stage that is already recorded as complete.
+`--retry` is what re-runs those stages, and `--yes` answers the prompt for an
+unattended run. Nothing pauses for a human to look at a stage's output;
+the gates below decide, and a pull request is where a human signs off.
+
 `check` reads the art on disk and prints one line per defect, one report per
-rule set. It measures three files per character: the rigged
+rule set. It measures the four concept views against the five `concept.*`
+rules, then three files per character: the rigged
 `art/characters/<name>/model.glb` against the thirteen `rig.*` rules,
 `art/staging/<name>/bare.glb`, the mesh before rigging, against the thirteen
 `mesh.*` file rules, and `art/staging/<name>/clean.glb`, what the fixer wrote,
@@ -87,6 +94,51 @@ they are two rules with two limits: a residual of 0.02 m and a bob of 0.15.
 The bake scales nothing: the retarget already sized every length, so a clip
 whose own rig is not this character's size is refused there rather than
 rescaled a second time.
+
+## Gating the concept views, and retrying them
+
+Five `concept.*` rules read the four generated PNGs before a single Meshy
+credit is spent on them, in Rust, so CI runs them too. They measure the
+**silhouette**: the generator returns fully opaque images, so there is no
+alpha to separate the figure with, and the figure is instead whatever a flood
+fill from the border does not reach within 12 levels of the border's own
+median color.
+
+| Rule | Reads |
+|---|---|
+| `concept.background_flat` | how even the fill behind the figure is, in levels of 0 to 255, over the region the border fill reached |
+| `concept.single_figure` | how many pieces of silhouette are big enough to be a figure |
+| `concept.arm_gap` | what share of a torso band's rows show both arms clear of the ribcage |
+| `concept.mirror` | how far each row's two silhouette edges sit from their reflection, at the 99th percentile of the rows |
+| `concept.cross_view` | how far two views disagree about the figure's height and where its weight sits |
+
+`arm_gap` and `mirror` own the front and back views only: a side view shows
+the arms in front of the torso and has no left half to read against a right.
+`cross_view` owns the six pairs. `symmetry: false` reports `concept.mirror` as
+`skipped`, the same declaration `mesh.mirror` reads. Every limit is calibrated
+on the four committed views, with the reading and the headroom written beside
+it in `art/skeletons/humanoid.toml`.
+
+**A failing view is regenerated, up to three times in total.** The loop lives
+in `cli.rs::run` and wraps the concept stage and nothing else:
+`ConfirmSpend` quotes about 2.40 USD for up to 3 attempts of 4 images each,
+once, before the loop starts. Every attempt writes
+`art/staging/reports/concept.<name>.<attempt>.json` and prints what it
+measured. After the third failure the run stops with all three reports named
+and the images left on disk, so a human can see what the generator kept
+getting wrong.
+
+**Attempt one regenerates too, and so does every retry.** The stage reuses
+nothing on disk: a new front view invalidates the three derived from it, and a
+set already there is either one a previous run left failing or one this run
+was asked to replace. The cost of that is the only case it loses on, a run
+that died after three of the four views arrived, which pays for all four
+again. Whether the stage runs at all is the plan's decision, which reads the
+lock, so a completed concept stage is not re-run without `--retry`.
+
+A Meshy stage is never wrapped. Its gates run inside the stage, before the
+credits, and a failure stops the run: a mesh generation is expensive and a
+second one is no more likely to pass than the first.
 
 ## Cleaning the mesh before rigging
 
@@ -198,7 +250,7 @@ what `art/characters/<name>.lock` records:
 
 | Stage | Cost | Runs in | Does |
 |---|---|---|---|
-| `concept` | paid | Rust | Turns the written description into front/back concept art. |
+| `concept` | paid | Rust | Turns the written description into four concept views, gated and retried up to three times. |
 | `model` | paid | Rust | Concept art to a textured 3D mesh. |
 | `rig` | paid | Rust | Adds a skeleton, then one animation clip per entry in `animations`. |
 | `download` | free | Rust | Fetches the finished GLBs and splits them: mesh once, one file per clip. |

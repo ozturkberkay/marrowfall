@@ -15,7 +15,7 @@ use crate::blender::{self, BLENDER_SRC};
 use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
 use crate::check::{
-    Artifacts, Finding, Report, Rule, Severity, Symmetry, clip, gltf_mesh, mesh, source,
+    Artifacts, Finding, Report, Rule, Severity, Symmetry, clip, concept, gltf_mesh, mesh, source,
 };
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
@@ -25,10 +25,13 @@ use crate::providers::meshy::{self, Endpoint};
 use crate::providers::openai;
 use crate::spec::{CharacterSpec, Paths, View};
 
-/// Generates the four concept views. Each is written as it arrives and reused
-/// on a re-run, so a failure partway costs only the remaining views.
-/// `force` regenerates all.
-pub async fn concept(spec: &CharacterSpec, paths: &Paths, force: bool) -> Result<StageRecord> {
+/// Generates all four concept views, every time it runs.
+///
+/// Nothing on disk is reused. The retry loop needs a fresh set or a retry
+/// would re-measure the images that just failed, and a new front view
+/// invalidates the three derived from it anyway. Whether this runs at all is
+/// the plan's decision in `cli.rs`, and the lock is the only cache.
+pub async fn concept(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
     let client = openai::Client::from_env()?;
     let pose = spec.subject.kind.pose_instruction();
     let concepts = paths.concept(View::Front);
@@ -36,27 +39,14 @@ pub async fn concept(spec: &CharacterSpec, paths: &Paths, force: bool) -> Result
     std::fs::create_dir_all(concepts)
         .with_context(|| format!("creating {}", concepts.display()))?;
 
-    // The front view seeds every other view, so it must exist first.
-    let front_path = paths.concept(View::Front);
-    let front = if front_path.exists() && !force {
-        println!("  front: reusing existing");
-        std::fs::read(&front_path).with_context(|| format!("reading {}", front_path.display()))?
-    } else {
-        println!("  generating front…");
-        let bytes = client
-            .generate(&openai::front_prompt(&spec.subject.description, pose))
-            .await?;
-        write_file(&front_path, &bytes)?;
-        bytes
-    };
+    // The front view seeds every other view, so it comes first.
+    println!("  generating front…");
+    let front = client
+        .generate(&openai::front_prompt(&spec.subject.description, pose))
+        .await?;
+    write_file(&paths.concept(View::Front), &front)?;
 
-    let mut generated = 0;
     for view in View::derived() {
-        let path = paths.concept(view);
-        if path.exists() && !force {
-            println!("  {view}: reusing existing");
-            continue;
-        }
         println!("  generating {view}…");
         let bytes = client
             .edit(
@@ -64,18 +54,59 @@ pub async fn concept(spec: &CharacterSpec, paths: &Paths, force: bool) -> Result
                 &front,
             )
             .await?;
-        write_file(&path, &bytes)?;
-        generated += 1;
+        write_file(&paths.concept(view), &bytes)?;
     }
 
     preview::concept(paths)?;
     Ok(StageRecord {
-        note: Some(format!(
-            "{} views, {generated} newly generated",
-            View::ALL.len()
-        )),
+        note: Some(format!("{} views generated", View::ALL.len())),
         ..StageRecord::default()
     })
+}
+
+/// Measures the four concept views and writes
+/// `art/staging/reports/concept.<char>.<attempt>.json`.
+///
+/// The retry loop runs this after every generation and `cargo art check` runs
+/// it on whatever is on disk: one producer, one rule set, one stage name. The
+/// report is on disk before any of it is refused, so a run that stops on a
+/// gate still leaves what it measured for a human to read.
+pub fn check_concept(
+    spec: &CharacterSpec,
+    paths: &Paths,
+    repo_root: &Path,
+    attempt: u32,
+) -> Result<Report> {
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    let files: Vec<(View, PathBuf)> = View::ALL
+        .into_iter()
+        .map(|view| (view, paths.concept(view)))
+        .collect();
+    let views: Vec<concept::Rendered<'_>> = files
+        .iter()
+        .map(|(view, file)| concept::Rendered {
+            name: view.as_str(),
+            file,
+            torso_faces_the_camera: view.shows_the_torso(),
+        })
+        .collect();
+
+    let mut report = Report::new(concept::STAGE, &spec.name, attempt);
+    report.extend(concept::check_files(
+        &views,
+        &profile,
+        Symmetry::declared(spec.subject.symmetry),
+        attempt,
+    ))?;
+    report.write(repo_root)?;
+    refuse_unread_rules(&report, &concept::RULES, &spec.name, "concept check")?;
+    refuse_unreported_subjects(
+        &report,
+        &concept::subjects(&views),
+        &spec.name,
+        "concept check",
+    )?;
+    Ok(report)
 }
 
 /// Reconstructs a textured, retopologized mesh from the concept views. Remesh
@@ -557,25 +588,30 @@ fn refuse_unread_rules(report: &Report, rules: &[&Rule], item: &str, what: &str)
     Ok(())
 }
 
-/// Refuses a bake report that named none of its findings after one of the
-/// per-axis subjects it owed.
+/// Refuses a report that named none of its findings after one of the subjects
+/// the stage owed: an axis of a clip the bake was given, a concept view.
 ///
-/// The bake's two rules own one subject per axis of every clip it was given,
-/// so a clip missing from the report is one nothing was read on.
-fn refuse_unreported_subjects(report: &Report, names: &[&str], item: &str) -> Result<()> {
+/// The companion of [`refuse_unread_rules`]: that one catches a rule nobody
+/// read, this one a subject nobody read it on.
+fn refuse_unreported_subjects(
+    report: &Report,
+    owed: &[String],
+    item: &str,
+    what: &str,
+) -> Result<()> {
     let seen: BTreeSet<&str> = report
         .findings()
         .iter()
         .map(|finding| finding.subject.as_str())
         .collect();
-    let missing: Vec<String> = names
+    let missing: Vec<&str> = owed
         .iter()
-        .flat_map(|name| clip::AXES.map(|axis| format!("{name} {axis}")))
-        .filter(|subject| !seen.contains(subject.as_str()))
+        .map(String::as_str)
+        .filter(|subject| !seen.contains(subject))
         .collect();
     anyhow::ensure!(
         missing.is_empty(),
-        "the bake of {item} named no finding after the subject(s) {}, so \
+        "the {what} of {item} named no finding after the subject(s) {}, so \
          nothing was read on them: a gate that goes quiet cannot be told \
          from one that never ran",
         missing.join(", ")
@@ -589,7 +625,7 @@ fn refuse_unreported_subjects(report: &Report, names: &[&str], item: &str) -> Re
 /// rule chose not to measure and files a reading of zero, so counting it
 /// would name a number no reader can find in the report. The rules go in
 /// too, because a count alone says nothing about what to open.
-fn defects(report: &Report) -> String {
+pub(crate) fn defects(report: &Report) -> String {
     let broken: Vec<&Finding> = report
         .findings()
         .iter()
@@ -753,7 +789,7 @@ pub fn bake(
         defects(&report),
         artifacts.report().display()
     );
-    refuse_unreported_subjects(&report, &names, &spec.name)?;
+    refuse_unreported_subjects(&report, &per_axis(&names), &spec.name, "bake")?;
 
     preview::bake(&names, pack::direction_names(spec.bake.directions)?, paths)?;
 
@@ -774,6 +810,14 @@ pub fn bake(
 /// Nothing but the concept stage retries, so every other report is the first
 /// and only attempt.
 const FIRST_ATTEMPT: u32 = 1;
+
+/// Every subject the bake's own two rules own: one per axis of every clip.
+fn per_axis(names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .flat_map(|name| clip::AXES.map(|axis| format!("{name} {axis}")))
+        .collect()
+}
 
 /// The bake parameters the spec fixes, ahead of the per-animation arguments.
 fn bake_args(paths: &Paths, spec: &CharacterSpec) -> Vec<OsString> {

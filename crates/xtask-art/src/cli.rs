@@ -7,6 +7,7 @@
 //! re-spends credits.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,15 +19,23 @@ use crate::check::aim::{self, AimTable};
 use crate::check::profile::Profile;
 use crate::check::{self, Finding, Report, Severity, Symmetry, mesh, rig};
 use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
-use crate::lock::{Lock, Provider, Stage, TaskRef};
+use crate::lock::{Lock, Provider, Stage, StageRecord, TaskRef};
 use crate::providers::mixamo::{self, session};
-use crate::spec::{CharacterSpec, CharacterType, Paths};
+use crate::spec::{CharacterSpec, CharacterType, Paths, View};
 
 /// How long to wait for a browser login before giving up and saying so.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Nothing here retries, so every finding is from the first attempt.
 const FIRST_ATTEMPT: u32 = 1;
+
+/// How many concept generations one run may pay for: the first, plus two
+/// regenerations. The cap lives here so no uncalibrated gate can spend more.
+const CONCEPT_ATTEMPTS: u32 = 3;
+
+/// What all three cost together, at four OpenAI images and about 0.80 USD
+/// each. Quoted once, before the loop.
+const CONCEPT_DOLLARS: f64 = 2.40;
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo art", about = "Marrowfall character art pipeline")]
@@ -316,7 +325,12 @@ pub async fn run(
         println!("{stage}: running…");
 
         let record = match stage {
-            Stage::Concept => crate::stages::concept(&spec, &paths, options.retry).await?,
+            Stage::Concept => {
+                concept_until_it_holds(&spec, &paths, root, || {
+                    crate::stages::concept(&spec, &paths)
+                })
+                .await?
+            }
             Stage::Model => crate::stages::model(&spec, &paths).await?,
             Stage::Rig => {
                 // Rigging plus N animations is several separate charges, so
@@ -352,44 +366,49 @@ pub async fn run(
         }
         lock.record(stage, &spec, &library, record);
         lock.save(&paths.lock())?;
-
-        if !yes && options.only.is_none() && should_pause(stage) {
-            pause_for_review(stage, &paths, input)?;
-        }
     }
 
     println!("\n{name}: done");
     Ok(())
 }
 
-/// Stages whose output is worth looking at before spending more.
-pub fn should_pause(stage: Stage) -> bool {
-    matches!(
-        stage,
-        Stage::Concept | Stage::Model | Stage::Bake | Stage::Pack
+/// Generates the concept views and gates them, three times at most, and
+/// wraps nothing else. A Meshy stage is never wrapped: regenerating a mesh
+/// costs credits a second generation is no more likely to earn back.
+///
+/// **Attempt one regenerates too.** Nothing on disk is reused by any of the
+/// three, because a set already there is either one a previous run left
+/// failing or one this run was asked to replace. [`plan`] is what decides
+/// whether this runs at all.
+pub async fn concept_until_it_holds<F, Fut>(
+    spec: &CharacterSpec,
+    paths: &Paths,
+    root: &Path,
+    mut generate: F,
+) -> Result<StageRecord>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<StageRecord>>,
+{
+    let mut filed: Vec<String> = Vec::new();
+    for attempt in 1..=CONCEPT_ATTEMPTS {
+        println!("  attempt {attempt} of {CONCEPT_ATTEMPTS}…");
+        let record = generate().await?;
+        let report = crate::stages::check_concept(spec, paths, root, attempt)?;
+        let written = report.artifacts(root)?.report();
+        filed.push(paths.relative(&written));
+        printed(paths, &report, &written);
+        if !report.has_errors() {
+            return Ok(record);
+        }
+    }
+    bail!(
+        "the concept views of {} failed their gates on all {CONCEPT_ATTEMPTS} attempts, \
+         listed in {}. The images are still on disk, so nothing has to be regenerated \
+         to look at them",
+        spec.name,
+        filed.join(", ")
     )
-}
-
-/// Stops after a reviewable stage until the operator says to continue. Reads
-/// `input` rather than stdin, so no-terminal is testable.
-pub fn pause_for_review(stage: Stage, paths: &Paths, input: &mut impl BufRead) -> Result<()> {
-    println!(
-        "\n  review {stage} output in {}",
-        paths.relative(&paths.preview())
-    );
-    print!("  continue? [Y/n] ");
-    std::io::stdout().flush()?;
-
-    let mut answer = String::new();
-    if input.read_line(&mut answer)? == 0 {
-        // No terminal attached (an agent, or a pipe). Continuing silently
-        // would defeat the review gate, so stop with the work so far saved.
-        bail!("{stage} finished, but no terminal is attached to confirm. Pass --yes to continue.");
-    }
-    if matches!(answer.trim().to_ascii_lowercase().as_str(), "n" | "no") {
-        bail!("stopped after {stage}, re-run when ready, completed stages are cached");
-    }
-    Ok(())
 }
 
 /// Asks before re-running a stage that has already been paid for. No terminal
@@ -398,7 +417,7 @@ pub fn confirm_spend(stage: Stage, yes: bool, input: &mut impl BufRead) -> Resul
     if yes {
         return Ok(true);
     }
-    print!("  {stage} already completed and costs credits. Re-run? [y/N] ");
+    print!("{}", spend_prompt(stage));
     std::io::stdout().flush()?;
     let mut answer = String::new();
     input.read_line(&mut answer)?;
@@ -406,6 +425,19 @@ pub fn confirm_spend(stage: Stage, yes: bool, input: &mut impl BufRead) -> Resul
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
+}
+
+/// What [`confirm_spend`] asks with. The concept stage retries, so its quote
+/// is the whole loop rather than one generation, and it is asked once.
+pub fn spend_prompt(stage: Stage) -> String {
+    let cost = match stage {
+        Stage::Concept => format!(
+            "up to {CONCEPT_ATTEMPTS} attempts of 4 OpenAI images each, about \
+             {CONCEPT_DOLLARS:.2} USD in total"
+        ),
+        _ => "credits".to_owned(),
+    };
+    format!("  {stage} already completed and costs {cost}. Re-run? [y/N] ")
 }
 
 /// Prints the remaining balance for the provider about to be billed.
@@ -562,8 +594,8 @@ pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Validates every spec, then measures the rig and the mesh each one has on
-/// disk.
+/// Validates every spec, then measures the concept views, the rig and the
+/// mesh each one has on disk.
 ///
 /// A stage whose art is not built yet is named and counted as unbuilt, never
 /// as passing. A missing file is an error at the stage boundary, where the
@@ -611,6 +643,7 @@ pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
             }
         };
         for measured in [
+            check_concept(root, &spec)?,
             check_rig(root, &spec)?,
             check_mesh(root, &spec)?,
             check_cleaned(root, &spec)?,
@@ -629,6 +662,28 @@ pub fn check(root: &Path, name: Option<&str>, list_rules: bool) -> Result<()> {
     }
     anyhow::ensure!(defects == 0, "{defects} defect(s)");
     Ok(())
+}
+
+/// Measures one character's concept views. `None` when none of the four is
+/// on disk: the concept stage is what generates them.
+///
+/// Through the same producer the retry loop uses, so the mirror and the gate
+/// write the same rule set to the same stage name.
+fn check_concept(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
+    let paths = Paths::new(root, &spec.name);
+    if View::ALL
+        .into_iter()
+        .all(|view| !paths.concept(view).exists())
+    {
+        println!(
+            "      no concept views yet at {}",
+            paths.relative(&paths.concept(View::Front))
+        );
+        return Ok(None);
+    }
+    let report = crate::stages::check_concept(spec, &paths, root, FIRST_ATTEMPT)?;
+    let written = report.artifacts(root)?.report();
+    Ok(Some(printed(&paths, &report, &written)))
 }
 
 /// Measures one character's rigged GLB against its skeleton profile.
@@ -752,25 +807,32 @@ fn file_rules(root: &Path, spec: &CharacterSpec, glb: &Path) -> Result<Vec<Findi
 fn report_on(root: &Path, paths: &Paths, stage: &str, findings: Vec<Finding>) -> Result<usize> {
     let mut report = Report::new(stage, &paths.name, FIRST_ATTEMPT);
     report.extend(findings)?;
-    // The passing measurements stay in the report; the terminal gets the
-    // defects and anything a declaration switched off.
+    let written = report.write(root)?;
+    Ok(printed(paths, &report, &written))
+}
+
+/// One written report on the terminal, and how many defects it holds.
+///
+/// The passing measurements stay in the report; the terminal gets the defects
+/// and anything a declaration switched off.
+fn printed(paths: &Paths, report: &Report, written: &Path) -> usize {
     for finding in report.findings() {
         if finding.severity != Severity::Info {
             println!("  {}", defect(finding));
         }
     }
-    let written = report.write(root)?;
     let defects = report
         .findings()
         .iter()
         .filter(|finding| finding.severity == Severity::Error)
         .count();
     println!(
-        "      {stage}: {} measurement(s), {defects} defect(s), report at {}",
+        "      {}: {} measurement(s), {defects} defect(s), report at {}",
+        report.stage(),
         report.findings().len(),
-        paths.relative(&written)
+        paths.relative(written)
     );
-    Ok(defects)
+    defects
 }
 
 /// One itemized defect: what was measured, what was allowed, and why it

@@ -627,8 +627,9 @@ concept stage only.
 ```
 attempt = 1
 loop:
-    concept(&spec, &paths, /* force */ true)   # force: fact 18, or it reuses
+    concept(&spec, &paths)                     # four fresh views, always
     report = check(Stage::Concept, attempt)    # every concept.* rule
+    print what it measured
     if no error: break
     if attempt == 3: bail with all three reports, images kept on disk
     attempt += 1
@@ -636,17 +637,19 @@ loop:
 
 - **Three generations in total**, one plus two regenerations, at four OpenAI
   images each. About 0.80 USD per attempt and 2.40 USD for all three.
-- **`force` is mandatory.** Without it `stages::concept` reuses the images
-  that just failed (fact 18), and the loop would spend nothing and change
-  nothing while reporting a retry.
-- It always regenerates **all four views**, because a new front view
+- **The stage reuses nothing, attempt 1 included.** Correction 13 has the
+  detail: a set on disk is either one a previous run left failing, which no
+  retry budget should be spent re-measuring, or one this run was told to
+  replace. It always regenerates **all four views**, because a new front view
   invalidates the three derived ones.
 - **The wrapped stage is not free.** `Stage::Concept` bills OpenAI (fact 14),
   so `ConfirmSpend` is asked once, quoting 2.40 USD for up to three attempts.
   The invariant is that the loop **never wraps a Meshy stage**: a failing
   `mesh.*` or `rig.*` gate stops the run and reports.
-- Each attempt writes `art/staging/reports/concept.<attempt>.json` and every
-  Finding carries an `attempt` field, so all three attempts survive.
+- Each attempt writes `art/staging/reports/concept.<char>.<attempt>.json` and
+  every Finding carries an `attempt` field, so all three attempts survive.
+  Each also prints its own summary line, the same one `cargo art check`
+  prints, so a failing attempt names its report on the terminal.
 - The `concept.*` limits are calibrated in the same task that adds the loop,
   so no uncalibrated threshold can ever spend money.
 
@@ -852,6 +855,7 @@ crates/xtask-art/src/
   stages.rs                 # + model downloads bare.glb, + fixer before rig
   blender.rs                # NEW  argv builder, runner, sentinel, diagnostics
   cli.rs                    # + the concept retry loop, - pause_for_review
+  check/concept.rs          # NEW  the five image checks, in Rust (Rule 4)
 
 tools/gltf_validator/
   validate.mjs              # NEW  drives the npm validator, which has no CLI
@@ -865,7 +869,6 @@ tools/blender/src/
   retarget_animation.py     # bpy glue only: import, map, transfer, export
   cleanup.py                # NEW  the fixer's order and decisions, no bpy
   mesh_clean.py             # NEW  the fixer only. It measures nothing
-  concept_check.py          # NEW  image checks before the Meshy call
   bake_sprites.py           # root motion in world space, fps from source_fps
 ```
 
@@ -999,7 +1002,11 @@ measured values are in the Test Plan, once, so the two cannot drift.
 
 | Rule | Limit | Comparison |
 |---|---|---|
-| the five `concept.*` rules | set by T11 from the four committed views, headroom recorded | le |
+| `concept.background_flat` | 12 levels of 0 to 255, from the 3, 6, 3 and 6 the four committed views read, so 2x the worst of them. Read over the region the border fill reaches and no further, which the finding's message states as a share. The reading saturates near twice the 12 levels the silhouette is classified at, so it refuses any ramp wider than about 12 levels: a 30 percent one reads 24 | le |
+| `concept.single_figure` | 1 figure. A count has no tunable limit, so this is the second family with no `[profile]` number. What is calibrated is the speck floor, 0.05 percent of the image: the committed figures run 204,657 to 371,283 pixels and no other piece is over 4 | eq |
+| `concept.arm_gap` | 75 percent of the torso band's rows, from the 86.054 and 86.316 the front and back views read, so 11 points under the worst of them. The 14 percent that do not show a gap are the shoulder rows at the top of the band | **ge** |
+| `concept.mirror` | 2.4 percent of the width, at the 99th percentile of the rows, from the 1.167 and 1.062 the front and back views read, so 2x the worst of them. Read on each row's leftmost and rightmost figure pixel, so interior asymmetry is invisible to it. Neither the mean nor the outright worst row: correction 4 has all three readings | le |
+| `concept.cross_view` | 6.0 percent of the mean of two heights, from the worst of the six pairs, front against back at 3.256, so 1.8x over it | le |
 | `clip.swing` | 0.01 deg, set by T6 on a synthetic cross-rig fixture | le |
 | `clip.twist` | 15.0 deg, the same fixture plus the A-pose against T-pose residual | le |
 | `clip.root_travel` | 0.02 m, on the two horizontal axes the strip pins | le |
@@ -1410,11 +1417,11 @@ Python at all. Corrections 5 and 10 have both measurements.
 Every rule ships all three columns in the same pull request. The **Negative**
 column marks its kind: `[art]` is real broken art, which decision 11 prefers,
 `[synth]` is a built asset, `[mut]` disables a step of the measurement, which
-tests the metric rather than the gate. Every `mesh.*`, `rig.*`, `clip.*`,
-`bake.*` and `atlas.*` row runs in Rust, so its negative control is a required
-CI check with no Blender. **`source.*` cannot**: the vendor file is an FBX no
-Rust reader opens, so those six are measured in Python and their negatives
-are pytest ones, on the maths module `source.py`, with a recorded report from
+tests the metric rather than the gate. Every `concept.*`, `mesh.*`, `rig.*`,
+`clip.*`, `bake.*` and `atlas.*` row runs in Rust, so its negative control is
+a required CI check with no Blender. **`source.*` cannot**: the vendor file is
+an FBX no Rust reader opens, so those six are measured in Python and their
+negatives are pytest ones, on the maths module `source.py`, with a report from
 a real run committed as `crates/xtask-art/tests/fixtures/fetch.run.1.json`.
 `source.posture`, `source.child_axis` and `source.wander` are recording rules,
 so they are calibrated and carry no negative, per the Terminology exemption.
@@ -1424,11 +1431,12 @@ it can honestly measure does fail. See the correction below.
 
 | Rule | Positive | Negative fixture it must reject | Calibration |
 |---|---|---|---|
-| `concept.background_flat` | committed `front.png` | `[synth]` a 30 percent gradient added | measured on the four views in T11 |
-| `concept.single_figure` | committed `front.png` | `[synth]` two figures side by side | measured in T11 |
-| `concept.arm_gap` | committed `front.png` | `[synth]` arms painted onto the ribcage | measured in T11 |
-| `concept.mirror` | committed `front.png` | `[synth]` one arm at 115 percent | measured in T11 |
-| `concept.cross_view` | the four committed views | `[synth]` a side view scaled 8 percent | pairwise silhouette height and centroid, T11 |
+| `concept.background_flat` | the four committed views, 3, 6, 3 and 6 levels against 12 | `[synth]` a 30 percent gradient added to `front.png`, 24 levels | the four views. Measured on the pixels a border flood fill reaches, per channel, 1st to 99th percentile |
+| `concept.background_flat`, the share it read | `front.png`, 76.394 percent of the image filled | `[synth]` a second backdrop tone over the top-left fifth of `front.png`: still 3 levels, and 72.412 percent filled | not a limit. The share rides in the message, and `concept.single_figure` is what refuses the case, at 2 figures |
+| `concept.single_figure` | the four committed views, 1 figure each | `[synth]` `front.png` twice at half size, side by side, 2 figures against 1 | the speck floor, 0.05 percent of the image or 786 pixels: the four figures run 204,657 to 371,283 pixels and no other piece is over 4 |
+| `concept.arm_gap` | `front.png` 86.054 percent and `back.png` 86.316, against 75 | `[synth]` both gaps of `front.png` painted shut with skin, over rows 380 to 680, 0.000 percent | the two views. The band is 25 to 45 percent down the silhouette, which lands on rows 384 to 677 and 384 to 668, and a gap is a background run of at least 4 pixels: a drawn 3 pixel run reads 0.000 percent of rows and a 4 pixel one 100.000 |
+| `concept.mirror` | `front.png` 1.167 percent and `back.png` 1.062, against 2.4 | `[synth]` `front.png` with the arm rows stretched outward 15 percent from the middle of the frame, 6.394 percent | the two views, at the 99th percentile of their rows. Correction 4 records the mean and the worst row of all three too |
+| `concept.cross_view` | the six pairs of the four committed views, 0.757 to 3.256 percent against 6.0 | `[synth]` `left.png` at 92 percent of its size, centered on its own backdrop: 10.549 percent against the front and 7.299 against the back | the six pairs, on silhouette height and vertical centroid, as a percent of the mean of two heights |
 | `mesh.printability` | a recorded response | `[synth]` a recorded response over the ceiling, `13368` edges and `is_watertight: false` | **not calibrated: the Meshy key answers 401, so no response could be recorded.** The ceiling of 200 comes from the design's own 179. `is_watertight` is Meshy's summary of the same count, so it goes in the message and is not measured twice |
 | `mesh.holes` | `model.glb`, world then welded, 171 | `[synth]` 67 boxes each missing a face, 201 edges against 200, **plus** 66 of them at 198, which passes. `[mut]` the same file unwelded, 13,368 | T3, on `model.glb`. Provisional |
 | `mesh.non_manifold` | `model.glb`, welded, 8 | `[synth]` 11 edges each carrying 3 faces, against a limit of 10 | T3, on `model.glb`. **This row was missing from the design**, see the correction below. A file the fixer wrote is not read against it: T10, correction 8 |
@@ -2734,6 +2742,177 @@ larger, one image, one UV layer.
     published 0.001 stays, and this table is where a recalibration on the
     real `bare.glb` starts rather than a fresh guess.
 
+### Corrections T11 made to this document
+
+1. **The five `concept.*` rules are measured in Rust, not in
+   `concept_check.py`.** The T11 row names a Python module and Rule 4 rules
+   it out: CI-side measurement is Rust and Python measures only what needs
+   `bpy`. A PNG needs none. Fact 16 is the other half: the CI runner is
+   `ubuntu-24.04-arm` and nothing there can call `bpy`, so a Python image
+   check would have no negative control in CI at all. The Python environment
+   also carries no image library, only `bpy` and `mathutils`, while `image`
+   0.25 with the PNG feature is already a workspace dependency that
+   `preview.rs` decodes with. So the module is `check/concept.rs`, and
+   `tools/blender/src/concept_check.py` is not written.
+
+2. **There is no alpha channel to separate the figure with.** All four
+   committed views carry exactly one alpha value, 255, so the silhouette is
+   found by color: the background color is the median of the image's own
+   one-pixel border, and the background is what a flood fill from that border
+   reaches within 12 levels on every channel. Filling rather than
+   thresholding is what makes an enclosed patch of backdrop, between two
+   fingers or under an arm, part of the figure that encloses it.
+
+   The 12 is calibrated rather than picked. At a tolerance of 5 the four
+   views read **23.821, 22.922, 14.104 and 13.166** percent of themselves as
+   figure, and at 25 they read 23.502, 22.520, 13.886 and 12.947: at most
+   **0.402** percentage points of movement across a fivefold change in the
+   threshold, so 12 sits in the middle of a wide valley. Only the size of that
+   movement is a reading. The direction is not: a looser tolerance can only
+   grow the background, so the share falls with it on any art at all, which is
+   why `test_concept.rs` asserts the 0.402 and not the slope's sign.
+
+3. **`concept.single_figure` publishes no `[profile]` number, and it is the
+   second rule that does not.** Its limit is one figure, and a count of
+   figures has nothing to tune, exactly as the `rig.names_standard` family's
+   limits table row already states for a count of defects. `[profile.concept]`
+   therefore holds four numbers, not five. What is calibrated for this rule is
+   the speck floor: 0.05 percent of the image, 786 pixels of 1024 by 1536,
+   against real figures of 204,657 to 371,283 pixels and no other piece over
+   4. That floor is a constant in `check/concept.rs` with the readings beside
+   it, the way `FOOT_SLICE` is in `check/mesh.rs`, because it is a parameter
+   of the measurement rather than a published limit.
+
+4. **`concept.mirror` publishes the 99th percentile of the rows.** All three
+   statistics were measured, on both views the rule owns and on the Test
+   Plan's negative, which stretches the left half of the front view's arm rows
+   outward by 15 percent:
+
+   | Reading | `front.png` | `back.png` | the negative | worst view to negative |
+   |---|---|---|---|---|
+   | mean over the rows | 0.301 | 0.286 | 1.260 | 4.2x |
+   | 99th percentile | 1.167 | 1.062 | 6.394 | **5.5x** |
+   | worst row | 4.669 | 3.984 | 6.522 | 1.4x |
+
+   The worst row is hair, on art that is symmetrical everywhere it matters, so
+   a limit set from 4.669 would have to sit inside a 1.4x gap and would refuse
+   the next haircut. The percentile drops that one row and still separates
+   widest, wider than the mean, which dilutes a defect covering a fifth of the
+   rows. So the published limit is **2.4 percent**, 2x the worst view, with
+   the negative 2.7x above it, and the mean and the worst row go in the
+   message. `mesh.mirror` publishes a tail statistic too, its worst vertex,
+   which this now agrees with in kind.
+
+   **The space is narrower than "one view against its reflection".** Only each
+   row's leftmost and rightmost figure pixel is read, so the rule measures the
+   silhouette's outline and interior asymmetry reads 0. The published space
+   string says exactly that.
+
+5. **`concept.arm_gap` is a share of rows and compares `ge`.** The design
+   says "the number of background gaps crossing a horizontal band", and a
+   count of two against a limit of two has no headroom to record: every
+   correct view reads exactly the number the gate demands. So the reading is
+   what share of the band's rows show both gaps, which is a percent with room
+   to calibrate: 86.054 and 86.316 against a limit of 75. The 14 percent that
+   read nothing are the shoulder rows at the top of the band, where an
+   A-posed arm still touches the ribcage on both views, so the shortfall is
+   the pose and not a defect.
+
+6. **`concept.arm_gap` and `concept.mirror` own two views, and
+   `concept.cross_view` owns six pairs.** A side view shows the arms in front
+   of the torso and has no left half to read against a right, so neither rule
+   resolves a subject there. That is fewer subjects rather than a skip:
+   `Severity::Skipped` stays behind a declaration, and `spec.subject.symmetry`
+   is the only one any concept rule reads. The eighteen findings one attempt
+   files are 4 background, 4 figure counts, 2 gaps, 2 reflections and 6 pairs.
+
+7. **The concept report is `concept.<char>.<attempt>.json`.** The retry loop's
+   own bullet said `concept.<attempt>.json`, which no `Artifacts` name can be:
+   the item is in every report stem so one character's run cannot overwrite
+   another's. Corrected above.
+
+8. **`cargo art check` runs the same rules under the same stage name.** T10's
+   correction 9 is that two report shapes under one stage name have one
+   producer overwrite the other's file, so the mirror and the gate share one
+   producer, `stages::check_concept`, which measures, writes, and then refuses
+   a report that left a rule unread or a subject unreported. `check` calls it
+   at attempt 1 and the loop calls it once per attempt.
+
+   `refuse_unreported_subjects` was written for the bake's per-axis subjects
+   and now takes the list of subjects a stage owes, because the concept stage
+   owes ten of them and the bake owes one per axis of every clip. One
+   function, two callers, and the sentence it refuses with is unchanged.
+
+9. **The rule list is 56.** T10's 51 plus the five concept rules, which print
+   first because they run first.
+
+10. **A run test needs four concept views that pass the gate.** The end to end
+    tests served a 2x2 red PNG as every generated view, which holds no figure
+    at all and now fails `concept.single_figure` three times over before the
+    model stage is reached. They serve a 128 by 192 synthetic figure instead:
+    a flat backdrop, a head, shoulders, a torso, one arm hanging clear on each
+    side, and two legs. It reads 0 levels of background spread, 1 figure, 100
+    percent of its torso band clear, 0.000 percent of reflection error, and 0
+    across every pair because the same image serves all four views.
+    `test_concept.rs` holds it to all five rules, so a change to it fails in
+    one place rather than in eight end to end tests at once.
+
+11. **The four pause prompts are gone, and with them the only way a run could
+    stop on a question that was not about money.** `should_pause`,
+    `pause_for_review` and the four tests that exercised them are deleted.
+    `--yes` keeps its one meaning, `ConfirmSpend`, and `--retry` keeps its
+    own: re-run a stage already recorded as complete. Deciding that a run
+    with no terminal attached must stop was the behavior decision 13 replaced
+    with a pull request.
+
+12. **`concept.background_flat` reads the region the border fill reached, and
+    nothing outside it.** Every pixel it histograms is within 12 levels of the
+    border median by construction, so it cannot report a wide spread: a wall
+    over a floor reads the wall's own 3 levels and passes. The share the fill
+    covered therefore rides in the finding's message, `76.394` percent of the
+    frame on the committed front view, so a reading taken on half an image
+    says so.
+
+    What refuses the case is another rule. A second backdrop tone the figure
+    does not touch is a piece of silhouette of its own, and
+    `concept.single_figure` reads 2: measured at 72.412 percent filled with a
+    patch over the top-left fifth. A second tone that touches the figure has
+    no fixture, so nothing here claims a number for it. The same fill runs
+    the other way too: a figure region within 12 levels of the backdrop and
+    touching it, a white shirt on a white wall, is eaten and leaves what it
+    held as an extra piece. A hood painted the wall's own color over the neck
+    rows takes `single_figure` to 2 while the spread stays at 3.
+
+13. **`stages::concept` reuses nothing, and its `force` parameter is gone.**
+    The loop's bullet above asked for `force = true` on every attempt, which
+    made the parameter's only value `true` and both of its reuse branches
+    unreachable. So the branches and the flag are deleted: the stage generates
+    four views whenever it runs, and `plan` reading the lock is the only cache.
+    Attempt 1 is included, which is the point. A set already on disk is either
+    one a previous run left failing, which no retry budget should be spent
+    re-measuring, or one this run was told to replace.
+
+    **What that costs** is the one case reuse was for: a run that died after
+    three of the four views arrived pays for all four again, about 0.60 USD.
+    The T11 success criterion "the test asserts attempt two called `concept`
+    with `force = true`" is met by asserting that attempt two generated a
+    fresh set, because there is no longer a flag to pass.
+
+14. **The four concept limits are three ceilings and one floor.**
+    `arm_gap_rows_percent` compares `ge`, per correction 5, so the profile's
+    validation comment naming "every concept ceiling" was wrong about it. All
+    four are still refused at zero, and the reason differs: a ceiling of zero
+    describes art no generator returns, while a floor of zero is reached by
+    every image including a blank one, which is a gate that gates nothing.
+
+15. **A declaration outranks an unreadable file.** An unreadable view is an
+    error under every rule that owns it, per the T11 row, except one that a
+    declaration already switched off: with `symmetry: false` the two
+    `concept.mirror` findings stay `skipped` whatever the files hold. A rule
+    nobody asked for cannot fail, and `skipped` is the word that says nobody
+    asked, so overwriting it with an error would report a defect against a
+    rule that never ran.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -2826,7 +3005,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T8  | Floor snap, and the femur band | 1.5 d | **T5 already moved the metric**: `stride_segment` in the skeleton file names the two roles, and every location key is scaled by that ratio in one operation. What is left here is the floor: snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`, and hold travel to a band rather than to a printed line. | Requirement 4 holds. Travel matches the source within 2 percent, which T5 measures by hand at 2.3117 m times 0.8815 giving 2.0378 m and does not yet gate. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
 | T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **`bare.glb` could not be downloaded here either**, so the fixer is built and measured against a stand-in lifted out of `model.glb`, every `[profile.mesh]` row stays provisional, and the 5-credit call is left with its steps written down. | The fixer runs, and `cleanup_effective` shows the classes it counts strictly decreasing: holes 171 to 73 and pieces 7 to 2 on the stand-in. `non_manifold_post`'s ceiling is a measured 12 with 8 spare. The file rules run on both meshes, so texture and UVs are measured on the file that gets rigged, and **that file fails `mesh.self_intersect` at 1026 against 1000**: the honest signal correction 1 is about. The no-op stub is rejected. With `symmetry: false` the fixer skips the mirror, the three mirror rules report `skipped`, and their negative controls still run. **Blocked on a key: the recalibration on the real `bare.glb` and the real 5-credit rigging call by data URI**, whose exact steps are in `crates/xtask-art/README.md`. | T3 |
-| T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, `force = true`, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two called `concept` with `force = true`. `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
+| T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, a fresh set of views on each, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two generated again rather than reusing what failed (correction 13). `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
 | T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, every animation GLB, `pose_mode`, the Blender version and the script version into the right stages. Add `Model` to the version guard. Add `verdict` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. | T1 |
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.<clip>.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |

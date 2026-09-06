@@ -160,6 +160,27 @@ pub struct MeshLimits {
     pub non_manifold_post: f64,
 }
 
+/// The `[profile.concept]` table: what the four generated views must be
+/// before any of them is sent to a reconstructor.
+///
+/// `concept.single_figure` has no row: its limit is one figure, and a count
+/// of figures has nothing to tune.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConceptLimits {
+    /// How uneven the fill behind the figure may be, in levels of 0 to 255.
+    pub background_spread_levels: f64,
+    /// What share of the torso band's rows must show both arms clear of the
+    /// body, as a percent.
+    pub arm_gap_rows_percent: f64,
+    /// How far a view's silhouette may sit from its own reflection, as a
+    /// percent of the silhouette's width.
+    pub mirror_percent: f64,
+    /// How far two views may disagree about the figure's height or where its
+    /// weight sits, as a percent of the mean of the two heights.
+    pub cross_view_percent: f64,
+}
+
 /// The `[profile.cleanup]` table: the numbers the Blender fixer runs on.
 ///
 /// Not ceilings. The fixer measures nothing, so nothing here is read against
@@ -262,6 +283,9 @@ pub struct Profile {
     pub mirror_tolerance_degrees: f64,
     pub max_bind_deviation_degrees: f64,
     pub humerus_below_horizontal: Band,
+    /// Every published concept limit, read on the generated views before a
+    /// reconstructor is paid to see them.
+    pub concept: ConceptLimits,
     /// Every published mesh limit. The mesh gates run on the character, not
     /// on the skeleton, and they read these.
     pub mesh: MeshLimits,
@@ -455,6 +479,24 @@ impl Profile {
             (
                 "humerus_below_horizontal.tolerance",
                 self.humerus_below_horizontal.tolerance,
+            ),
+            // Every concept limit. Three are ceilings and `arm_gap_rows_percent`
+            // is a floor, and none may be zero: a spread of zero describes an
+            // image no generator returns, a mirror or cross-view band of zero
+            // refuses two views that agree to the pixel but one, and a floor
+            // of zero is reached by every image, gate included.
+            (
+                "concept.background_spread_levels",
+                self.concept.background_spread_levels,
+            ),
+            (
+                "concept.arm_gap_rows_percent",
+                self.concept.arm_gap_rows_percent,
+            ),
+            ("concept.mirror_percent", self.concept.mirror_percent),
+            (
+                "concept.cross_view_percent",
+                self.concept.cross_view_percent,
             ),
             // Every mesh ceiling. Zero islands or zero triangles describes
             // no mesh that can exist, so none of these may be zero either.

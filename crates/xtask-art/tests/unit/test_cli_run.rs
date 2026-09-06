@@ -13,7 +13,7 @@ use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
 use crate::support::{
-    EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_library, a_png, a_spec,
+    EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_spec,
     install_library, install_skeleton,
 };
 
@@ -23,12 +23,12 @@ fn options(from: Option<Stage>, only: Option<Stage>, retry: bool) -> RunOptions 
 
 /// A repo where every external call succeeds: both APIs, and Blender.
 async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
-    let png = base64::engine::general_purpose::STANDARD.encode(a_png());
+    let view = base64::engine::general_purpose::STANDARD.encode(a_concept_view());
     for route in ["/images/generations", "/images/edits"] {
         Mock::given(method("POST"))
             .and(path(route))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": png}]})),
+                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": view}]})),
             )
             .mount(server)
             .await;
@@ -390,5 +390,48 @@ async fn a_paid_stage_failing_partway_still_records_what_was_charged() {
     assert!(
         !rig_tasks.is_empty(),
         "the rig was paid for before the animation failed, so it must be kept"
+    );
+}
+
+/// The retry loop wraps the concept stage and nothing else. A Meshy stage
+/// costs credits a second generation is no more likely to earn back, so a
+/// failing `mesh.*` gate stops the run where it stands, with one report.
+#[tokio::test]
+async fn a_failing_mesh_gate_stops_the_run_and_is_never_retried() {
+    let server = MockServer::start().await;
+    let dir = a_working_repo(&server).await;
+    let mut env = EnvGuard::new();
+    env.with_api(&server.uri());
+    install_blender_stub(dir.path(), &mut env);
+    let paths = Paths::new(dir.path(), "survivor");
+
+    // A bare mesh carrying a second object the profile does not name, which
+    // is debris the rigger would be paid to skin.
+    std::fs::create_dir_all(paths.staging()).unwrap();
+    std::fs::write(
+        paths.bare_glb(),
+        crate::meshes::SyntheticMesh::figure()
+            .plus_an_object("Icosphere")
+            .to_glb(),
+    )
+    .unwrap();
+
+    let error = run(
+        dir.path(),
+        "survivor",
+        options(None, Some(Stage::Rig), false),
+        true,
+        &mut std::io::empty(),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("mesh.stray_object"), "got: {error}");
+    let reports = dir.path().join("art/staging/reports");
+    assert!(reports.join("mesh.survivor.1.json").exists());
+    assert!(
+        !reports.join("mesh.survivor.2.json").exists(),
+        "the mesh gate was retried, and a second generation costs credits"
     );
 }

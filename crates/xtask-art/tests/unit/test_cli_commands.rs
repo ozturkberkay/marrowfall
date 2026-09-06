@@ -5,13 +5,16 @@ use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::check::profile::Profile;
 use xtask_art::cli::{
-    Cli, Command, RunOptions, check, confirm_spend, new_character, pause_for_review, repo_root,
-    report_balance, run_from_args, should_pause, status,
+    Cli, Command, RunOptions, check, confirm_spend, new_character, repo_root, report_balance,
+    run_from_args, spend_prompt, status,
 };
 use xtask_art::lock::{Lock, Provider, Stage, StageRecord};
 use xtask_art::spec::{CharacterSpec, CharacterType, Paths};
 
-use crate::support::{EnvGuard, a_library, a_png, a_spec, install_library, repo_root as real_repo};
+use crate::support::{
+    EnvGuard, a_concept_view, a_library, a_spec, install_library, install_skeleton,
+    repo_root as real_repo,
+};
 
 use base64::Engine as _;
 use clap::Parser as _;
@@ -23,6 +26,9 @@ fn a_repo() -> tempfile::TempDir {
     std::fs::write(dir.path().join("Cargo.toml"), "[workspace]\n").unwrap();
     // Animations are shared, so every repo has the library before it can run.
     install_library(dir.path());
+    // And every published limit is skeleton data, which the concept gate at
+    // the first stage boundary already reads.
+    install_skeleton(dir.path());
     dir
 }
 
@@ -260,7 +266,10 @@ fn check_leaves_a_character_that_is_never_rigged_alone() {
 fn the_rule_list_needs_the_profile_that_publishes_every_limit() {
     check(&real_repo(), None, true).unwrap();
 
-    let error = check(a_repo().path(), None, true).unwrap_err().to_string();
+    // A repository with no `art/skeletons` at all, which is what a rule list
+    // with nothing to read its limits from looks like.
+    let bare = tempfile::tempdir().unwrap();
+    let error = check(bare.path(), None, true).unwrap_err().to_string();
     assert!(error.contains("no skeleton profile"), "got: {error}");
 }
 
@@ -295,14 +304,20 @@ fn the_repo_root_is_found_from_the_manifest_directory() {
 
 // --- prompts --------------------------------------------------------------
 
+/// The one mid-run touchpoint quotes what it is about to spend, and the
+/// concept stage quotes the whole retry loop rather than one generation,
+/// because that is what saying yes buys.
 #[test]
-fn only_the_reviewable_stages_pause() {
-    for stage in [Stage::Concept, Stage::Model, Stage::Bake, Stage::Pack] {
-        assert!(should_pause(stage), "{stage} produces something to look at");
-    }
-    for stage in [Stage::Rig, Stage::Download] {
-        assert!(!should_pause(stage), "{stage} has nothing to review");
-    }
+fn the_spend_prompt_quotes_what_the_stage_costs() {
+    assert_eq!(
+        spend_prompt(Stage::Concept),
+        "  concept already completed and costs up to 3 attempts of 4 OpenAI images each, \
+         about 2.40 USD in total. Re-run? [y/N] "
+    );
+    assert_eq!(
+        spend_prompt(Stage::Rig),
+        "  rig already completed and costs credits. Re-run? [y/N] "
+    );
 }
 
 #[test]
@@ -326,41 +341,6 @@ fn a_spend_is_only_confirmed_by_an_explicit_yes() {
             "{answer:?} must not spend credits"
         );
     }
-}
-
-#[test]
-fn the_review_gate_continues_on_an_empty_line() {
-    let dir = a_repo();
-    let paths = Paths::new(dir.path(), "survivor");
-    // A bare Enter is the default, which is "yes, carry on".
-    pause_for_review(Stage::Concept, &paths, &mut "\n".as_bytes()).unwrap();
-    pause_for_review(Stage::Concept, &paths, &mut "y\n".as_bytes()).unwrap();
-}
-
-#[test]
-fn the_review_gate_stops_the_run_when_the_answer_is_no() {
-    let dir = a_repo();
-    let paths = Paths::new(dir.path(), "survivor");
-    for answer in ["n\n", "no\n", "NO\n"] {
-        let error = pause_for_review(Stage::Concept, &paths, &mut answer.as_bytes())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("completed stages are cached"),
-            "got: {error}"
-        );
-    }
-}
-
-#[test]
-fn the_review_gate_refuses_to_pass_itself_with_no_terminal_attached() {
-    let dir = a_repo();
-    let paths = Paths::new(dir.path(), "survivor");
-    // An agent or a pipe: continuing silently would defeat the gate.
-    let error = pause_for_review(Stage::Concept, &paths, &mut std::io::empty())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("--yes"), "got: {error}");
 }
 
 #[tokio::test]
@@ -451,12 +431,12 @@ fn an_unknown_stage_name_lists_the_valid_ones() {
 
 /// Serves every provider call the whole pipeline makes.
 async fn serve_pipeline(server: &MockServer) {
-    let png = base64::engine::general_purpose::STANDARD.encode(a_png());
+    let view = base64::engine::general_purpose::STANDARD.encode(a_concept_view());
     for route in ["/images/generations", "/images/edits"] {
         Mock::given(method("POST"))
             .and(path(route))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": png}]})),
+                ResponseTemplate::new(200).set_body_json(json!({"data": [{"b64_json": view}]})),
             )
             .mount(server)
             .await;

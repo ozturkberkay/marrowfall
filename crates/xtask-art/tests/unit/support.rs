@@ -140,6 +140,40 @@ pub fn a_png() -> Vec<u8> {
     bytes
 }
 
+/// A concept view every `concept.*` rule holds: a flat backdrop, one figure,
+/// and an arm clear of the ribcage on each side.
+///
+/// Small and synthetic, because a run test needs four views that pass the
+/// gate and the committed art is 1.6 MB each. The same image serves all four
+/// views, so `concept.cross_view` reads zero by construction.
+pub fn a_concept_view() -> Vec<u8> {
+    let mut image = image::RgbImage::from_pixel(128, 192, image::Rgb([138, 138, 138]));
+    let skin = image::Rgb([170, 140, 110]);
+    let mut block = |x: std::ops::Range<u32>, y: std::ops::Range<u32>| {
+        for y in y {
+            for x in x.clone() {
+                image.put_pixel(x, y, skin);
+            }
+        }
+    };
+    block(56..72, 10..30); // head
+    block(32..96, 30..38); // shoulders, which is what joins the arms on
+    block(48..80, 38..110); // torso
+    block(32..40, 38..110); // and one arm hanging clear on each side
+    block(88..96, 38..110);
+    block(52..60, 110..180); // legs
+    block(68..76, 110..180);
+
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encoding a concept view");
+    bytes
+}
+
 /// The library every test resolves names against.
 pub fn a_library() -> AnimationLibrary {
     AnimationLibrary::template()
