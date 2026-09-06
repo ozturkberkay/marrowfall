@@ -56,6 +56,49 @@ impl std::fmt::Display for View {
     }
 }
 
+/// Which rest pose the reconstructor is asked to build the body in.
+///
+/// Unset lets the provider freestyle, which is how the first survivor arrived
+/// with his arms 59 degrees below horizontal against a prompt of 40. Our
+/// concept views are A-pose, so a T-posed body has to invent the tops of the
+/// forearms, while the provider's own docs say a T-pose rigs best. Which one
+/// to send is therefore a measurement: `cargo art spike-pose` runs all three
+/// and writes the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+pub enum PoseMode {
+    /// Arms straight, angled down and out, which is what the concept views
+    /// show and what `CharacterType::pose_instruction` asks the artist for.
+    APose,
+    /// Arms straight out sideways.
+    TPose,
+}
+
+impl PoseMode {
+    /// Every value the spike measures, unset first.
+    pub const ALL: [Option<PoseMode>; 3] = [None, Some(PoseMode::APose), Some(PoseMode::TPose)];
+
+    /// How Meshy spells it on the wire. Ours is the enum above; a provider
+    /// only ever sees this.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::APose => "a-pose",
+            Self::TPose => "t-pose",
+        }
+    }
+
+    /// What a directory or a report item calls one run of the spike, unset
+    /// included, so all three are named the same way.
+    pub fn named(mode: Option<Self>) -> &'static str {
+        mode.map_or("unset", Self::as_str)
+    }
+}
+
+impl std::fmt::Display for PoseMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Texture map size. A plain measurement, not any provider's spelling of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextureResolution {
@@ -136,6 +179,10 @@ pub struct Subject {
     /// character.
     #[serde(default)]
     pub symmetry: bool,
+    /// The rest pose the model stage asks for. Unset leaves the provider to
+    /// choose, and [`PoseMode`] says why that is a measurement.
+    #[serde(default)]
+    pub pose_mode: Option<PoseMode>,
 }
 
 /// Retopology settings applied during generation.
@@ -207,6 +254,8 @@ impl CharacterSpec {
                 // cleaned and mirrored without someone saying so.
                 cleanup: bilateral,
                 symmetry: bilateral,
+                // Unset until the spike says which value earns its place.
+                pose_mode: None,
             },
             animations: if kind.can_be_rigged() {
                 vec!["idle".to_owned(), "run".to_owned()]
@@ -335,14 +384,46 @@ impl CharacterSpec {
 pub struct Paths {
     pub root: PathBuf,
     pub name: String,
+    /// Where the derived files go, and what the reports about them are filed
+    /// under. The character's own, unless [`Paths::variant`] moved them.
+    staging: PathBuf,
+    preview: PathBuf,
+    item: String,
 }
 
 impl Paths {
     pub fn new(root: impl Into<PathBuf>, name: &str) -> Self {
+        let root: PathBuf = root.into();
         Self {
-            root: root.into(),
+            staging: root.join(format!("art/staging/{name}")),
+            preview: root.join(format!("art/preview/{name}")),
+            item: name.to_owned(),
+            root,
             name: name.to_owned(),
         }
+    }
+
+    /// The same character, with everything it derives under `at` and every
+    /// report it files named `<name>-<tag>`.
+    ///
+    /// The `pose_mode` spike gives each mode one of these, so three runs of
+    /// one character never overwrite each other's mesh, each other's preview
+    /// or each other's report.
+    pub fn variant(&self, at: impl AsRef<Path>, tag: &str) -> Self {
+        let at = at.as_ref();
+        Self {
+            root: self.root.clone(),
+            name: self.name.clone(),
+            staging: self.staging.join(at),
+            preview: self.preview.join(at),
+            item: format!("{}-{tag}", self.item),
+        }
+    }
+
+    /// What a report about this run is filed under, which is the item part of
+    /// every file under `art/staging/reports/`.
+    pub fn item(&self) -> &str {
+        &self.item
     }
 
     /// Everything committed about one character, in one directory. Derived
@@ -386,7 +467,7 @@ impl Paths {
 
     /// Raw bake output. Derived; gitignored.
     pub fn staging(&self) -> PathBuf {
-        self.root.join(format!("art/staging/{}", self.name))
+        self.staging.clone()
     }
 
     /// The landmark goldens, three frames by two directions per clip.
@@ -397,7 +478,7 @@ impl Paths {
 
     /// Reviewable artifacts, one per stage. Derived; gitignored.
     pub fn preview(&self) -> PathBuf {
-        self.root.join(format!("art/preview/{}", self.name))
+        self.preview.clone()
     }
 
     /// Game-ready assets consumed by Godot.

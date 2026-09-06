@@ -117,12 +117,19 @@ pub const MIRROR: Rule = Rule {
     limit: |profile| profile.mesh.mirror_percent,
 };
 
+/// The mesh's own height against the one the spec asks for.
+///
+/// Its own band, not the rig's. `height_meters` is a parameter of the
+/// **rigging** call, so nothing before it scales the body: Meshy returns a
+/// bare mesh in its own frame, about 1.9 m tall and centered on the origin,
+/// and only the rigger stands it on the floor at the height it was told.
+/// Read against the rig's 5 percent, the real bare mesh reads 11.6.
 pub const WORLD_SIZE: Rule = Rule {
     id: "mesh.world_size",
     comparison: Comparison::Le,
     unit: "percent",
     space: "world space, the vertex span along the up axis against spec.subject.height_meters",
-    limit: |profile| profile.height_tolerance_percent,
+    limit: |profile| profile.mesh.height_percent,
 };
 
 pub const FACING: Rule = Rule {

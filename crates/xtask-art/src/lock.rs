@@ -356,6 +356,7 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
         skeleton,
         cleanup,
         symmetry,
+        pose_mode,
     } = subject;
     let Bake {
         directions,
@@ -386,6 +387,8 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
             // remesh or texture setting needs no code change here.
             parts.push(format!("{remesh:?}"));
             parts.push(format!("{texture:?}"));
+            // The rest pose the request asks for, which is a different body.
+            parts.push(format!("{pose_mode:?}"));
             // The mesh is reconstructed from the four views, so a regenerated
             // view is a different mesh.
             for view in View::ALL {

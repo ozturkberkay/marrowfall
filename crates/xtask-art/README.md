@@ -11,19 +11,21 @@ cargo art status skeleton                 # what is done, stale or pending
 cargo art check                           # validate the specs, measure the art
 cargo art check --list-rules              # every gate: limit, comparison, unit, space
 cargo art check --sheet                   # draw the contact sheet of the committed atlases
+cargo art spike-pose skeleton             # measure which pose_mode to send, ~90 credits
 ```
 
-A run asks nothing except before it re-spends: the one prompt left is
-`ConfirmSpend`, on a paid stage that is already recorded as complete.
-`--retry`, `--from` and `--only` are what re-run those stages, and `--yes`
-answers the prompt for an unattended run. Nothing pauses for a human to look
+A run asks nothing except before it spends. There are two such prompts:
+`ConfirmSpend`, on a paid stage that is already recorded as complete, and
+`spike-pose`'s own, which quotes the credits it still has to buy. `--retry`,
+`--from` and `--only` are what re-run a paid stage, and `--yes` answers
+either prompt for an unattended run. Nothing pauses for a human to look
 at a stage's output; the gates below decide, and a pull request is where a
 human signs off.
 
 `check` reads the art on disk and prints one line per defect, one report per
 rule set. It measures the four concept views against the five `concept.*`
 rules, then three files per character: the rigged
-`art/characters/<name>/model.glb` against the thirteen `rig.*` rules,
+`art/characters/<name>/model.glb` against the fourteen `rig.*` rules,
 `art/staging/<name>/bare.glb`, the mesh before rigging, against the thirteen
 `mesh.*` file rules, and `art/staging/<name>/clean.glb`, what the fixer wrote,
 against eleven of those thirteen plus the two that read the pair. A file that
@@ -37,6 +39,12 @@ about a model task, and a file written locally has none.
 Today the committed survivor breaks five of the `rig.*` rules, on 14 subjects
 between them, so `check` exits non-zero on it. The rig is regenerated later in
 the pipeline work, and the rules become required checks then.
+
+`rig.elbow_bend` is the one that records rather than gates: it reads how far
+each forearm sits out of line with its own upper arm, and every rig this
+pipeline has bought carries some of it, 24 degrees on the committed one. A
+published limit would fail forever on a rig nothing here can regenerate, and
+the reading is what the `pose_mode` spike below needs.
 
 The `clip.*` and `source.*` rules run at their own stage boundaries rather
 than here, because each one needs something `check` does not have.
@@ -258,50 +266,47 @@ beside the mesh it wrote and reports `mesh.cleanup_effective`, which is
 strictly less than the defects it started with, and `mesh.non_manifold_post`,
 which is the ceiling for what filling a hole leaves behind.
 
-**Today the survivor's cleaned mesh fails `mesh.self_intersect`**, 1026 faces
-against a provisional 1000, because mirroring copies the crossings of the half
-it keeps. So `cargo art check` exits non-zero and the rig stage refuses to
-spend on it. That row is one of the ones the recalibration below is for.
-
-### Still waiting on a Meshy key
-
-Every `[profile.mesh]` limit is calibrated on the rigged `model.glb`, or on a
-stand-in lifted out of it, because no key on this machine could download
-`bare.glb`. With a working key, in this order and for no credits until the
-last step:
-
-```sh
-export MESHY_API_KEY=...
-# 0 credits: the model task is already paid for, and its GLB is the bare mesh.
-id=$(grep -A4 'Model: StageRecord' art/characters/survivor/spec.lock | grep 'id:' | cut -d'"' -f2)
-task=https://api.meshy.ai/openapi/v1/multi-image-to-3d/$id
-url=$(curl -sH "Authorization: Bearer $MESHY_API_KEY" $task | jq -r .model_urls.glb)
-curl -sL "$url" -o art/staging/survivor/bare.glb
-
-cargo art check survivor          # the pre-cleanup set, on the real mesh
-```
-
-Then replace every `[profile.mesh]` row marked provisional with what that run
-read, plus its published headroom, and drop the marker. Run the fixer and
-measure what it wrote:
-
-```sh
-cargo art run survivor --only rig   # 5 credits: cleans, then rigs by data URI
-cargo art check survivor            # mesh.non_manifold_post, on the real clean.glb
-```
-
-`mesh.non_manifold_post` and `mesh.self_intersect` are the two rows that can
-only be set from that pair: the first is what filling holes left behind, and
-the second is the one the fixer makes worse. The rigging call is the 5 credits,
-and it is the first proof that a data URI of this size is accepted at all.
-
 Every mesh rule measures **world space first, then welded**, and says so in
 its finding. glTF splits one vertex at every UV seam, so a naive read of the
 survivor counts 13,368 boundary edges on a mesh that has 171. The weld
 distance is 1e-5 m, chosen from a merge histogram whose plateau runs from
-1e-9 m to 1e-4 m. Every `[profile.mesh]` limit is **provisional**: it is
-calibrated on the rigged `model.glb`, because `bare.glb` has never been
-downloaded.
+1e-9 m to 1e-4 m. Every `[profile.mesh]` limit is calibrated on a real bare
+mesh, `art/staging/survivor/spike/unset/bare.glb`, with the reading beside it
+in `art/skeletons/humanoid.toml`.
+
+Two rows are not what a rigged file would suggest. `mesh.self_intersect` is
+read on the **pair**, because mirroring copies the crossings of the half it
+keeps: 1094 arrive and 1153 survive the fixer. And `mesh.world_size` has a
+band of its own rather than the rig's 5 percent, because `height_meters` is a
+parameter of the **rigging** call: nothing before it scales the body, and a
+bare mesh arrives about 1.90 m tall whatever the spec asks for.
+
+### Which `pose_mode` to send
+
+```sh
+cargo art spike-pose survivor          # about 90 credits, then free
+cargo art spike-pose survivor --rig    # and 5 more per mode
+```
+
+Meshy's `multi-image-to-3d` takes an optional `pose_mode`, and which value to
+send is a measurement rather than a preference. The command reconstructs the
+same four committed concept views three times, unset, `a-pose` and `t-pose`,
+each into `art/staging/<name>/spike/<mode>/`, runs the fixer and every `mesh.*`
+rule on both files, and draws a contact sheet of five views of the bare mesh:
+front, back, left, right, and the arms alone from 45 degrees above the front,
+which is where a forearm's top surface is. `--rig` then buys a skeleton for
+each and reads every `rig.*` rule on it.
+
+Free to re-run: a mode whose `bare.glb` or `rigged.glb` is already on disk is
+measured again and bought again never. It asks before it bills, quoting only
+what is left to buy, so a second run asks nothing. It is not a stage, writes
+no lock, and touches no committed art; each mode files its reports under
+`art/staging/reports/<set>.<name>-<mode>.1.json`.
+
+It is the one command that measures a mode whose mesh gates failed instead of
+stopping there, and the reason is narrow: the limits are what it is
+calibrating. The `rig` stage still refuses, and `spike-pose` still exits
+non-zero carrying the verdict.
 
 The pipeline splits at the GLB. Concept art and the 3D model are generated by
 paid APIs and cannot be reproduced, so they are committed alongside the spec in
@@ -404,14 +409,24 @@ does not hold them the `rig` record reads stale. Nothing spends on that: while
 the committed `model.glb` is on disk a plan skips every stage up to
 `download`.
 
-Four paths spend money, and each of them is typed by hand: `--from concept`,
-`--from model` and `--from rig`, the same three with `--only`, and `--retry`.
-A paid stage the lock still calls **current** asks before it bills. A paid
-stage the lock calls **stale** does not ask, because forcing it was already
-the answer, so `cargo art status <name>` never recommends one: it lists every
+Two commands can spend money, and both are typed by hand. `cargo art run`
+bills only when it is forced: `--from concept`, `--from model` and `--from
+rig`, the same three with `--only`, and `--retry`. And `cargo art spike-pose`
+bills up to 105 credits, 90 of them without `--rig`. A paid stage the lock
+still calls **current** asks before it bills. A paid stage the lock calls
+**stale** does not ask, because forcing it was already the answer, so
+`cargo art status <name>` never recommends one: it lists every
 stale stage, says what each paid one would bill, and offers the earliest free
 stage as the one command that rebuilds for nothing. Every paid stage runs
 before every free one, so `--from` a free stage cannot reach a bill.
+
+A crash while a paid task is in flight does not re-spend either. The id is
+written to `art/staging/reports/<stage>.<item>.<attempt>.task` before the
+first poll and removed once that task reports success, so the next run polls
+the one already paid for instead of buying a second. It is removed on success
+and not later, because `--retry` has to be able to buy a genuinely new one,
+and on a task the provider gave up on, because that one reads the same way
+forever.
 
 The Blender build is an input too, and only the `bake` row reads it. On a
 machine with no Blender that row reads `unknown` with the reason, the other

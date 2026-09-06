@@ -87,6 +87,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Measure which `pose_mode` to send, by generating the model stage three
+    /// times from the same concept views: unset, `a-pose` and `t-pose`.
+    ///
+    /// About 90 credits the first time, then free: a mode whose mesh is
+    /// already under `art/staging/<name>/spike/` is measured again and never
+    /// generated again. `--rig` adds 5 credits per mode.
+    SpikePose {
+        name: String,
+        /// Rig each cleaned mesh, and measure every `rig.*` rule on it. 5
+        /// credits per mode, whatever that mesh's gates read, because the
+        /// limits are what this command is calibrating.
+        #[arg(long)]
+        rig: bool,
+        /// Answer the spend prompt, for an unattended run.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Validate specs and measure the art on disk, without running anything.
     Check {
         /// Defaults to every spec in art/characters.
@@ -364,7 +381,7 @@ pub async fn run(
                 continue;
             }
             Step::ConfirmSpend(stage) => {
-                if !confirm_spend(stage, yes, input)? {
+                if !confirm_spend(&spend_prompt(stage), yes, input)? {
                     println!("{stage}: skipped by user");
                     continue;
                 }
@@ -465,13 +482,13 @@ where
     )
 }
 
-/// Asks before re-running a stage that has already been paid for. No terminal
-/// means no confirmation.
-pub fn confirm_spend(stage: Stage, yes: bool, input: &mut impl BufRead) -> Result<bool> {
+/// Asks before billing, with whatever words the caller quotes the bill in.
+/// No terminal means no confirmation.
+pub fn confirm_spend(prompt: &str, yes: bool, input: &mut impl BufRead) -> Result<bool> {
     if yes {
         return Ok(true);
     }
-    print!("{}", spend_prompt(stage));
+    print!("{prompt}");
     std::io::stdout().flush()?;
     let mut answer = String::new();
     input.read_line(&mut answer)?;
@@ -1122,6 +1139,9 @@ where
             .await
         }
         Command::Fetch { names, force } => fetch(&root, &names, force).await,
+        Command::SpikePose { name, rig, yes } => {
+            crate::spike::run(&root, &name, rig, yes, &mut std::io::stdin().lock()).await
+        }
         Command::Status { name, json } => status(&root, &name, json),
         Command::Check {
             name,

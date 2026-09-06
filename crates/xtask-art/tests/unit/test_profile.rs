@@ -42,6 +42,7 @@ mirror_percent = 3.5
 triangles = 300000
 printability_edges = 200
 non_manifold_post = 20
+height_percent = 25.0
 
 [profile.bake]
 frame_coverage_percent = 1.0
@@ -105,7 +106,9 @@ fn the_committed_humanoid_profile_loads() {
 
     assert_eq!(profile.bones.len(), 24, "24 bones, no fingers");
     assert_eq!(profile.single_root, "Hips");
-    assert_eq!(profile.meshes, ["char1"]);
+    // One object, three names: unnamed in the bare mesh Meshy generates,
+    // `Mesh_0` in what Blender's fixer exports, `char1` after rigging.
+    assert_eq!(profile.meshes, ["node 0", "Mesh_0", "char1"]);
     assert_eq!(
         profile.up_axis.to_string(),
         "+z",
@@ -126,17 +129,18 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.concept.arm_gap_rows_percent, 75.0);
     assert_eq!(profile.concept.mirror_percent, 2.4);
     assert_eq!(profile.concept.cross_view_percent, 6.0);
-    // Provisional, calibrated on the rigged `model.glb`, because `bare.glb`
-    // has never been downloaded. The measurement beside each is in the
-    // design's limits table and in `test_mesh.rs`.
+    // Calibrated on a real bare mesh, the `unset` generation of the pose-mode
+    // spike. The measurement beside each is in the design's limits table and
+    // in `art/skeletons/humanoid.toml`.
     assert_eq!(profile.mesh.holes, 200.0);
     assert_eq!(profile.mesh.non_manifold_edges, 10.0);
     assert_eq!(profile.mesh.islands, 8.0);
-    assert_eq!(profile.mesh.self_intersections, 1000.0);
+    assert_eq!(profile.mesh.self_intersections, 1500.0);
     assert_eq!(profile.mesh.mirror_percent, 3.5);
     assert_eq!(profile.mesh.triangles, 300_000.0);
     assert_eq!(profile.mesh.printability_edges, 200.0);
     assert_eq!(profile.mesh.non_manifold_post, 20.0);
+    assert_eq!(profile.mesh.height_percent, 25.0);
     assert_eq!(profile.cleanup.smallest_island_cubic_meters, 1e-6);
     assert_eq!(profile.cleanup.symmetrize_meters, 0.001);
     assert_eq!(profile.clip.swing_degrees, 0.01);
@@ -516,6 +520,7 @@ fn a_mesh_ceiling_that_is_not_a_positive_number_is_refused() {
         ("triangles", "300000"),
         ("printability_edges", "200"),
         ("non_manifold_post", "20"),
+        ("height_percent", "25.0"),
     ] {
         for value in ["0.0", "-1.0", "nan"] {
             let error = refused(&[(

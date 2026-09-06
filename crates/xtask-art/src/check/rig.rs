@@ -1,4 +1,4 @@
-//! The rig gates: thirteen rules, every limit read from `[profile]`.
+//! The rig gates: fourteen rules, every limit read from `[profile]`.
 //!
 //! The committed rig is auto-rigger output that nothing ever measured. It
 //! carries elbows bent 24 degrees at rest, arms 59 degrees below horizontal
@@ -26,7 +26,7 @@ use super::gltf_world::{
     SHORTEST_SEGMENT_METERS, Skeleton, blender_to_gltf, degrees_between, gltf_to_blender,
 };
 use super::profile::{Axis, LEFT, Profile, RIGHT};
-use super::{Comparison, Finding, NOT_MIRRORED, Rule, Symmetry, relative_to};
+use super::{Comparison, Finding, HALF_A_TURN, NOT_MIRRORED, Rule, Symmetry, relative_to};
 
 /// The stage these findings belong to, which names their report file.
 pub const STAGE: &str = "rig";
@@ -34,6 +34,10 @@ pub const STAGE: &str = "rig";
 /// The upper arm. Its angle below horizontal is what the concept prompt asks
 /// for and what nothing ever checked.
 const HUMERUS: &str = "Arm";
+/// The forearm, and what it ends in. [`ELBOW_BEND`] needs all three joints,
+/// so it names them rather than taking a tail from the profile.
+const FOREARM: &str = "ForeArm";
+const HAND: &str = "Hand";
 /// The bone whose tail direction says which way the character faces.
 const FOOT: &str = "Foot";
 
@@ -105,6 +109,20 @@ pub const HUMERUS_ANGLE: Rule = Rule {
     limit: |profile| profile.humerus_below_horizontal.tolerance,
 };
 
+/// How far the forearm sits out of line with its own upper arm at rest.
+///
+/// Records, never gates. The bend a generator leaves is the second
+/// acceptance item of the `pose_mode` spike, and a published limit would
+/// fail the committed rig, which bends 24 degrees, on every run until that
+/// rig is regenerated. The reading is what the decision needs.
+pub const ELBOW_BEND: Rule = Rule {
+    id: "rig.elbow_bend",
+    comparison: Comparison::Le,
+    unit: "degrees",
+    space: "world space, the forearm direction against the upper arm direction",
+    limit: |_| HALF_A_TURN,
+};
+
 pub const FACING: Rule = Rule {
     id: "rig.facing",
     comparison: Comparison::Eq,
@@ -146,7 +164,7 @@ pub const OBJECT_TRANSFORM: Rule = Rule {
 };
 
 /// Every rig rule, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 13] = [
+pub const RULES: [&Rule; 14] = [
     &NAMES_STANDARD,
     &BONE_SET,
     &SINGLE_ROOT,
@@ -155,6 +173,7 @@ pub const RULES: [&Rule; 13] = [
     &MIRROR_LENGTH,
     &MIRROR_DIRECTION,
     &HUMERUS_ANGLE,
+    &ELBOW_BEND,
     &FACING,
     &UP_AXIS,
     &BIND_DEVIATION,
@@ -220,6 +239,7 @@ pub fn check(
         rig.mirror_length(),
         rig.mirror_direction(),
         rig.humerus_angle(),
+        rig.elbow_bend(),
         rig.facing(),
         rig.up_axis(),
         rig.bind_deviation(),
@@ -503,6 +523,43 @@ impl<'a> Measured<'a> {
                          of {}",
                         band.target
                     ),
+                )
+            })
+            .collect()
+    }
+
+    /// How far each forearm sits out of line with its own upper arm.
+    ///
+    /// Three joints, so the profile's tails cannot name the pair: the upper
+    /// arm's own direction is the one from the shoulder joint to the elbow.
+    fn elbow_bend(&self) -> Vec<Finding> {
+        [LEFT, RIGHT]
+            .into_iter()
+            .map(|side| {
+                (
+                    format!("{side}{HUMERUS}"),
+                    format!("{side}{FOREARM}"),
+                    format!("{side}{HAND}"),
+                )
+            })
+            .filter(|(arm, forearm, hand)| self.has(arm) && self.has(forearm) && self.has(hand))
+            .map(|(arm, forearm, hand)| {
+                let (Some(upper), Some(lower)) = (
+                    self.skeleton.direction(&arm, &forearm),
+                    self.skeleton.direction(&forearm, &hand),
+                ) else {
+                    return self.undefined(
+                        &ELBOW_BEND,
+                        &forearm,
+                        format!("{arm}, {forearm} and {hand} do not make two segments"),
+                    );
+                };
+                let bend = degrees_between(upper, lower);
+                self.measured(
+                    &ELBOW_BEND,
+                    &forearm,
+                    bend,
+                    format!("{forearm} sits {bend:.1} degrees out of line with {arm}"),
                 )
             })
             .collect()

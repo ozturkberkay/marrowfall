@@ -62,6 +62,15 @@ KEY_LIGHT_ELEVATION_DEG = 60.0
 # extension clip against the edge of the render canvas.
 FRAMING_MARGIN = 1.08
 
+# What share of a bare mesh's vertices the forearm close-up frames: the ones
+# furthest from X = 0. In any arms-out pose those are the hands and forearms.
+FOREARM_SHARE = 0.1
+
+# Elevation of the forearm close-up. The one angle that shows the top surface
+# of a forearm in an A-pose and in a T-pose alike, which is the surface a
+# generator has to invent when the concept views hide it.
+FOREARM_ELEVATION_DEG = 45.0
+
 Vec3 = tuple[float, float, float]
 
 
@@ -120,6 +129,18 @@ class Bounds(Frozen):
     @property
     def height(self) -> float:
         return self.hi[2] - self.lo[2]
+
+    @property
+    def center(self) -> Vec3:
+        return (
+            (self.lo[0] + self.hi[0]) / 2,
+            (self.lo[1] + self.hi[1]) / 2,
+            (self.lo[2] + self.hi[2]) / 2,
+        )
+
+    @property
+    def diagonal(self) -> float:
+        return math.dist(self.lo, self.hi)
 
 
 class Framing(Frozen):
@@ -213,6 +234,107 @@ def key_light_rotation() -> Vec3:
         0.0,
         math.radians(KEY_LIGHT_AZIMUTH_DEG),
     )
+
+
+class Still(Frozen):
+    """One orthographic view of a mesh nothing animates.
+
+    The model contact sheet is made of these: what a human reads to answer
+    whether the generator invented surface it had no reference for.
+    """
+
+    name: str
+    azimuth_degrees: float
+    """Turn about the world up axis. The character faces -Y, so 0 is his
+    front and 90 is his own left."""
+    elevation_degrees: float
+    box: Bounds
+    """What the camera must cover."""
+
+    @model_validator(mode="after")
+    def the_box_must_have_size(self) -> "Still":
+        if self.box.diagonal <= 0.0:
+            raise ValueError(f"{self.name}: the box to frame is a single point")
+        return self
+
+    @property
+    def ortho_scale(self) -> float:
+        """The box's own diagonal, which covers it from any angle.
+
+        Framing each azimuth exactly would need the projected extents. The
+        diagonal is the one number that cannot clip, and on a standing body
+        it sits a few percent over the height that dominates it.
+        """
+        return self.box.diagonal
+
+    @property
+    def camera_location(self) -> Vec3:
+        azimuth = math.radians(self.azimuth_degrees)
+        elevation = math.radians(self.elevation_degrees)
+        distance = max(self.ortho_scale * 4.0, 1.0)
+        center = self.box.center
+        return (
+            center[0] + distance * math.cos(elevation) * math.sin(azimuth),
+            center[1] - distance * math.cos(elevation) * math.cos(azimuth),
+            center[2] + distance * math.sin(elevation),
+        )
+
+    @property
+    def camera_rotation(self) -> Vec3:
+        """Blender cameras look down local -Z, so an unturned one at rot_x of
+        90 degrees looks along +Y, which is the front view."""
+        return (
+            math.radians(90.0 - self.elevation_degrees),
+            0.0,
+            math.radians(self.azimuth_degrees),
+        )
+
+    @property
+    def key_light_rotation(self) -> Vec3:
+        """The bake's key light turned to this view's own azimuth, so every
+        still is lit from its own screen upper-left and not from behind."""
+        pitch, _, roll = key_light_rotation()
+        return (pitch, 0.0, roll + math.radians(self.azimuth_degrees))
+
+
+def outermost_box(points: Sequence[Vec3], share: float) -> Bounds:
+    """The box around the `share` of points furthest from X = 0.
+
+    In any arms-out pose those are the hands and the forearms. Read off the
+    geometry because there is no joint to read instead: the mesh the model
+    stage downloads carries no skeleton at all.
+    """
+    if not points:
+        raise ValueError("no points to frame")
+    if not 0.0 < share <= 1.0:
+        raise ValueError(f"share must be in 0.0 < share <= 1.0, got {share}")
+    ranked = sorted(points, key=lambda point: abs(point[0]), reverse=True)
+    kept = ranked[: max(1, math.ceil(len(ranked) * share))]
+    return Bounds(
+        lo=tuple(min(point[axis] for point in kept) for axis in range(3)),
+        hi=tuple(max(point[axis] for point in kept) for axis in range(3)),
+    )
+
+
+def mesh_stills(body: Bounds, points: Sequence[Vec3]) -> list[Still]:
+    """The five views of the model contact sheet.
+
+    Four elevations of the whole body, then the arms alone from above the
+    front, which is where a forearm's top surface is.
+    """
+    arms = outermost_box(points, FOREARM_SHARE)
+    flat = [("front", 0.0), ("back", 180.0), ("left", 90.0), ("right", 270.0)]
+    return [
+        Still(name=name, azimuth_degrees=azimuth, elevation_degrees=0.0, box=body)
+        for name, azimuth in flat
+    ] + [
+        Still(
+            name="forearms",
+            azimuth_degrees=0.0,
+            elevation_degrees=FOREARM_ELEVATION_DEG,
+            box=arms,
+        )
+    ]
 
 
 def direction_rotation(index: int, count: int) -> float:

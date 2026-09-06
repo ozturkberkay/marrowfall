@@ -13,6 +13,8 @@ from framing import (
     BAKE_RULES,
     CAMERA_ELEVATION_DEG,
     DIRECTION_NAMES,
+    FOREARM_ELEVATION_DEG,
+    FOREARM_SHARE,
     FRAMING_MARGIN,
     GOLDEN_HEADER,
     KEY_LIGHT_AZIMUTH_DEG,
@@ -23,6 +25,7 @@ from framing import (
     Camera,
     Framing,
     Landmark,
+    Still,
     bone_from_data_path,
     direction_rotation,
     forearm_roll_sign,
@@ -36,8 +39,10 @@ from framing import (
     is_forearm,
     key_light_rotation,
     landmark_golden,
+    mesh_stills,
     missing_bones,
     off_this_body,
+    outermost_box,
     pin_horizontally,
     project,
     rest_height,
@@ -943,3 +948,105 @@ def test_every_committed_landmark_is_inside_the_canvas_it_was_projected_on(
     for mark in golden_landmarks(path.read_text()):
         assert 0 <= mark.x < 512, f"{mark} in {path.stem}"
         assert 0 <= mark.y < 512, f"{mark} in {path.stem}"
+
+
+# --- the model contact sheet ----------------------------------------------
+
+
+def a_body() -> Bounds:
+    """A 1.7 m figure, arms out to 0.7 m either side."""
+    return Bounds(lo=(-0.7, -0.2, 0.0), hi=(0.7, 0.2, 1.7))
+
+
+def arm_points() -> list[tuple[float, float, float]]:
+    """A torso column plus two arms reaching out sideways at chest height."""
+    torso = [(0.0, 0.0, z / 10.0) for z in range(18)]
+    arms = [(side * x / 10.0, 0.0, 1.3) for side in (-1.0, 1.0) for x in range(1, 8)]
+    return torso + arms
+
+
+def test_the_sheet_is_four_body_views_and_one_close_view_of_the_arms() -> None:
+    stills = mesh_stills(a_body(), arm_points())
+
+    assert [still.name for still in stills] == [
+        "front",
+        "back",
+        "left",
+        "right",
+        "forearms",
+    ]
+    body, forearms = stills[0], stills[4]
+    assert forearms.ortho_scale < body.ortho_scale, "the close view is closer"
+    assert forearms.elevation_degrees == FOREARM_ELEVATION_DEG
+    assert all(still.elevation_degrees == 0.0 for still in stills[:4])
+
+
+def test_the_four_body_views_look_at_the_body_from_its_own_four_sides() -> None:
+    front, back, left, right = mesh_stills(a_body(), arm_points())[:4]
+
+    # The character faces -Y, so the front camera pulls back along -Y.
+    assert front.camera_location[1] < 0.0
+    assert back.camera_location[1] > 0.0
+    assert left.camera_location[0] > 0.0, "+X is his own left"
+    assert right.camera_location[0] < 0.0
+    for still in (front, back, left, right):
+        assert still.camera_rotation[0] == pytest.approx(math.radians(90.0))
+        assert still.camera_rotation[2] == pytest.approx(
+            math.radians(still.azimuth_degrees)
+        )
+
+
+def test_the_close_view_looks_down_on_the_arms_from_the_front() -> None:
+    forearms = mesh_stills(a_body(), arm_points())[4]
+
+    assert forearms.camera_location[1] < 0.0, "in front of him"
+    assert forearms.camera_location[2] > forearms.box.center[2], "and above"
+    assert forearms.camera_rotation[0] < math.radians(90.0), "tilted down"
+
+
+def test_every_view_is_lit_from_its_own_screen_upper_left() -> None:
+    pitch, _, roll = key_light_rotation()
+
+    for still in mesh_stills(a_body(), arm_points()):
+        turned = still.key_light_rotation
+        assert turned[0] == pytest.approx(pitch)
+        assert turned[2] == pytest.approx(roll + math.radians(still.azimuth_degrees))
+
+
+def test_the_close_view_frames_the_arms_and_leaves_the_torso_out() -> None:
+    box = outermost_box(arm_points(), FOREARM_SHARE)
+
+    assert box.lo[0] < -0.5 and box.hi[0] > 0.5, "both arms, out at the ends"
+    assert box.lo[2] == pytest.approx(1.3), "chest height, not the whole body"
+    assert box.hi[2] == pytest.approx(1.3)
+
+
+def test_the_close_view_keeps_at_least_one_point_however_small_the_share() -> None:
+    box = outermost_box(arm_points(), 1e-9)
+
+    assert box.lo[0] == pytest.approx(-0.7) or box.hi[0] == pytest.approx(0.7)
+
+
+@pytest.mark.parametrize("share", [0.0, -0.1, 1.5])
+def test_a_share_outside_the_unit_range_is_refused(share: float) -> None:
+    with pytest.raises(ValueError, match="share must be"):
+        outermost_box(arm_points(), share)
+
+
+def test_a_mesh_with_no_points_cannot_be_framed() -> None:
+    with pytest.raises(ValueError, match="no points to frame"):
+        outermost_box([], FOREARM_SHARE)
+
+
+def test_a_box_that_is_a_single_point_is_refused_rather_than_rendered_black() -> None:
+    point = Bounds(lo=(0.0, 0.0, 0.0), hi=(0.0, 0.0, 0.0))
+
+    with pytest.raises(ValueError, match="a single point"):
+        Still(name="front", azimuth_degrees=0.0, elevation_degrees=0.0, box=point)
+
+
+def test_the_camera_never_sits_inside_a_tiny_subject() -> None:
+    tiny = Bounds(lo=(0.0, 0.0, 0.0), hi=(0.001, 0.001, 0.001))
+    still = Still(name="front", azimuth_degrees=0.0, elevation_degrees=0.0, box=tiny)
+
+    assert abs(still.camera_location[1]) >= 0.5

@@ -13,4 +13,5 @@ pub mod pack;
 pub mod preview;
 pub mod providers;
 pub mod spec;
+pub mod spike;
 pub mod stages;

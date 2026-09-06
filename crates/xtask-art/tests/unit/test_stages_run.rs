@@ -687,7 +687,7 @@ fn the_fixer_is_handed_every_number_it_runs_on() {
     );
     let argv = std::fs::read_to_string(argv_dump(dir.path())).unwrap();
     for published in [
-        "--meshes char1",
+        "--meshes node 0,Mesh_0,char1",
         "--weld 0.00001",
         "--island-volume 0.000001",
         "--symmetry-threshold 0.001",

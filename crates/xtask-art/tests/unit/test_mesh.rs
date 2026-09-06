@@ -5,10 +5,10 @@
 //! fixture, a negative fixture it must reject, and a calibration that proves
 //! it stays quiet on art it should accept.
 //!
-//! The calibration asset is `art/characters/survivor/model.glb`, and it is
-//! **provisional**: the gates run on `bare.glb`, the mesh before rigging,
-//! and no Meshy key on this machine could download it. Every limit in
-//! `[profile.mesh]` says so.
+//! The calibration asset is `art/characters/survivor/model.glb`. Every
+//! `[profile.mesh]` limit is set from the real bare mesh, which is derived
+//! and not committed, so what this file can hold is the reading beside the
+//! rule that reads it.
 //!
 //! The negatives are synthetic, because a synthetic mesh is the only way to
 //! carry a known defect count above a limit calibrated on real art. The one
@@ -27,8 +27,15 @@ use xtask_art::library::HUMANOID;
 use crate::meshes::{ALLOWED, HEIGHT_METERS, SyntheticMesh};
 use crate::support::{committed_glb, repo_root};
 
-/// The rigged survivor, which is the provisional calibration asset.
+/// The rigged survivor, which is the calibration asset for every rule that
+/// rigging did not change.
 const CALIBRATION: &str = "art/characters/survivor/model.glb";
+
+/// What the real bare mesh measures, from
+/// `art/staging/reports/mesh.survivor-unset.1.json`: the height Meshy chose,
+/// and how far that is from the 1.700 the spec asked for.
+const BARE_METERS: f64 = 1.8970;
+const BARE_PERCENT: f64 = 11.588;
 
 fn profile() -> Profile {
     Profile::of(&repo_root(), HUMANOID).expect("the committed humanoid profile")
@@ -231,6 +238,15 @@ fn every_published_limit_leaves_headroom_over_the_calibration() {
             finding.limit
         );
     }
+
+    // `mesh.world_size` is not calibrated on this file: rigging is what
+    // scaled it to the spec's height, so the reading with headroom to leave
+    // is the bare mesh's own.
+    let limit = finding(&findings, "mesh.world_size").limit;
+    assert!(
+        BARE_PERCENT < limit,
+        "mesh.world_size: {BARE_PERCENT} against a limit of {limit}"
+    );
 }
 
 #[test]
@@ -371,15 +387,15 @@ fn a_five_millimeter_cube_inside_the_mesh_is_counted_as_a_piece() {
     assert_eq!(broken(&findings), Vec::<String>::new(), "{findings:#?}");
 }
 
-/// One box poking through another crosses in 14 faces, so 80 of those pairs
-/// is 1,120 faces against a limit of 1,000.
+/// One box poking through another crosses in 14 faces, so 120 of those pairs
+/// is 1,680 faces against a limit of 1,500.
 #[test]
 fn a_mesh_whose_faces_cross_each_other_is_rejected() {
     let one_pair = findings_of(&SyntheticMesh::figure().plus_an_overlapping_box());
     let findings = findings_of(
         &SyntheticMesh::figure()
             .plus_an_overlapping_box()
-            .repeated(80),
+            .repeated(120),
     );
 
     assert_eq!(
@@ -389,7 +405,7 @@ fn a_mesh_whose_faces_cross_each_other_is_rejected() {
     assert_eq!(rejected(&findings, "mesh.self_intersect"), ["fixture.glb"]);
     assert_eq!(
         measured(&findings, "mesh.self_intersect", "fixture.glb"),
-        1_120.0
+        1_680.0
     );
     let message = &finding(&findings, "mesh.self_intersect").message;
     assert!(message.contains("share no vertex with"), "got: {message}");
@@ -435,6 +451,27 @@ fn the_same_mesh_read_without_its_node_scale_is_a_hundred_times_too_big() {
     );
     let message = &finding(&findings, "mesh.world_size").message;
     assert!(message.contains("170.0000 m"), "got: {message}");
+}
+
+/// The height a generator picks for itself, which is what `mesh.world_size`
+/// reads before anything has been asked to scale the body. The real bare mesh
+/// arrives at [`BARE_METERS`], and this fixture stands where it stands:
+/// inside `mesh.height_percent`, and far outside the rig's 5 percent band.
+#[test]
+fn a_bare_mesh_at_the_height_the_generator_chose_is_accepted() {
+    let findings = findings_of(&SyntheticMesh::figure().at_height(BARE_METERS));
+
+    let off = measured(&findings, "mesh.world_size", "fixture.glb");
+    assert!(
+        (off - BARE_PERCENT).abs() < 0.01,
+        "{BARE_METERS} m against {HEIGHT_METERS} is {BARE_PERCENT} percent, measured {off}"
+    );
+    assert!(
+        off > profile().height_tolerance_percent,
+        "the rig's band is {}, so this fixture only passes on a band of its own",
+        profile().height_tolerance_percent
+    );
+    assert_eq!(broken(&findings), Vec::<String>::new(), "{findings:#?}");
 }
 
 #[test]

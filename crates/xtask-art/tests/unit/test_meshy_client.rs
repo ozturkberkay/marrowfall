@@ -7,6 +7,12 @@ use xtask_art::providers::meshy::{Client, Endpoint};
 
 use crate::support::EnvGuard;
 
+/// Where one call keeps the id of the task it submitted. A fresh directory
+/// per test, so nothing resumes anything by accident.
+fn in_flight(dir: &tempfile::TempDir) -> std::path::PathBuf {
+    dir.path().join("model.survivor.1.task")
+}
+
 async fn client(server: &MockServer) -> Client {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
@@ -219,10 +225,13 @@ async fn run_polls_until_the_task_succeeds_and_reports_progress_once_per_change(
         .mount(&server)
         .await;
 
+    let dir = tempfile::tempdir().unwrap();
     let mut seen = Vec::new();
     let task = client(&server)
         .await
-        .run(Endpoint::MultiImageTo3d, json!({}), |p| seen.push(p))
+        .run(Endpoint::MultiImageTo3d, json!({}), &in_flight(&dir), |p| {
+            seen.push(p)
+        })
         .await
         .unwrap();
     assert_eq!(task.glb_url(), Some("https://example.test/m.glb"));
@@ -230,7 +239,7 @@ async fn run_polls_until_the_task_succeeds_and_reports_progress_once_per_change(
 }
 
 #[tokio::test]
-async fn run_refuses_a_status_it_does_not_recognise() {
+async fn run_refuses_a_status_it_does_not_recognize() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(Endpoint::Animation.path()))
@@ -245,13 +254,150 @@ async fn run_refuses_a_status_it_does_not_recognise() {
         .mount(&server)
         .await;
 
+    let dir = tempfile::tempdir().unwrap();
     let error = client(&server)
         .await
-        .run(Endpoint::Animation, json!({}), |_| {})
+        .run(Endpoint::Animation, json!({}), &in_flight(&dir), |_| {})
         .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("unrecognized status"), "got: {error}");
+}
+
+// --- the task nobody should have to buy twice ------------------------------
+
+/// The window the record exists for. A run that dies after submitting has
+/// already been billed, so the next one polls that task instead of paying
+/// for a second.
+#[tokio::test]
+async fn a_task_already_submitted_is_resumed_rather_than_bought_again() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(Endpoint::Rigging.path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "bought-again"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/paid-for", Endpoint::Rigging.path())))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "paid-for", "status": "SUCCEEDED", "progress": 100
+        })))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(in_flight(&dir), "paid-for\n").unwrap();
+
+    let task = client(&server)
+        .await
+        .run(Endpoint::Rigging, json!({}), &in_flight(&dir), |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(task.id, "paid-for");
+    let submitted = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|request| request.method == wiremock::http::Method::POST)
+        .count();
+    assert_eq!(submitted, 0, "the task was bought a second time");
+    assert!(
+        !in_flight(&dir).exists(),
+        "a finished task is not still in flight"
+    );
+}
+
+/// A task the provider gave up on is forgotten, not resumed: it would read
+/// the same way forever, and the next run has to be able to buy a new one.
+#[tokio::test]
+async fn a_task_the_provider_gave_up_on_is_not_resumed_again() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/dead", Endpoint::Rigging.path())))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "dead", "status": "FAILED", "task_error": {"message": "mesh exceeds 300k faces"}
+        })))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(in_flight(&dir), "dead\n").unwrap();
+
+    let error = client(&server)
+        .await
+        .run(Endpoint::Rigging, json!({}), &in_flight(&dir), |_| {})
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("300k faces"), "got: {error}");
+    assert!(!in_flight(&dir).exists(), "a dead task is still in flight");
+}
+
+/// A poll that never reached the provider leaves it in flight, because that
+/// is the task a resumed run is for.
+#[tokio::test]
+async fn a_poll_that_does_not_land_leaves_the_task_in_flight() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{}/waiting", Endpoint::Rigging.path())))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(in_flight(&dir), "waiting\n").unwrap();
+
+    client(&server)
+        .await
+        .run(Endpoint::Rigging, json!({}), &in_flight(&dir), |_| {})
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        std::fs::read_to_string(in_flight(&dir)).unwrap().trim(),
+        "waiting"
+    );
+}
+
+/// And the id is on disk before the first poll goes out, because everything
+/// between the two is the window a crash lands in.
+#[tokio::test]
+async fn a_fresh_task_is_recorded_before_it_is_polled_and_cleared_when_it_lands() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    Mock::given(method("POST"))
+        .and(path(Endpoint::MultiImageTo3d.path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": "t9"})))
+        .mount(&server)
+        .await;
+    // What was on disk when the first poll arrived.
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let watcher = std::sync::Arc::clone(&seen);
+    let recorded = in_flight(&dir);
+    Mock::given(method("GET"))
+        .and(path(format!("{}/t9", Endpoint::MultiImageTo3d.path())))
+        .respond_with(move |_: &wiremock::Request| {
+            *watcher.lock().unwrap() = std::fs::read_to_string(&recorded).unwrap_or_default();
+            ResponseTemplate::new(200).set_body_json(json!({
+                "id": "t9", "status": "SUCCEEDED", "progress": 100
+            }))
+        })
+        .mount(&server)
+        .await;
+
+    client(&server)
+        .await
+        .run(
+            Endpoint::MultiImageTo3d,
+            json!({}),
+            &in_flight(&dir),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(seen.lock().unwrap().trim(), "t9");
+    assert!(!in_flight(&dir).exists());
 }
 
 #[tokio::test]
@@ -364,9 +510,12 @@ async fn run_keeps_polling_a_task_that_is_still_working() {
         .set("MARROWFALL_MESHY_POLL_MS", "1");
     let client = Client::from_env().unwrap();
 
+    let dir = tempfile::tempdir().unwrap();
     let mut seen = Vec::new();
     client
-        .run(Endpoint::Rigging, json!({}), |p| seen.push(p))
+        .run(Endpoint::Rigging, json!({}), &in_flight(&dir), |p| {
+            seen.push(p)
+        })
         .await
         .unwrap();
     assert_eq!(seen, vec![30, 100], "progress is reported once per change");
@@ -394,8 +543,9 @@ async fn a_task_that_never_finishes_gives_up_and_says_where_to_look() {
         .set("MARROWFALL_MESHY_TIMEOUT_MS", "5");
     let client = Client::from_env().unwrap();
 
+    let dir = tempfile::tempdir().unwrap();
     let error = client
-        .run(Endpoint::Rigging, json!({}), |_| {})
+        .run(Endpoint::Rigging, json!({}), &in_flight(&dir), |_| {})
         .await
         .unwrap_err()
         .to_string();

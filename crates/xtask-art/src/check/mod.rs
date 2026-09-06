@@ -99,6 +99,13 @@ impl Symmetry {
     }
 }
 
+/// The largest angle two directions can be apart.
+///
+/// The ceiling every recording angle rule reads against, because a finding
+/// still needs a limit. It cannot be crossed, so the severity is always
+/// `info` and the number is always on record.
+pub const HALF_A_TURN: f64 = 180.0;
+
 /// What every mirror rule files when a spec declines symmetry. One sentence,
 /// so the mesh side and the rig side say the same thing.
 pub const NOT_MIRRORED: &str = "spec.subject.symmetry is false, so this character is not mirrored \
@@ -640,6 +647,15 @@ impl Artifacts {
     /// Blender's own log, at debug level.
     pub fn log(&self) -> PathBuf {
         self.path("log")
+    }
+
+    /// The id of a task that has been submitted and not yet seen to finish.
+    ///
+    /// Written before the first poll and removed on success, so a run that
+    /// dies mid-poll resumes what it already paid for instead of buying a
+    /// second one.
+    pub fn task(&self) -> PathBuf {
+        self.path("task")
     }
 
     /// The source clip's own world orientations, written by the retarget.

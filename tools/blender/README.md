@@ -31,6 +31,7 @@ under `crates/xtask-art/src/check/`.
 | `actions.py` | yes | the F-curve edits the retarget and the bake both make |
 | `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
 | `mesh_clean.py` | yes | welds, drops debris, fills holes and mirrors the bare mesh |
+| `mesh_sheet.py` | yes | renders the five views of the model contact sheet |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
 | `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
@@ -199,9 +200,10 @@ where it has 171. Then the debris, before the holes are filled, because a hole
 in a piece about to be deleted is not worth closing. `cleanup.ordered_steps`
 is that order, as data, and the flag that adds the mirror to the end.
 
-Measured on the stand-in described in correction 1 of T10 in the design, the
-fixer takes holes 171 to 73, pieces 7 to 2 and the worst mirror distance 3.021
-percent of width to 0.000, and it keeps the texture and the one UV layer.
+Measured on the real bare mesh, correction 3 of T12 in the design, the fixer
+takes holes 31 to 18, pieces 4 to 1 and the worst mirror distance 3.257
+percent of width to 0.000, and it keeps the texture and the one UV layer. The
+stand-in of T10 read 171, 7 and 3.021.
 
 The mirror costs what it costs. It copies the crossing faces of the half it
 keeps, 905 to 1026, and leaves 33 more boundary edges and a second piece.
@@ -209,6 +211,21 @@ Correction 13 measures the three ways of taking that back, and takes none:
 mirroring before the fill is worse, a weld of the seam alone recovers 6
 percent of it, and no mirror threshold between 0.5 mm and 5 mm holds every
 gate.
+
+## Why the contact sheet is drawn and not measured
+
+`mesh_sheet.py` renders one bare mesh five ways: front, back, left, right,
+and the arms alone from 45 degrees above the front. It reports no finding
+either, and for a different reason than the fixer. The question it answers is
+whether a generator invented surface it had no reference for, and no number
+says that. A human reads the sheet.
+
+`framing.py` decides where each camera goes, so the framing is unit tested
+with no Blender. The close view is the one piece of judgment in it: with no
+skeleton in a bare mesh there is no elbow to point at, so it frames the tenth
+of the vertices furthest from X = 0, which in any arms-out pose are the hands
+and the forearms. Its scale is the box's own diagonal, the one number that
+cannot clip whatever angle it is seen from.
 
 ## Why every export asks for the rest position
 
