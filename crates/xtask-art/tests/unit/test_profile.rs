@@ -45,6 +45,9 @@ root_bob_meters = 0.15
 floor_snap_meters = 0.005
 stride_percent = 2.0
 loop_degrees = 2.0
+foot_plants = 1
+foot_skate_meters = 0.025
+foot_penetration_meters = 0.005
 
 [profile.source]
 travel_meters = 0.02
@@ -118,6 +121,9 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.clip.floor_snap_meters, 0.005);
     assert_eq!(profile.clip.stride_percent, 2.0);
     assert_eq!(profile.clip.loop_degrees, 2.0);
+    assert_eq!(profile.clip.foot_plants, 1.0);
+    assert_eq!(profile.clip.foot_skate_meters, 0.025);
+    assert_eq!(profile.clip.foot_penetration_meters, 0.005);
     assert_eq!(profile.source.travel_meters, 0.02);
 }
 
@@ -456,6 +462,9 @@ fn a_clip_limit_that_is_not_a_positive_number_is_refused() {
         ("floor_snap_meters", "0.005"),
         ("stride_percent", "2.0"),
         ("loop_degrees", "2.0"),
+        ("foot_plants", "1"),
+        ("foot_skate_meters", "0.025"),
+        ("foot_penetration_meters", "0.005"),
     ] {
         for value in ["0.0", "-1.0", "nan"] {
             let error = refused(&[(

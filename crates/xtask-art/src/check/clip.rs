@@ -1,14 +1,16 @@
 //! The clip gates: what a fitted clip must be, measured against the file the
 //! motion was bought in.
 //!
-//! Thirteen rules, measured at three boundaries.
+//! Thirteen rules, measured at three boundaries, plus the three
+//! [`foot`] owns beside them.
 //!
 //! - [`INTERPOLATION`] and [`REFERENCE_POSE_KEY`] are counted inside Blender
 //!   at the retarget, because neither survives the export: the glTF exporter
 //!   resamples every channel and writes its own interpolation. [`FPS_GRID`],
 //!   [`FPS_GRID_RANGE`], [`FLOOR_SNAP`], [`STRIDE`] and [`STRIDE_RATIO`] are
-//!   reported there too. `clip.py` does the arithmetic with no `bpy`, so all
-//!   seven have a negative control in CI.
+//!   reported there too, with `clip.foot_contact.plants`, `.skate` and
+//!   `.penetration`. `clip.py` and `plant.py` do the arithmetic with no
+//!   `bpy`, so all ten have a negative control in CI.
 //! - [`SWING`], [`TWIST`], [`OBJECT_TRANSFORM`], [`FPS_GRID`], [`LOOP`],
 //!   [`FLOOR_SNAP`], [`STRIDE`] and [`STRIDE_RATIO`] are measured here, in
 //!   Rust, on the delivered GLB. Between `transfer.py` and that file sit
@@ -77,7 +79,7 @@ use super::aim::AimTable;
 use super::gltf_world::Skeleton;
 use super::motion::{Motion, SourceLengths};
 use super::profile::Profile;
-use super::{Comparison, Finding, Rule, gltf_clip, relative_to};
+use super::{Comparison, Finding, Rule, foot, gltf_clip, relative_to};
 
 /// The stage these findings belong to, which names their report file.
 pub const STAGE: &str = "retarget";
@@ -370,10 +372,10 @@ pub struct Fitted<'a> {
 }
 
 /// The rules `retarget_animation.py` reports, whose limits the runner
-/// publishes to it on argv. [`FPS_GRID`] and [`FLOOR_SNAP`] are in both lists
-/// on purpose: the retarget reads the pose it evaluated and this module reads
-/// the delivered file.
-pub const RETARGET_RULES: [&Rule; 7] = [
+/// publishes to it on argv. [`FPS_GRID`], [`FLOOR_SNAP`] and the three
+/// [`foot`] rules are in both lists on purpose: the retarget reads the pose it
+/// evaluated and this module reads the delivered file.
+pub const RETARGET_RULES: [&Rule; 10] = [
     &INTERPOLATION,
     &REFERENCE_POSE_KEY,
     &FPS_GRID,
@@ -381,6 +383,9 @@ pub const RETARGET_RULES: [&Rule; 7] = [
     &FLOOR_SNAP,
     &STRIDE,
     &STRIDE_RATIO,
+    &foot::PLANTS,
+    &foot::SKATE,
+    &foot::PENETRATION,
 ];
 
 /// And the two `bake_sprites.py` reports.
@@ -388,7 +393,7 @@ pub const BAKE_RULES: [&Rule; 2] = [&ROOT_TRAVEL, &ROOT_BOB];
 
 /// The rules [`check_files`] reads off the delivered GLB, which is also the
 /// list it reports as undefined when that file is not there.
-pub const FILE_RULES: [&Rule; 8] = [
+pub const FILE_RULES: [&Rule; 11] = [
     &SWING,
     &TWIST,
     &OBJECT_TRANSFORM,
@@ -397,6 +402,9 @@ pub const FILE_RULES: [&Rule; 8] = [
     &FLOOR_SNAP,
     &STRIDE,
     &STRIDE_RATIO,
+    &foot::PLANTS,
+    &foot::SKATE,
+    &foot::PENETRATION,
 ];
 
 /// What a per-axis bake subject names itself, after the clip's own name.
@@ -420,8 +428,7 @@ pub fn check_files(
         repo_root,
         source_fps,
         loops,
-        // `stride_of` reads this one off `fitted` itself.
-        travels: _,
+        travels,
     } = fitted;
     let bones = table.bones(table.canonical())?.clone();
     // The roles that stand on the floor are skeleton data, so the toes are
@@ -516,7 +523,34 @@ pub fn check_files(
             })
             .to_vec(),
     };
-    Ok([compared, objects, grid, vec![floor], sized].concat())
+    let planted = match soles_and_span(&bytes, rig, &toes) {
+        Ok((soles, height)) => {
+            foot::check(&clip, &soles, height, source_fps, travels, profile, attempt)
+        }
+        Err(error) => foot::undefined(
+            &clip,
+            attempt,
+            &format!("{clip} carries no readable sole to stand on: {error:#}"),
+        ),
+    };
+    Ok([compared, objects, grid, vec![floor], sized, planted].concat())
+}
+
+/// One clip's soles, and the joint span of the rig it was fitted to.
+///
+/// The span comes off the rig rather than off the clip, so this and
+/// `retarget_animation.py::rig_height` scale the contact thresholds by one
+/// number read on one file.
+fn soles_and_span(
+    bytes: &[u8],
+    rig: &Path,
+    toes: &BTreeSet<String>,
+) -> Result<(gltf_clip::Soles, f64)> {
+    let soles = gltf_clip::soles(bytes, toes)?;
+    let span = gltf_clip::joint_span(
+        &std::fs::read(rig).with_context(|| format!("reading {}", rig.display()))?,
+    )?;
+    Ok((soles, span))
 }
 
 /// The bone filling one role, on the canonical convention.

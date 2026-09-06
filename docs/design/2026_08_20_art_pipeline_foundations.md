@@ -986,9 +986,9 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `clip.floor_snap` | 5 mm from the rest height the snap aims at. Calibrated at both sites, per the Test Plan row: worst reading 6.7e-7 m, so it sits 7,493x over that and still refuses the 0.0599 m the same fit leaves with the lift removed | le |
 | `clip.stride` | 2.0 percent of the source's own travel sized by the femur ratio. Worst reading 2.4e-5 percent across both sites, so it sits 81,865x over that, and a fit sized five percent out reads 5.0 | le |
 | `clip.stride_ratio` | 100, further apart than two rigs of one skeleton can be, so every reading is `info`. Records rather than gates: the readings are in the Test Plan row | le |
-| `clip.foot_contact.skate` | 2.5 cm at 180 cm scale | le |
-| `clip.foot_contact.penetration` | 5 mm | le |
-| `clip.foot_contact.plants` | 1 per foot per cycle | ge |
+| `clip.foot_contact.plants` | 1 per foot per cycle. `travels: false` switches it off, because an in-place cycle's ground moves under it and its feet slide by construction: `run.glb` slides them at 3 to 5 m/s | ge |
+| `clip.foot_contact.skate` | 2.5 cm at 180 cm scale. With the lock in, the three Mixamo fits read exactly 0.0000 m; with it removed the same fits read 0.0207, 0.0148 and 0.0027 | le |
+| `clip.foot_contact.penetration` | 5 mm from the ground plane at zero. The vendor's own `strafe_left.fbx` reads 0.0000 m at every planted frame, and a refit of `run.glb` onto its own rig clears the floor by 0.0005 m. The three cross-rig fits read 0.0200 to 0.0203 m, which is correction 4 of T9 | le |
 | `clip.fps_grid` | 1e-4 frames | le |
 | `clip.fps_grid.range` | 0 frames between what the retarget samples and what the source keyed | eq |
 | `clip.loop` | 2.0 deg, today's `LOOP_TOLERANCE_DEG` | le |
@@ -1209,20 +1209,22 @@ world space (fact 5), so `clip.root_travel` can only ever read a residual and
 
 **Foot planting** (requirement 6). Thresholds are world-space meters scaled
 from the published 180 cm reference, and the speed threshold is a rate, so it
-means the same thing at 8 fps and 30 fps.
+means the same thing at 8 fps and 30 fps. What they are read on is the
+**sole point** under a joint, never the joint itself: correction 1 of T9 has
+why, and correction 2 has how the sole is derived on a clip with no mesh.
 
 ```python
-scale = character_height_m / 1.80
-speed = lambda f: step_xy(toe, f) * source_fps        # meters per second
+scale = rig_joint_span_m / 1.80
+speed = lambda f: step_xy(ball, f) * source_fps       # meters per second
 contact = [f for f in frames
-           if world_z(toe, f) < 0.03 * scale and speed(f) < 0.30 * scale]
+           if world_z(ball, f) < 0.03 * scale and speed(f) < 0.30 * scale]
 width = max(3, round(5 * source_fps / 60) | 1)   # odd and >= 3, or no majority
 contact = majority_vote(contact, width)
 runs = consecutive(contact)
 finding("clip.foot_contact.plants", measured=len(runs), limit=1,
         comparison="ge")
 for run in runs:
-    lock_xy(toe, run, ramp_in=2, ramp_out=2)          # two bone analytic IK
+    lock_xy(ball, run, ramp_in=2, ramp_out=2)         # two bone analytic IK
 ```
 
 **The fps invariant** (requirement 3). `source_fps` is the clip's own rate,
@@ -1324,7 +1326,10 @@ skinned file needs fact 20's path instead.
   own axes point at its own children, and **`source.child_axis`** in T7
   reports the vendor's half at fetch time, since that skeleton is not ours to
   fix. Until T15 the number is a known, measured, recorded difference rather
-  than a silent one.
+  than a silent one. T9's correction 3 is the **position** half of this same
+  blind spot, found by the first rule that reads a point rather than a bone's
+  own frame: the 97.6 degree hips lift one hip socket 0.1956 m and the right
+  foot never lands, and every rule in the set above stays quiet about it.
 - **An empty set has no maximum worth trusting.** Zero plant runs is an error,
   not a skate of 0.0. An even majority window is the same shape of nothing,
   which is why the vote width is forced odd and at least 3.
@@ -1431,9 +1436,9 @@ it can honestly measure does fail. See the correction below.
 | `clip.floor_snap` | the three Mixamo fits, at both sites. The retarget's own evaluated pose reads **9.3e-9** (`walk_back`), 1.5e-8 (`strafe_right`) and 4.3e-8 m (`strafe_left`); `check/gltf_clip.rs` on the delivered file reads **3.9e-8** (`strafe_right`), 1.3e-7 (`walk_back`) and 6.7e-7 m (`strafe_left`). The refit of `run.glb` reads exactly 0 at the retarget, and the committed `run.glb` reads **0.0016536 m** in Rust | `[art]` the committed `idle.glb`, fitted before the snap existed, whose lowest toe hangs **0.0773 m** above the datum, and which a refit brings to 9.3e-9 m. Plus `[synth]` a delivered GLB whose root is keyed **0.06 m** below where its own rig rests, and the pair either side of the limit at 4 mm and 6 mm. `[mut]` the same retarget with `lift_root` removed, which reads **0.0599 m** on `strafe_left` | the lowest ground joint's frame, against the rest height the snap aims at. **Not zero**, and not the sole either: see correction 1 |
 | `clip.stride` | the three Mixamo fits: `strafe_left` **2.0378 m** against a source travel of 2.3117 sized by 0.8815, `strafe_right` 2.5477 against 2.8901, `walk_back` 1.2465 against 1.4140. The retarget reads **4.6e-6** (`walk_back`), 7.6e-6 (`strafe_right`) and 1.3e-5 percent (`strafe_left`); Rust on the delivered file reads **1.4e-5**, 1.5e-5 and 2.4e-5 percent on the same three | `[mut]` the same retarget with `scale_translation` removed, which reads **13.4409 percent** on `strafe_left` at both sites. Plus `[synth]` a fit whose root keys are scaled by 1.05, which reads 5.0 percent in Rust and in Python, and `[synth]` `travels: true` on a source that never moves, which is undefined rather than a division by nothing | T5's hand measurement, 2.3117 m times 0.8815 giving **2.0378 m**. `travels: false` reports `skipped` on the declaration, which the refit of `run.glb` records. What the two sites prove and cannot prove is correction 7 |
 | `clip.stride_ratio` | the same three at **0.8815161761312765** in the retarget and **0.8815163067471855** in Rust, off 0.3578832274114926 m of our femur against the vendor's 0.40599429901464934. The refit of `run.glb` records **1.0000204384738902**, which `crates/xtask-art/tests/fixtures/retarget.run.1.json` carries and a unit test pins to 1e-9 | none, `info` only, per the Terminology exemption | the two `stride_segment` joints of each rig at rest. Not 1 on a refit: the rig is exported, imported and exported again, and a GLB stores a joint position as an `f32` |
-| `clip.foot_contact.plants` | the new output | `[synth]` an in-place clip, which yields zero contacts | `ge 1` per foot per cycle |
-| `clip.foot_contact.skate` | the new output | `[synth]` a clip whose planted foot is translated 5 cm during stance | real mocap 0.10 cm per frame |
-| `clip.foot_contact.penetration` | the new output | `[synth]` the root lowered 2 cm | 5 mm |
+| `clip.foot_contact.plants` | the three Mixamo fits at both sites: the left foot plants once on each, over frames 10..15 (`strafe_left`), 12..14 (`strafe_right`) and 9..27 (`walk_back`). `[synth]` the standing cross-rig pair, both feet, at both sites | `[synth]` the cross-rig pair as it stands, whose feet ride along with a root crossing 2.04 m in a third of a second, which comes to rest nowhere. `[art]` the **right** foot of all three Mixamo fits, at **0** runs: see correction 3 | `ge 1` per foot per cycle. The `[synth]` in-place clip the design named is a `skipped` instead, because `travels` switches the rule off |
+| `clip.foot_contact.skate` | the three Mixamo fits' left foot: **0.0000 m** at the retarget on all three, and 0.0000, 0.0021 and 0.0000 in Rust on the delivered files | `[synth]` the standing pair whose planted foot is translated **5 cm** during stance, which is slow enough to still read as contact. `[mut]` the same three fits with the lock removed, which read **0.0207** (`strafe_left`), 0.0148 (`walk_back`) and 0.0027 m (`strafe_right`), all inside the published 2.5 cm: what the mut proves is what the lock removed, and the 5 cm synthetic is what makes the rule fail | the pair 0.0207 against 0.0000 m. The 2 mm the delivered `strafe_right` reads is correction 5 |
+| `clip.foot_contact.penetration` | the refit of `run.glb`, which clears the floor by **0.0074** and 0.0005 m, and the vendor's own `strafe_left.fbx`, which reads **0.0000 m** at every planted frame and 0.0038 at worst | `[synth]` the standing pair keyed **2 cm** under its own floor, plus the pair either side of the limit at 4 mm and 6 mm. `[art]` the **left** foot of all three Mixamo fits, at **0.0200 to 0.0203 m**: see correction 4 | 5 mm, on the two sole points of each foot. The vendor file reading 0.0000 at every plant is what says the sole model is the right one |
 | `clip.loop` | `run.glb` at **0.000** deg and `idle.glb` at **0.487** | `[art]` `walk_back.glb`, which reads **6.910** on `LeftForeArm` and breaks on nine of its 24 bones. That is the hitch `library.ron` has recorded in prose all along and which nothing could measure until now. Plus `[synth]` a whole cycle against the same cycle cut one frame short | `idle.glb` and `run.glb`, 2.0 deg today. Per joint, on the local rotation, so one wrong hips reports once rather than dragging every bone below it into the count |
 | `clip.interpolation`, `clip.reference_pose_key` | the recorded report of the `run.glb` refit, committed as `crates/xtask-art/tests/fixtures/retarget.run.1.json`: 44 findings, no error | `[synth]` in CI, on `clip.py`: a Bezier key, a pose not held at the ends, and a key off either end of the range. Plus `[mut]` two Blender runs, one with the LINEAR and CONSTANT pass removed and one with a pose keyed outside the source's range, each firing its own rule on all 22 bones and leaving the other at `info`. Plus `[synth]` three reports the runner refuses: an unpublished rule id, a limit of its own, and a defect filed as `info` | `run.glb`. **The reference pose is never keyed at any frame**, so the rule measures keys outside the source's frame range rather than at frame 0. See the correction below |
 | `bake.frame_count`, `bake.non_empty` | the rendered set | `[synth]` one frame deleted, and one fully transparent | directions x sampled frames, alpha coverage |
@@ -1558,7 +1563,11 @@ wrong number, which is the failure this whole document exists to stop.
   as `rig.aim_table`.
 - **Foot planting** in `plant.py`: a toe path with two known plant runs, a
   path with none, the same path at 8 and 30 fps giving the same runs, and the
-  vote width odd and at least 3 at both rates.
+  vote width odd and at least 3 at both rates. The lock holds a run's XY to
+  1e-9 and leaves the frames outside its ramps untouched; the leg solve
+  reaches a reachable target to 1e-6 and reports an unreachable one as the
+  distance it fell short by. `check/foot.rs` runs the same paths and asserts
+  the same numbers, so the two implementations are pinned to one answer.
 
 **Unit, `cargo nextest --test unit`, in CI.** Every row above, plus:
 
@@ -2315,6 +2324,177 @@ changes a sprite rate, or asserts a strict T-pose bind.
    guards that choice is `clip.stride_ratio` recording the number and a human
    reading it, plus T9's `clip.foot_contact.skate`, which reads a planted
    foot against the ground and does not go through `ratio` at all.
+
+### Corrections T9 made to this document
+
+1. **The toe joint is not the point that touches the ground, so the contact
+   threshold cannot be read on it.** The Logic block asks for
+   `world_z(toe) < 0.03 * scale`. Measured on the committed rig
+   `art/skeletons/humanoid.glb`, which is the datum every number in this
+   correction is read on: its joints span **1.665165 m**, so `scale` is
+   0.925092 and the ceiling is **0.027753 m**, while `LeftToeBase` rests at
+   **0.031081 m** and `RightToeBase` at 0.030723, the pair T8's correction 1
+   records. The floor snap puts a clip's lowest toe frame
+   exactly on the lower of those and never below it, so no frame of any clip
+   can reach that ceiling: read on the joint, every clip on this skeleton
+   reports zero plants and `clip.foot_contact.plants` fails all of them.
+
+   The threshold is therefore read on the **sole point under the toe**, which
+   rests at zero by construction. `scale` comes from the rig's own joint span
+   rather than from a character height, because the retarget is handed a
+   skeleton and never a spec.
+
+   A delivered clip stores the same joints as `f32`, so read there the three
+   are 1.665169, 0.031082 and 0.030719 m. That is 4 micrometers of export
+   rounding and correction 10 says what the two sites do about it.
+
+2. **How the sole is derived from joints, on a clip that carries no mesh.**
+   The rig's rest pose stands on the floor: `model.glb` spans exactly 0 to
+   1.700000 m in world space. So the point directly below a joint at Z = 0 in
+   the **rest** pose is a point of the sole. It is held in that joint's own
+   rest frame, `sole = rest^-1 @ (x_rest, y_rest, 0)`, and carried rigidly
+   afterwards, `world = pose @ sole`. Two per foot, under the ankle and under
+   the toe, because those are the only two points of a foot a mesh-less clip
+   can locate.
+
+   The evidence that this is the right model is the vendor file. On
+   `art/staging/downloads/strafe_left.fbx`, read through the same maths
+   against Mixamo's own rest pose, both sole points read **0.0000 m at every
+   planted frame** of both feet, and 0.0038 m at worst over the whole clip.
+   This is the true sole datum T8's correction 1 said would arrive here, and
+   it reads joints rather than a mesh.
+
+3. **The right foot of every cross-rig fit never plants, and the cause is
+   this rig's own hips.** Measured on a fresh local fit of the three FBX
+   files, the sole point under the right toe, which is the one contact is read
+   on, never gets nearer the floor than **0.1831 m** (`strafe_left`), 0.2042
+   (`strafe_right`) or 0.1888 (`walk_back`), while the
+   source's own right toe stands on its floor at frames 1 to 4 and 20 to 21.
+   `clip.swing` reads 4e-5 degrees on the same fit, so every bone points where
+   the source's does and this is a **position** defect that no published rule
+   could see.
+
+   The cause is measured: `reference_pose` turns our `Hips` bone **97.6
+   degrees** to reach the aim table, which `rig.aim_table` already reports at
+   97.8 against a band of 75, and every joint under the hips is carried by
+   that turn. At frame 3 of `strafe_left` the fit's `Hips` to `RightUpLeg`
+   offset is (-0.0072, -0.0692, +0.1050) m against a rest offset of
+   (-0.0875, +0.0019, -0.0906). The datum there is that offset and not a
+   height: its Z component rises **0.1956 m** between the two, and the left
+   socket's rises 0.0157, and the floor snap then lowers the whole clip until
+   the left foot lands. The same fit's `Hips` to `Spine` direction sits 97
+   degrees off the source's.
+
+   That pair of offsets checks itself: both are **0.1260 m** long and they sit
+   **124.6 degrees** apart, so the socket is turned about the hips rather than
+   carried away from them.
+
+   The world-height view of the same fault, for a reader who wants heights
+   rather than offsets: at frame 3 `RightUpLeg` stands at z **0.9937 m**,
+   0.1241 above its own rest 0.8696, while `LeftUpLeg` stands at 0.8154,
+   0.0559 below its rest 0.8712. The pelvis is therefore tilted **0.1800 m**
+   at that frame, and between 0.1795 and 0.1831 at every one of the clip's 21
+   frames. `RightToeBase` itself never gets below **0.2136 m**.
+
+   **This is not something planting can fix.** An XY lock cannot lower a foot
+   18 cm, and a solve that did would be hiding a rig that already fails its
+   own gate. It is fixed by regenerating the rig, which is T15's. Until then
+   `cargo art fetch strafe_left` and `strafe_right` stop at the retarget with
+   this rule naming the foot. No committed art goes through the retarget: the
+   survivor's three clips are Meshy's and arrive on this rig already.
+
+4. **The left foot of every cross-rig fit digs 2 cm, and the cause is that
+   the two rigs' feet are different shapes.** `clip.foot_contact.penetration`
+   reads **0.0203 m** on `strafe_left` and `strafe_right` and 0.0200 on
+   `walk_back`, always on the sole under the ankle, and the three readings
+   agree to a tenth of a millimeter because none of them is a property of the
+   clip. Measured: our rig's left foot rests **39.46 degrees** below
+   horizontal from ankle to toe and Mixamo's rests **27.29**. The transfer
+   matches bone directions exactly, so at the planted frame the fit's foot
+   points 27.28 degrees below horizontal, which is the source's rest angle
+   and **12.18 degrees flatter than our own rest**. Our own rest is the pose
+   whose sole is on the floor, so the sole tips that far under it.
+
+   A refit of `run.glb` onto its own rig, where no rest pose differs, clears
+   the floor by 0.0074 and 0.0005 m. So the rule is calibrated on the vendor
+   file and on the same-rig refit, and the three cross-rig readings are its
+   `[art]` negative. Correcting the foot's pitch during stance is a third
+   bone of solve that the T9 row does not ask for, and the honest reading is
+   the one recorded here.
+
+   **The sole model has a limit of its own, and this reading sits on it.**
+   "The joint carried down to zero at rest" is exact for the ball, because the
+   toe joint really is above the contact patch. It is a fiction for the heel:
+   on a plantigrade foot the ankle is not above the heel, so the point under
+   the ankle is a point of the sole only in the rest pitch. Pitch the foot
+   flatter than rest and that point reports penetration even where the real
+   sole clears, which is what the 0.0203 m above is. The vendor file's
+   0.0000 m validation therefore proves the model on a rig whose rest pitch is
+   preserved and nowhere else. T15's regenerated rig removes the cause; until
+   then, read a penetration on the ankle point as a pitch difference and not
+   as geometry through the floor.
+
+5. **`travels: false` switches both stance rules off, the way it already
+   switches `clip.stride` off.** An in-place cycle's ground moves under it, so
+   its feet must slide: measured on the refit of `run.glb`, its soles cross
+   the floor at **3 to 5 m/s** while the contact threshold is 0.278. Nothing
+   in the clip declares the body speed those readings would have to be taken
+   against, so the measurement does not exist rather than failing. The Test
+   Plan's `[synth]` in-place negative for `plants` is therefore a `skipped`,
+   and the real negative is a clip declared traveling whose feet ride along
+   with its root.
+
+   **Open, owned by T15 or later.** A skip leaves `run.glb` with no contact
+   reading at all, which is a hole rather than an answer. The way to close it
+   is to let an in-place cycle declare its body speed implicitly, as the mean
+   horizontal velocity of the stance foot, which is the treadmill speed:
+   `plants` is then measured against speed relative to that, and `skate`
+   becomes deviation from a constant velocity rather than from a fixed point.
+   T9 does not build it, and the two rules stay `skipped` until something
+   does.
+
+6. **The two sites do not read the same runs, and that is the point.** The
+   retarget detects contact on the path before the lock and reports the drift
+   the lock left; `check/foot.rs` detects it again on the delivered file, so
+   it sees the ramps as well. Measured, they agree on `strafe_left` and
+   `walk_back` frame for frame and differ by one frame on `strafe_right`,
+   where the delivered file's run starts one frame earlier and that frame
+   carries **0.0021 m** of drift the lock never held. Both readings are
+   inside the published 2.5 cm and both are reported.
+
+7. **The first frame is read against the next one.** It has no previous
+   frame, and reading it against itself makes it still by construction, so a
+   foot that starts on the ground and leaves at once plants for exactly one
+   frame. The step is therefore taken to the neighboring frame, previous
+   where there is one and next at the start, and the synthetic cross-rig pair
+   pins it at both sites.
+
+8. **The rule list is 49.** T8's 46 plus these three. `clip.foot_contact.*`
+   lives in `check/foot.rs` rather than in `check/clip.rs`, the way
+   `rig.aim_table` lives in `check/aim.rs`: one module owns the rules, the
+   maths and the findings of one concern. `clip.rs` lists all three in
+   `RETARGET_RULES` and `FILE_RULES`, which is where `stages.rs` reads them
+   and what `refuse_unread_rules` holds the report to.
+
+9. **A skip is not a defect.** `Rule::skipped` files a reading of 0.0, so a
+   `travels: false` clip's two skipped `clip.foot_contact.plants` findings sit
+   at 0 against a limit of 1 and any count of "findings outside their limit"
+   picks them up. `stages.rs` counts `Severity::Error` only, which is what
+   `has_errors` gates on, so the number in a refusal is a number a reader can
+   find in the report. The same message names the distinct rules that failed,
+   sorted, because a count alone says nothing about what to open.
+
+10. **Both sites scale the contact thresholds by the same file's joints.**
+    `retarget_animation.py::rig_height` spans the armature's bones inside
+    Blender and `check/gltf_clip.rs::joint_span` spans the rig file's skin
+    joints, and that is one set: glTF has no bone outside a skin, and
+    Blender's glTF importer creates exactly one bone per skin joint. The set
+    is not every node either, because the committed rig also carries an
+    `Armature` node and a `skin_carrier` node, and spanning those reads
+    **1.695888 m** against the joints' 1.665165. The file-side rules read the
+    span off the **rig** rather than off the delivered clip: the clip's own
+    copy of the same joints reads 1.665169 m, and taking it would leave the
+    two sites 7e-8 m apart on the ceiling for no reason.
 
 ## Documentation Changes
 

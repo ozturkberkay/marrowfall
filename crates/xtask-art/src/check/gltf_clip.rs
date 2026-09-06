@@ -214,6 +214,123 @@ fn height_of(world: DMat4) -> f64 {
     gltf_to_blender(world.w_axis.truncate()).z
 }
 
+/// One foot's two sole points, frame by frame, in Blender Z-up world space.
+#[derive(Debug, Clone)]
+pub struct Sole {
+    /// The toe joint's name, which is what a finding calls this foot.
+    pub toe: String,
+    /// The sole under the toe joint, at every key of the clip.
+    pub ball: Vec<DVec3>,
+    /// And the sole under the ankle, which is the joint the toe hangs from.
+    pub heel: Vec<DVec3>,
+}
+
+/// Every foot's soles over one clip.
+#[derive(Debug, Clone)]
+pub struct Soles {
+    /// Seconds from the file's own first key, in order.
+    pub seconds: Vec<f64>,
+    pub feet: Vec<Sole>,
+}
+
+/// Where each foot's sole goes over the clip, out of the delivered file.
+///
+/// The sole is derived from the joints and the rest pose alone, because a
+/// clip carries no mesh: the rig rests standing on the floor, so a joint
+/// carried straight down to zero at rest is a point of the sole, and it moves
+/// rigidly with that joint afterwards. The ankle is the toe's own parent in
+/// the file's hierarchy, so nothing here spells a bone name.
+pub fn soles(bytes: &[u8], toes: &BTreeSet<String>) -> Result<Soles> {
+    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
+    let document = &gltf.document;
+    let skinned = joint_nodes(document)?;
+    let scene = world_nodes(document)?;
+    let joints: Vec<&super::gltf_world::WorldNode<'_>> = scene
+        .iter()
+        .filter(|entry| skinned.contains(&entry.node.index()))
+        .collect();
+    let rest: BTreeMap<usize, DMat4> = joints
+        .iter()
+        .map(|entry| (entry.node.index(), entry.world))
+        .collect();
+    let feet: Vec<(String, usize, usize)> = joints
+        .iter()
+        .filter(|entry| toes.contains(&node_name(&entry.node)))
+        .map(|entry| {
+            let ankle = entry.parent.filter(|above| rest.contains_key(above));
+            let ankle = ankle.with_context(|| {
+                format!(
+                    "{} hangs from no joint, so it has no ankle to take a sole from",
+                    node_name(&entry.node)
+                )
+            })?;
+            Ok((node_name(&entry.node), entry.node.index(), ankle))
+        })
+        .collect::<Result<_>>()?;
+    ensure!(
+        !feet.is_empty(),
+        "the file carries none of the {} ground joint(s) the skeleton names",
+        toes.len()
+    );
+
+    let channels = Channels::read(document, gltf.blob.as_deref())?;
+    let times = key_grid(&channels, &skinned)?;
+    let tree = Tree::of(&scene)?;
+    let worlds: Vec<BTreeMap<usize, DMat4>> = times
+        .iter()
+        .map(|seconds| tree.world_at(&channels, *seconds))
+        .collect();
+    let first = times[0];
+    Ok(Soles {
+        seconds: times.iter().map(|time| time - first).collect(),
+        feet: feet
+            .into_iter()
+            .map(|(toe, node, ankle)| Sole {
+                toe,
+                ball: sole_path(&worlds, node, rest[&node]),
+                heel: sole_path(&worlds, ankle, rest[&ankle]),
+            })
+            .collect(),
+    })
+}
+
+/// One sole point over the whole clip, in Blender Z-up world space.
+fn sole_path(worlds: &[BTreeMap<usize, DMat4>], node: usize, rest: DMat4) -> Vec<DVec3> {
+    // The joint straight down to the ground, in its own rest frame, so it is
+    // carried by whatever the pose does to that joint afterwards.
+    let standing = rest.w_axis.truncate();
+    let own = rest
+        .inverse()
+        .transform_point3(DVec3::new(standing.x, 0.0, standing.z));
+    worlds
+        .iter()
+        .map(|world| gltf_to_blender(world[&node].transform_point3(own)))
+        .collect()
+}
+
+/// How tall one file's rig is: the span of its rest joints along the up axis.
+///
+/// What the contact thresholds are scaled by, read on the rig a clip was
+/// fitted to rather than on the clip, so this and
+/// `retarget_animation.py::rig_height` measure one file. The set is the
+/// joints the skin uses, because glTF has no bone outside a skin and
+/// Blender's importer creates exactly one bone per skin joint, so the two
+/// sides span the same bones. The committed rig also carries two scene nodes
+/// that are not joints, and spanning those instead reads 3 cm more.
+pub fn joint_span(bytes: &[u8]) -> Result<f64> {
+    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
+    let document = &gltf.document;
+    let skinned = joint_nodes(document)?;
+    let (low, high) = world_nodes(document)?
+        .into_iter()
+        .filter(|entry| skinned.contains(&entry.node.index()))
+        .map(|entry| height_of(entry.world))
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), at| {
+            (low.min(at), high.max(at))
+        });
+    Ok(high - low)
+}
+
 /// How far one joint gets from where it started, horizontally, in meters.
 ///
 /// The delivered file's own world positions at its first and last key, in

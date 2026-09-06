@@ -215,11 +215,11 @@ def aim_rotation(source: Vec3, target: Vec3) -> Quat:
     if length(axis) < EPSILON:
         if dot(from_unit, to_unit) > 0.0:
             return NO_ROTATION
-        return quat_from_axis(_square_to(from_unit), 180.0)
+        return quat_from_axis(square_to(from_unit), 180.0)
     return quat_normalized((1.0 + dot(from_unit, to_unit), axis[0], axis[1], axis[2]))
 
 
-def _square_to(v: Vec3) -> Vec3:
+def square_to(v: Vec3) -> Vec3:
     """Some unit direction at a right angle to `v`.
 
     Crossed with whichever world axis `v` leans on least, so the result is

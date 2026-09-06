@@ -37,6 +37,7 @@ import pathlib
 import sys
 
 import bpy
+import plant
 from actions import (
     action_fcurves,
     assign_action,
@@ -62,6 +63,7 @@ from clip import (
 from findings import Finding, guard, limits_from, write_report
 from framing import Vec3, translation_scale
 from mathutils import Matrix, Vector
+from plant import Leg
 from skeleton import Skeleton, bare_bone_name, unfilled_roles
 
 # `travel` is the same measurement `source.traveling` took at the fetch
@@ -420,6 +422,170 @@ def measure(
     ]
 
 
+def rig_height(armature: bpy.types.Object) -> float:
+    """The rig's own joint span along world up, in meters.
+
+    What the contact thresholds are scaled by: they are published against a
+    180 cm reference, and a rig is whatever height it was rigged at. Blender's
+    glTF importer creates exactly one bone per skin joint, so these are the
+    same bones `check/gltf_clip.rs::joint_span` spans on the same file.
+    """
+    up = [
+        (armature.matrix_world @ bone.matrix_local).to_translation().z
+        for bone in armature.data.bones
+    ]
+    return max(up) - min(up)
+
+
+def leg_bones(armature: bpy.types.Object, toe: str) -> list[str]:
+    """The toe and the four bones above it, root first.
+
+    The armature's own hierarchy, because that is the chain a pose composes
+    along. A toe hanging from fewer than four bones has no leg to solve.
+    """
+    chain = [toe]
+    bone = armature.data.bones[toe]
+    for _ in range(4):
+        if bone.parent is None:
+            sys.exit(
+                f"error: {toe} has {len(chain) - 1} bone(s) above it and a leg "
+                f"needs four, so no foot plant can move it"
+            )
+        bone = bone.parent
+        chain.append(bone.name)
+    return list(reversed(chain))
+
+
+def sole_under(rest: Matrix) -> Vector:
+    """Where the ground sits beneath one joint, in that joint's own frame.
+
+    The rig's rest pose stands on the floor, so the sole under a joint is
+    that joint carried straight down to zero at rest. Held in the joint's own
+    frame, it then moves rigidly with the foot.
+    """
+    head = rest.to_translation()
+    return rest.inverted() @ Vector((head.x, head.y, 0.0))
+
+
+def posed_leg(
+    armature: bpy.types.Object, chain: list[str], rest: dict[str, Matrix]
+) -> Leg:
+    """One leg at the scene's current frame, as `plant.bend` reads it."""
+    world = [armature.matrix_world @ armature.pose.bones[b].matrix for b in chain[:4]]
+    return Leg(
+        rest=tuple(tuple(rest[bone].to_quaternion()) for bone in chain[:4]),
+        pose=tuple(tuple(matrix.to_quaternion()) for matrix in world),
+        joints=tuple(tuple(matrix.to_translation()) for matrix in world[1:4]),
+    )
+
+
+def read_legs(
+    armature: bpy.types.Object,
+    legs: dict[str, list[str]],
+    rest: dict[str, Matrix],
+    sole: dict[str, Vector],
+    frames: range,
+) -> dict[str, tuple[list[Vec3], list[Vec3], list[Leg]]]:
+    """Each foot's two sole points and each leg's pose, frame by frame.
+
+    Evaluated rather than derived: where a foot lands is not something the
+    keys say on their own.
+    """
+    read: dict[str, tuple[list[Vec3], list[Vec3], list[Leg]]] = {
+        toe: ([], [], []) for toe in legs
+    }
+    scene = bpy.context.scene
+    for frame in frames:
+        scene.frame_set(frame)
+        for toe, chain in legs.items():
+            ball, heel, posed = read[toe]
+            for point, bone in ((ball, chain[4]), (heel, chain[3])):
+                world = armature.matrix_world @ armature.pose.bones[bone].matrix
+                point.append(tuple(world @ sole[bone]))
+            posed.append(posed_leg(armature, chain, rest))
+    return read
+
+
+def hold_still(
+    armature: bpy.types.Object,
+    chain: list[str],
+    legs: list[Leg],
+    held: list[Vec3],
+    ball: list[Vec3],
+    frames: range,
+) -> float:
+    """Keys the three leg bones so each frame's foot lands where `held` says.
+
+    Returns the worst distance the leg could not reach, which is a leg asked
+    to stretch past its own length. `plant.py` decides all of it.
+    """
+    worst = 0.0
+    for at, frame in enumerate(frames):
+        move = (held[at][0] - ball[at][0], held[at][1] - ball[at][1], 0.0)
+        reach = plant.bend(legs[at], move)
+        worst = max(worst, reach.shortfall)
+        for bone, rotation in zip(chain[1:4], plant.keys(legs[at], reach), strict=True):
+            posed = armature.pose.bones[bone]
+            posed.rotation_quaternion = rotation
+            posed.keyframe_insert("rotation_quaternion", frame=frame)
+    return worst
+
+
+def foot_plant(
+    armature: bpy.types.Object,
+    toes: list[str],
+    frames: range,
+    source_fps: int,
+    travels: bool,
+    limits: dict[str, float],
+) -> tuple[list[Finding], float]:
+    """Holds every planted foot still, then reports what is left under it.
+
+    Read back after the keys are written, so the three findings are what the
+    clip carries rather than what the lock was asked for.
+    """
+    legs = {toe: leg_bones(armature, toe) for toe in toes}
+    rest = {
+        bone: armature.matrix_world @ armature.data.bones[bone].matrix_local
+        for chain in legs.values()
+        for bone in chain
+    }
+    sole = {bone: sole_under(matrix) for bone, matrix in rest.items()}
+    scale = plant.scale_of(rig_height(armature))
+
+    read = read_legs(armature, legs, rest, sole, frames)
+    runs, worst = {}, 0.0
+    for toe, chain in legs.items():
+        ball, _, posed = read[toe]
+        runs[toe] = plant.plant_runs(ball, source_fps, scale)
+        held = plant.locked(ball, runs[toe])
+        worst = max(worst, hold_still(armature, chain, posed, held, ball, frames))
+
+    findings = []
+    for toe, (ball, heel, _) in read_legs(armature, legs, rest, sole, frames).items():
+        stood = [(frames[start], frames[end]) for start, end in runs[toe]]
+        findings.append(plant.plants(toe, stood, travels, plant.PLANTS.at(limits)))
+        findings.extend(
+            plant.skate(
+                toe,
+                stood,
+                [plant.drift(ball, run) for run in runs[toe]],
+                travels,
+                plant.SKATE.at(limits),
+            )
+        )
+        findings.append(
+            plant.penetration(
+                toe,
+                [point[2] for point in ball],
+                [point[2] for point in heel],
+                list(frames),
+                plant.PENETRATION.at(limits),
+            )
+        )
+    return findings, worst
+
+
 def world_heads(
     armature: bpy.types.Object, bones: list[str], frames: range
 ) -> dict[str, list[Vec3]]:
@@ -568,10 +734,14 @@ def retarget(args: argparse.Namespace) -> None:
     floor = rest_floor(rest_ours, skeleton.ground_roles)
     lift = floor_lift(ground_from(world_heads(ours, toes, frames), frames), floor)
     lift_root(ours, fitted, root, lift)
+    limits = limits_from(args.limit)
+    standing, unreached = foot_plant(
+        ours, toes, frames, args.source_fps, args.travels == "true", limits
+    )
     linear_and_constant(fitted)
 
-    # Read back after the lift, so the report is what the file carries rather
-    # than what the lift was asked for.
+    # Read back after the lift and the plant, so the report is what the file
+    # carries rather than what either was asked for.
     tracked = world_heads(ours, [*toes, root], frames)
     fit = Fit(
         name=args.name,
@@ -582,7 +752,7 @@ def retarget(args: argparse.Namespace) -> None:
         ratio=ratio,
         travels=args.travels == "true",
     )
-    write_report(measure(fitted, grid, frames, fit, limits_from(args.limit)))
+    write_report([*measure(fitted, grid, frames, fit, limits), *standing])
     export(out, ours)
 
     worst = max(driven, key=lambda role: quat_degrees(offset[role]))
@@ -590,7 +760,8 @@ def retarget(args: argparse.Namespace) -> None:
         f"retargeted {args.name}: {len(driven)} role(s) onto {rig_path.name} over "
         f"{len(frames)} frame(s), worst offset {worst} "
         f"{quat_degrees(offset[worst]):.2f} deg, lengths sized by {ratio:.4f}, "
-        f"lifted {lift:.4f} m onto the floor -> {out}"
+        f"lifted {lift:.4f} m onto the floor, feet held to within "
+        f"{unreached:.4f} m of where the plant asked -> {out}"
     )
 
 
