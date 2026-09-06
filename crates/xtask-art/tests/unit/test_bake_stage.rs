@@ -13,9 +13,10 @@ use xtask_art::library::{Animation, MotionSource};
 use xtask_art::spec::Paths;
 use xtask_art::stages;
 
+use crate::frames;
 use crate::support::{
-    EnvGuard, a_bake_finding, a_bake_report, a_bake_report_of, a_library, a_spec, bake_subjects,
-    install_library, install_skeleton,
+    EnvGuard, a_bake_finding, a_bake_findings, a_bake_report, a_bake_report_of, a_library, a_ring,
+    a_spec, install_library, install_skeleton,
 };
 
 /// A repo tree with the script, a virtualenv and the animation library in place.
@@ -36,16 +37,52 @@ fn a_baked_repo(with_animations: bool) -> tempfile::TempDir {
     dir
 }
 
-/// A stub that parses `--out`, writes one PNG there, and finishes the way a
-/// real script does: with the success sentinel and a report on every clip.
+/// How many frames per direction the stub renders. Two, so a rendered set is
+/// a rectangle with something in it and a test still reads in milliseconds.
+const STUB_FRAMES: u32 = 2;
+
+/// The clips the stub renders and reports on.
+const STUB_CLIPS: [&str; 2] = ["idle", "run"];
+
+/// A stub that parses `--out`, renders the frames a real bake would, and
+/// finishes the way a real script does: with the success sentinel and a
+/// report on every clip.
 fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
-    a_stub_reporting(dir, &a_bake_report("survivor", &["idle", "run"]))
+    a_stub_reporting(dir, &a_bake_report("survivor", &STUB_CLIPS))
 }
 
 /// The same stub, over a report the caller chose.
 fn a_stub_reporting(dir: &Path, report: &str) -> std::path::PathBuf {
+    a_stub_rendering(dir, report, &frames::a_frame())
+}
+
+/// And the same again, where one frame of `idle` is drawn some other way:
+/// what a bake that cut a pose off or drew nothing leaves behind.
+fn a_stub_rendering(dir: &Path, report: &str, odd: &image::RgbaImage) -> std::path::PathBuf {
     let prepared = dir.join("prepared.json");
     std::fs::write(&prepared, report).unwrap();
+    let good = dir.join("frame.png");
+    frames::a_frame().save(&good).unwrap();
+    let unusual = dir.join("odd.png");
+    odd.save(&unusual).unwrap();
+
+    let mut renders = String::new();
+    for clip in STUB_CLIPS {
+        for direction in a_ring() {
+            for index in 0..STUB_FRAMES {
+                let source = if (clip, *direction, index) == ("idle", a_ring()[0], 0) {
+                    &unusual
+                } else {
+                    &good
+                };
+                renders.push_str(&format!(
+                    "cp {source:?} \"$out/{clip}_{direction}_{index:02}.png\"\n",
+                    source = source.display()
+                ));
+            }
+        }
+    }
+
     let stub = dir.join("blender-stub.sh");
     std::fs::write(
         &stub,
@@ -57,9 +94,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 mkdir -p "$out"
-: > "$out/idle_s_00.png"
-: > "$out/idle_s_01.png"
-: > "$out/notes.txt"
+{renders}: > "$out/notes.txt"
 cat {prepared:?} > "$MARROWFALL_REPORT"
 : > "$MARROWFALL_SENTINEL"
 exit 0
@@ -89,8 +124,9 @@ fn bake_counts_only_the_png_frames_it_produced() {
 
     assert_eq!(
         record.note.unwrap(),
-        "2 frames",
-        "the stray .txt must not be counted as a frame"
+        "32 frames",
+        "two clips of eight directions by two frames, and the stray .txt is \
+         not one of them"
     );
 }
 
@@ -228,10 +264,19 @@ fn a_root_that_sank_a_third_of_a_meter_stops_the_bake() {
 
 /// The clean report with one subject taken out of it.
 fn without(dropped: &str) -> String {
-    let findings = bake_subjects(&["idle"])
-        .iter()
-        .filter(|subject| *subject != dropped)
-        .map(|subject| a_bake_finding(subject, 0.0))
+    let findings = a_bake_findings(&["idle"])
+        .into_iter()
+        .filter(|finding| finding.subject != dropped)
+        .collect();
+    a_bake_report_of("survivor", findings)
+}
+
+/// And with every finding of one rule taken out, which is what deleting the
+/// call that measures it looks like from here.
+fn unread(rule: &str) -> String {
+    let findings = a_bake_findings(&["idle"])
+        .into_iter()
+        .filter(|finding| finding.rule != rule)
         .collect();
     a_bake_report_of("survivor", findings)
 }
@@ -239,9 +284,15 @@ fn without(dropped: &str) -> String {
 /// The clean report with one subject read at `meters`, through the rule, so
 /// the severity is the one the number gives.
 fn measuring(subject: &str, meters: f64) -> String {
-    let findings = bake_subjects(&["idle"])
-        .iter()
-        .map(|each| a_bake_finding(each, if each == subject { meters } else { 0.0 }))
+    let findings = a_bake_findings(&["idle"])
+        .into_iter()
+        .map(|finding| {
+            if finding.subject == subject {
+                a_bake_finding(subject, meters)
+            } else {
+                finding
+            }
+        })
         .collect();
     a_bake_report_of("survivor", findings)
 }
@@ -271,6 +322,55 @@ fn a_bake_reporting(report: Option<String>) -> String {
     )
     .unwrap_err()
     .to_string()
+}
+
+/// What the script does with a defect it can see before it renders: writes
+/// the whole report and returns, so a moved golden costs seconds. From here
+/// that is a report with an error and an empty staging directory, and both
+/// have to reach the person who ran it.
+#[test]
+fn a_bake_that_stopped_before_rendering_names_the_defect_and_the_frames_it_owes() {
+    let library = a_library();
+    let dir = a_baked_repo(true);
+    let stub = a_reporting_stub_that_never_renders(dir.path(), &measuring("idle x", 0.0428));
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+    let paths = Paths::new(dir.path(), "survivor");
+
+    let error = stages::bake(&a_spec("survivor"), &library, &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("defect(s)"), "got: {error}");
+    assert_eq!(
+        std::fs::read_dir(paths.staging())
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        0,
+        "the stub rendered nothing, so nothing may be left behind"
+    );
+}
+
+/// A run that wrote its report and returned before rendering a frame.
+fn a_reporting_stub_that_never_renders(dir: &Path, report: &str) -> std::path::PathBuf {
+    let prepared = dir.join("early.json");
+    std::fs::write(&prepared, report).unwrap();
+    let stub = dir.join("early.sh");
+    std::fs::write(
+        &stub,
+        format!(
+            "#!/bin/sh\ncat {prepared:?} > \"$MARROWFALL_REPORT\"\n\
+             : > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
+            prepared = prepared.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &stub,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    stub
 }
 
 /// A run that finished and wrote nothing.
@@ -380,6 +480,224 @@ fn a_missing_fetched_animation_names_the_command_that_gets_it() {
     assert!(
         error.contains("cargo art fetch strafe_left"),
         "got: {error}"
+    );
+}
+
+/// And one that dropped every finding of one rule, which is what deleting
+/// the call that measures it looks like from here.
+///
+/// `bake.sampled_frames_are_keys` names its clip, which the four rules this
+/// stage reads off the PNGs name too, so what is missing here is the rule and
+/// never the subject.
+#[test]
+fn a_bake_that_never_read_a_rule_stops() {
+    let error = a_bake_reporting(Some(unread("bake.sampled_frames_are_keys")));
+
+    assert!(
+        error.contains("bake.sampled_frames_are_keys"),
+        "got: {error}"
+    );
+    assert!(error.contains("never read"), "got: {error}");
+}
+
+/// The goldens the script reads, the two directions it takes them in, and
+/// the limits it reports them against all arrive on argv: a script names no
+/// path of its own and no limit of its own.
+#[test]
+fn the_goldens_and_their_two_directions_reach_blender() {
+    let seen = an_argv_from(None);
+
+    assert!(
+        seen.contains("--goldens\n") && seen.contains("art/goldens/survivor"),
+        "got: {seen}"
+    );
+    assert!(seen.contains("--golden-direction\ns\n"), "got: {seen}");
+    assert!(seen.contains("--golden-direction\ne\n"), "got: {seen}");
+    assert!(
+        seen.contains("--limit\nbake.landmark_golden=1\n"),
+        "got: {seen}"
+    );
+    assert!(
+        seen.contains("--limit\nbake.sampled_frames_are_keys=0\n"),
+        "got: {seen}"
+    );
+    assert!(
+        !seen.contains("--update-goldens"),
+        "a golden is read, not rewritten, unless something asks: {seen}"
+    );
+}
+
+/// And the one thing that rewrites a golden is that variable, which CI
+/// asserts is unset.
+#[test]
+fn only_the_update_variable_turns_a_golden_read_into_a_rewrite() {
+    assert_eq!(stages::UPDATE_GOLDENS_ENV, "MARROWFALL_UPDATE_GOLDENS");
+
+    let seen = an_argv_from(Some("1"));
+    assert!(seen.contains("--update-goldens"), "got: {seen}");
+
+    let empty = an_argv_from(Some(""));
+    assert!(
+        !empty.contains("--update-goldens"),
+        "an empty variable asks for nothing: {empty}"
+    );
+}
+
+/// And nothing set it in this run, which is the local half of what CI
+/// asserts: a suite that measures goldens must not be measuring goldens it
+/// just rewrote.
+#[test]
+fn nothing_set_the_golden_update_switch_in_this_run() {
+    // Through the guard, so this cannot read the variable the test above sets.
+    let _env = EnvGuard::new();
+
+    assert!(
+        std::env::var_os(stages::UPDATE_GOLDENS_ENV).is_none(),
+        "{} is set, so every golden this run reads is one it wrote",
+        stages::UPDATE_GOLDENS_ENV
+    );
+}
+
+/// And the CI half: the workflow refuses the variable before it runs a test,
+/// and reads the contact sheet it redraws against the committed copy before
+/// uploading it.
+#[test]
+fn ci_refuses_a_rewritten_golden_before_it_runs_anything() {
+    let workflow = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../.github/workflows/rust.yml"
+    ));
+
+    let refusal = workflow
+        .find("run: test -z \"${MARROWFALL_UPDATE_GOLDENS:-}\"")
+        .expect("the workflow asserts the variable is unset");
+    let tests = workflow
+        .find("run: cargo nextest run --workspace")
+        .expect("the workflow runs the workspace tests");
+    assert!(
+        refusal < tests,
+        "the refusal has to come before anything reads a golden"
+    );
+    let drawn = workflow
+        .find("run: cargo run --package xtask-art -- check --sheet")
+        .expect("CI draws the contact sheet from the committed atlases");
+    let compared = workflow
+        .find("run: git diff --exit-code -- 'project/assets/characters/*/sheet.png'")
+        .expect("and reads the redraw against the copy in the diff");
+    assert!(
+        drawn < compared,
+        "a comparison before the redraw would pass on a stale sheet"
+    );
+    assert!(
+        workflow.contains("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"),
+        "and uploads it, pinned by commit"
+    );
+}
+
+/// The bake's own argv, with `MARROWFALL_UPDATE_GOLDENS` set to `value`.
+fn an_argv_from(value: Option<&str>) -> String {
+    let library = a_library();
+    let dir = a_baked_repo(true);
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+    match value {
+        Some(value) => env.set(stages::UPDATE_GOLDENS_ENV, value),
+        None => env.remove(stages::UPDATE_GOLDENS_ENV),
+    };
+
+    stages::bake(
+        &a_spec("survivor"),
+        &library,
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap();
+
+    std::fs::read_to_string(
+        Artifacts::new(dir.path(), "bake", "survivor", 1)
+            .unwrap()
+            .argv(),
+    )
+    .unwrap()
+}
+
+/// The rules this stage reads off the PNGs are wired into it, so a pose the
+/// camera cut off stops the bake even though the script said nothing about
+/// it.
+#[test]
+fn a_pose_the_camera_cut_off_stops_the_bake() {
+    let library = a_library();
+    let dir = a_baked_repo(true);
+    let stub = a_stub_rendering(
+        dir.path(),
+        &a_bake_report("survivor", &STUB_CLIPS),
+        &frames::a_clipped_frame(),
+    );
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let error = stages::bake(
+        &a_spec("survivor"),
+        &library,
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    // Both, because content pushed against one border is no longer centered
+    // on the axis the ring turns about either.
+    assert!(
+        error.contains("left 2 defect(s) on bake.in_frame, bake.pivot"),
+        "got: {error}"
+    );
+}
+
+/// And the report on disk carries both halves, so the file a reader opens is
+/// the whole measurement rather than the Blender half of it.
+#[test]
+fn the_written_report_carries_what_blender_measured_and_what_rust_did() {
+    let library = a_library();
+    let dir = a_baked_repo(true);
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    stages::bake(
+        &a_spec("survivor"),
+        &library,
+        &Paths::new(dir.path(), "survivor"),
+        dir.path(),
+    )
+    .unwrap();
+
+    let written = xtask_art::check::Report::read(
+        &Artifacts::new(dir.path(), "bake", "survivor", 1)
+            .unwrap()
+            .report(),
+    )
+    .unwrap();
+    let rules: std::collections::BTreeSet<&str> = written
+        .findings()
+        .iter()
+        .map(|finding| finding.rule.as_str())
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            "bake.forearm_roll",
+            "bake.frame_count",
+            "bake.in_frame",
+            "bake.landmark_golden",
+            "bake.non_empty",
+            "bake.pivot",
+            "bake.sampled_frames_are_keys",
+            "clip.root_bob",
+            "clip.root_travel",
+        ]
+        .into_iter()
+        .collect()
     );
 }
 

@@ -306,6 +306,38 @@ smallest_island_cubic_meters = 1e-6
 # it. 1 mm on a 1.7 m body.
 symmetrize_meters = 0.001
 
+# Every published bake limit. Read by `crates/xtask-art/src/check/bake.rs`
+# on the PNGs the bake leaves in `art/staging/<character>/`, and published to
+# `bake_sprites.py` for the one rule that needs the scene camera.
+#
+# Every number below is measured on the 848 rendered frames of that
+# directory: 16 directions x 15 idle, 20 run and 18 walk_back frames, rendered
+# at 512 px from the committed `model.glb` and the three committed clips.
+#
+# `bake.frame_count`, `bake.forearm_roll` and `bake.sampled_frames_are_keys`
+# have no row. The first two count what must be absent and the third counts
+# frames nobody keyed, and a count of defects has no tunable limit.
+[profile.bake]
+# How little of its own canvas a frame may cover. The emptiest frame of each
+# committed clip reads 4.1164, 4.8367 and 4.8912 percent, so this sits 4.1x
+# under the worst of them, and a frame that rendered nothing reads 0.0000.
+frame_coverage_percent = 1.0
+# How close content may come to the canvas border. The tightest frame of each
+# clip is 58, 65 and 89 px clear of one, and a pose the camera cut off reads 0.
+in_frame_pixels = 1.0
+# How far two opposite directions may sit from being each other's reflection
+# about the canvas center. An orthographic camera centered on the axis of
+# rotation makes that exact, whatever the pose: the worst of the 424 opposite
+# pairs of the three clips reads 1 px, so this leaves a pixel of rasterization
+# headroom and still rejects a frame offset 20 px by 10x.
+pivot_pixels = 2.0
+# How far a projected joint may sit from the pixel the committed golden
+# records for it. A golden holds whole pixels, so this is one rounding step:
+# it absorbs a joint that lands on a half-pixel boundary and floats to either
+# side of it. Every one of the 432 committed landmarks reads 0, and a wrist
+# 0.6 m out from its shoulder turned 30 degrees moves 21 px.
+landmark_pixels = 1.0
+
 # Every published clip limit. Read by `crates/xtask-art/src/check/clip.rs`.
 #
 # Both are calibrated, not assumed. The calibration asset is a synthetic
@@ -320,7 +352,7 @@ symmetrize_meters = 0.001
 [profile.clip]
 # Worst per bone over the clip. The synthetic pair reads 4.3e-6 and the three
 # Mixamo clips read 4.1e-5 to 7.1e-5, all of it `f32` storage rather than
-# maths. The pre-rename shipped output reads 97.797 on the hips, so this limit
+# math. The pre-rename shipped output reads 97.797 on the hips, so this limit
 # clears the worst real reading by 142x and sits 9,780x under the defect it
 # exists to catch.
 swing_degrees = 0.01

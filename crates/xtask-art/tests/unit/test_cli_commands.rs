@@ -6,8 +6,8 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::blender::Build;
 use xtask_art::check::profile::Profile;
 use xtask_art::cli::{
-    Cli, Command, RunOptions, check, confirm_spend, new_character, repo_root, report_balance,
-    run_from_args, spend_prompt, stale_hint, status,
+    Asked, Cli, Command, RunOptions, check, confirm_spend, new_character, repo_root,
+    report_balance, run_from_args, spend_prompt, stale_hint, status,
 };
 use xtask_art::lock::{self, Inputs, Lock, Provider, Stage, StageRecord};
 use xtask_art::spec::{CharacterSpec, CharacterType, Paths};
@@ -232,7 +232,7 @@ fn check_passes_over_a_directory_of_valid_specs() {
             .save(&Paths::new(dir.path(), name).spec())
             .unwrap();
     }
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 }
 
 #[test]
@@ -245,14 +245,16 @@ fn check_fails_and_counts_the_invalid_specs() {
     bad.subject.description = "TODO: describe the character".to_owned();
     bad.save(&Paths::new(dir.path(), "bad").spec()).unwrap();
 
-    let error = check(dir.path(), None, false).unwrap_err().to_string();
+    let error = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("1 spec(s) invalid"), "got: {error}");
 }
 
 #[test]
 fn check_on_an_empty_repo_says_so_rather_than_failing() {
     let dir = a_repo();
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 }
 
 #[test]
@@ -261,7 +263,7 @@ fn check_can_target_a_single_character() {
     a_spec("survivor")
         .save(&Paths::new(dir.path(), "survivor").spec())
         .unwrap();
-    check(dir.path(), Some("survivor"), false).unwrap();
+    check(dir.path(), Some("survivor"), Asked::Measure).unwrap();
 }
 
 /// A repo holding the committed skeleton profile and the committed rig as
@@ -288,7 +290,9 @@ fn a_repo_with_a_rig(name: &str) -> tempfile::TempDir {
 fn check_itemizes_the_defects_of_the_rig_on_disk() {
     let dir = a_repo_with_a_rig("survivor");
 
-    let error = check(dir.path(), None, false).unwrap_err().to_string();
+    let error = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
 
     assert!(error.contains("14 defect(s)"), "got: {error}");
 }
@@ -304,7 +308,7 @@ fn check_measures_the_bare_mesh_and_writes_its_own_report() {
     std::fs::copy(real_repo().join("art/characters/survivor/model.glb"), &bare).unwrap();
 
     // The rig still fails, so the command still fails.
-    check(dir.path(), None, false).unwrap_err();
+    check(dir.path(), None, Asked::Measure).unwrap_err();
 
     let report = xtask_art::check::Report::read(
         &dir.path().join("art/staging/reports/mesh.survivor.1.json"),
@@ -329,7 +333,9 @@ fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
 
     // The rig is there and the bare mesh is not, so only the rig is
     // measured and only the rig fails.
-    let error = check(dir.path(), None, false).unwrap_err().to_string();
+    let error = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
 
     assert!(error.contains("14 defect(s)"), "got: {error}");
     assert!(
@@ -344,7 +350,7 @@ fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
 fn check_writes_the_rig_report_where_the_runner_writes_every_report() {
     let dir = a_repo_with_a_rig("survivor");
 
-    check(dir.path(), None, false).unwrap_err();
+    check(dir.path(), None, Asked::Measure).unwrap_err();
 
     let report =
         xtask_art::check::Report::read(&dir.path().join("art/staging/reports/rig.survivor.1.json"))
@@ -362,7 +368,7 @@ fn check_says_when_a_character_has_no_rig_on_disk_yet() {
         .unwrap();
 
     // No model.glb, so there is nothing to measure and nothing to report.
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 }
 
 #[test]
@@ -375,17 +381,19 @@ fn check_leaves_a_character_that_is_never_rigged_alone() {
         .save(&Paths::new(dir.path(), "hound").spec())
         .unwrap();
 
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 }
 
 #[test]
 fn the_rule_list_needs_the_profile_that_publishes_every_limit() {
-    check(&real_repo(), None, true).unwrap();
+    check(&real_repo(), None, Asked::ListRules).unwrap();
 
     // A repository with no `art/skeletons` at all, which is what a rule list
     // with nothing to read its limits from looks like.
     let bare = tempfile::tempdir().unwrap();
-    let error = check(bare.path(), None, true).unwrap_err().to_string();
+    let error = check(bare.path(), None, Asked::ListRules)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("no skeleton profile"), "got: {error}");
 }
 
@@ -405,7 +413,7 @@ fn the_rule_list_covers_every_skeleton_the_repository_declares() {
         Profile::declared(dir.path()).unwrap(),
         ["humanoid", "quadruped"]
     );
-    check(dir.path(), None, true).unwrap();
+    check(dir.path(), None, Asked::ListRules).unwrap();
 }
 
 // --- repo root ------------------------------------------------------------
@@ -517,7 +525,8 @@ fn every_subcommand_parses() {
         cli.command,
         Command::Check {
             name: None,
-            list_rules: false
+            list_rules: false,
+            sheet: false
         }
     ));
 
@@ -529,9 +538,15 @@ fn every_subcommand_parses() {
             ..
         }
     ));
+    let cli = Cli::try_parse_from(["art", "check", "survivor", "--sheet"]).unwrap();
+    assert!(matches!(cli.command, Command::Check { sheet: true, .. }));
     assert!(
         Cli::try_parse_from(["art", "check", "survivor", "--list-rules"]).is_err(),
         "one character's defects and the whole rule list are two questions"
+    );
+    assert!(
+        Cli::try_parse_from(["art", "check", "--list-rules", "--sheet"]).is_err(),
+        "the rule list and the contact sheet are two questions"
     );
 }
 
@@ -784,7 +799,7 @@ fn check_reports_every_rule_under_all_four_declarations() {
         std::fs::write(paths.bare_glb(), crate::support::a_bare_mesh()).unwrap();
         std::fs::write(paths.clean_glb(), crate::support::a_cleaned_mesh()).unwrap();
 
-        check(dir.path(), None, false).unwrap();
+        check(dir.path(), None, Asked::Measure).unwrap();
 
         let mesh = a_report(dir.path(), "mesh");
         let mirror = finding_of(&mesh, "mesh.mirror");
@@ -825,7 +840,7 @@ fn check_says_when_a_character_has_no_cleaned_mesh_on_disk_yet() {
     std::fs::create_dir_all(paths.staging()).unwrap();
     std::fs::write(paths.bare_glb(), crate::support::a_bare_mesh()).unwrap();
 
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 
     for stage in ["cleaned", "cleanup"] {
         assert!(
@@ -848,7 +863,7 @@ fn check_says_nothing_about_the_cleanup_of_a_character_with_no_mesh() {
     spec.save(&Paths::new(dir.path(), "survivor").spec())
         .unwrap();
 
-    check(dir.path(), None, false).unwrap();
+    check(dir.path(), None, Asked::Measure).unwrap();
 
     assert!(
         !dir.path()

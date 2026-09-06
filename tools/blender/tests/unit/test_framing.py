@@ -14,27 +14,39 @@ from framing import (
     CAMERA_ELEVATION_DEG,
     DIRECTION_NAMES,
     FRAMING_MARGIN,
+    GOLDEN_HEADER,
     KEY_LIGHT_AZIMUTH_DEG,
     KEY_LIGHT_ELEVATION_DEG,
     SAME_BODY,
     BakeSettings,
     Bounds,
+    Camera,
     Framing,
+    Landmark,
     bone_from_data_path,
     direction_rotation,
     forearm_roll_sign,
     frame_filename,
+    frames_are_keys,
+    frames_the_action_keys,
+    golden_gap,
+    golden_landmarks,
+    golden_samples,
+    golden_text,
     is_forearm,
     key_light_rotation,
+    landmark_golden,
     missing_bones,
     off_this_body,
     pin_horizontally,
+    project,
     rest_height,
     root_channel_fault,
     root_kept,
     root_travel,
     sampled_frames,
     translation_scale,
+    unkeyed_frames,
     worst_axis_travel,
 )
 from pydantic import ValidationError
@@ -610,3 +622,324 @@ def test_the_f32_a_glb_stores_is_still_the_same_body() -> None:
 
 def test_a_rig_a_tenth_of_a_percent_out_is_another_body() -> None:
     assert off_this_body(1.7, 1.7017) > SAME_BODY
+
+
+# --- which frames the bake renders, and whether anyone authored them ------
+
+GOLDEN_LIMITS = {"bake.sampled_frames_are_keys": 0.0, "bake.landmark_golden": 1.0}
+
+
+def a_channel(frames: list[float]) -> list[float]:
+    """One F-curve's key times, as `bake_sprites` hands them over."""
+    return frames
+
+
+def test_a_frame_any_channel_keys_is_a_frame_somebody_authored() -> None:
+    assert frames_the_action_keys([a_channel([0.0, 46.0]), a_channel([0.0, 1.0])]) == {
+        0,
+        1,
+        46,
+    }
+
+
+def test_an_action_with_no_curve_at_all_keys_nothing() -> None:
+    assert frames_the_action_keys([]) == set()
+
+
+def test_the_frames_nothing_authored_are_the_ones_left_over() -> None:
+    assert unkeyed_frames([0, 3, 6], {0, 1, 2, 3}) == [6]
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_every_rendered_frame_of_a_densely_keyed_clip_is_a_key() -> None:
+    """What `idle` really reads: 15 rendered frames of the 47 its action
+    keys."""
+    finding = frames_are_keys(
+        "idle",
+        [round(frame * 46 / 15) for frame in range(15)],
+        [a_channel([float(frame) for frame in range(47)])],
+        GOLDEN_LIMITS,
+    )
+
+    assert finding.severity is Severity.INFO
+    assert finding.measured == 0.0
+    assert finding.message == "idle renders 15 frame(s) of the 47 its action keys"
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_an_action_with_every_other_key_deleted_is_refused() -> None:
+    """The `[synth]` negative: half the poses the bake renders would then be
+    an interpolation of two nobody authored."""
+    finding = frames_are_keys(
+        "idle",
+        list(range(6)),
+        [a_channel([0.0, 2.0, 4.0])],
+        GOLDEN_LIMITS,
+    )
+
+    assert finding.severity is Severity.ERROR
+    assert finding.measured == 3.0
+    assert "[1, 3, 5] are keyed by nothing" in finding.message
+
+
+# --- the bake camera, as a pixel mapper -----------------------------------
+
+
+SHOULDER_HEIGHT = 1.4
+
+
+def a_camera(size: int = 512, ortho_scale: float = 2.0) -> Camera:
+    """A camera looking along +Y from 4 m back, level and aimed at shoulder
+    height: +X is right across the image and +Z is up it."""
+    return Camera(
+        location=(0.0, -4.0, SHOULDER_HEIGHT),
+        right=(1.0, 0.0, 0.0),
+        up=(0.0, 0.0, 1.0),
+        ortho_scale=ortho_scale,
+        size=size,
+    )
+
+
+def test_what_the_camera_points_at_lands_in_the_middle_of_the_frame() -> None:
+    assert project((0.0, 0.0, SHOULDER_HEIGHT), a_camera()) == (256, 256)
+
+
+def test_a_quarter_of_the_ortho_width_is_a_quarter_across_the_canvas() -> None:
+    """The width the canvas covers is `ortho_scale`, so half a meter of a two
+    meter view is a quarter of 512 pixels."""
+    assert project((0.5, 0.0, SHOULDER_HEIGHT), a_camera()) == (384, 256)
+    assert project((-0.5, 0.0, SHOULDER_HEIGHT), a_camera()) == (128, 256)
+
+
+def test_rows_count_down_from_the_top_the_way_an_image_does() -> None:
+    assert project((0.0, 0.0, SHOULDER_HEIGHT + 0.5), a_camera()) == (256, 128)
+    assert project((0.0, 0.0, SHOULDER_HEIGHT - 0.5), a_camera()) == (256, 384)
+
+
+def test_moving_along_the_line_of_sight_moves_nothing_on_screen() -> None:
+    """Orthographic, so depth is not a scale."""
+    camera = a_camera()
+    assert project((0.0, 3.0, 1.0), camera) == project((0.0, -3.0, 1.0), camera)
+
+
+def test_an_arm_rotated_thirty_degrees_moves_it_far_off_its_pixel() -> None:
+    """The `[synth]` negative for the golden: a wrist 0.6 m out from the
+    shoulder, turned 30 degrees about the body's own axis before it is
+    projected, moves 21 px on a 512 px canvas covering 2 m."""
+    wrist = (0.6, 0.0, SHOULDER_HEIGHT)
+    turned = (
+        0.6 * math.cos(math.radians(30.0)),
+        0.6 * math.sin(math.radians(30.0)),
+        SHOULDER_HEIGHT,
+    )
+    camera = a_camera()
+
+    assert project(wrist, camera) == (410, 256)
+    assert project(turned, camera) == (389, 256)
+    assert golden_gap(
+        [a_landmark(bone="LeftHand", x=389, y=256)],
+        [a_landmark(bone="LeftHand", x=410, y=256)],
+    ) == (
+        21,
+        "LeftHand at frame 0 is 21 px off, (389, 256) against (410, 256)",
+    )
+
+
+# --- the landmark golden --------------------------------------------------
+
+
+def a_landmark(frame: int = 0, bone: str = "Hips", x: int = 256, y: int = 301):
+    return Landmark(frame=frame, bone=bone, x=x, y=y)
+
+
+def test_a_golden_records_the_first_the_middle_and_the_last_frame() -> None:
+    assert golden_samples(15) == [0, 7, 14]
+    assert golden_samples(20) == [0, 10, 19]
+
+
+@pytest.mark.parametrize(("count", "expected"), [(0, []), (1, [0]), (2, [0, 1])])
+def test_a_clip_too_short_for_three_records_what_it_has(
+    count: int, expected: list[int]
+) -> None:
+    assert golden_samples(count) == expected
+
+
+def test_a_golden_is_a_header_and_one_line_per_joint() -> None:
+    """The columns are wide enough for `RightShoulder` and for a four digit
+    canvas, so nothing in this repository shifts them."""
+    text = golden_text([a_landmark(), a_landmark(bone="RightShoulder", x=1024, y=99)])
+
+    assert text.splitlines() == [
+        GOLDEN_HEADER,
+        "0      Hips              256  301",
+        "0      RightShoulder    1024   99",
+    ]
+    assert text.endswith("\n")
+
+
+def test_the_header_sits_in_the_same_columns_as_a_row() -> None:
+    """A header one character wide of the rows labels the wrong field, which
+    is what a reviewer reads the golden by."""
+    rows = golden_text([a_landmark()]).splitlines()
+
+    assert len(rows[0]) == len(rows[1]) == 33
+    assert rows[0].index("y") == rows[1].index("301") + len("301") - 1
+
+
+def test_a_golden_reads_back_as_the_landmarks_it_was_written_from() -> None:
+    marks = [a_landmark(), a_landmark(frame=7, bone="LeftHand", x=198, y=288)]
+
+    assert golden_landmarks(golden_text(marks)) == marks
+
+
+def test_the_header_and_anything_else_that_is_not_a_row_is_skipped() -> None:
+    assert golden_landmarks(f"{GOLDEN_HEADER}\n\n0 Hips 1 2\nrubbish\n") == [
+        a_landmark(x=1, y=2)
+    ]
+
+
+def test_a_run_that_lands_on_every_recorded_pixel_is_no_distance_from_it() -> None:
+    marks = [a_landmark(), a_landmark(bone="LeftHand", x=198, y=288)]
+
+    assert golden_gap(marks, list(marks)) == (
+        0,
+        "every joint is on the pixel the golden records",
+    )
+
+
+def test_the_worst_joint_is_what_the_gap_reports() -> None:
+    marks = [a_landmark(), a_landmark(bone="LeftHand", x=198, y=288)]
+    moved = [a_landmark(x=258), a_landmark(bone="LeftHand", x=198, y=268)]
+
+    worst, where = golden_gap(marks, moved)
+
+    assert worst == 20
+    assert where == "LeftHand at frame 0 is 20 px off, (198, 288) against (198, 268)"
+
+
+def test_a_golden_of_other_joints_has_no_distance_from_this_pose() -> None:
+    """A 26 joint pose has no distance from a 24 joint record, and saying it
+    does would compare whatever happened to line up."""
+    assert golden_gap([a_landmark()], [a_landmark(bone="Neck")]) is None
+    assert golden_gap([a_landmark()], [a_landmark(), a_landmark(frame=7)]) is None
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_missing_golden_is_an_error_and_never_an_auto_accept(
+    tmp_path: pathlib.Path,
+) -> None:
+    finding = landmark_golden(
+        "idle_s", tmp_path / "idle_s.txt", [a_landmark()], GOLDEN_LIMITS, update=False
+    )
+
+    assert finding.severity is Severity.ERROR
+    assert finding.unit == "undefined measurements"
+    assert "there is no golden at" in finding.message
+    assert "MARROWFALL_UPDATE_GOLDENS=1 writes one" in finding.message
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_run_inside_the_limit_reports_the_joint_that_moved_most(
+    tmp_path: pathlib.Path,
+) -> None:
+    golden = tmp_path / "idle_s.txt"
+    golden.write_text(golden_text([a_landmark()]))
+
+    finding = landmark_golden(
+        "idle_s", golden, [a_landmark(x=257)], GOLDEN_LIMITS, update=False
+    )
+
+    assert finding.severity is Severity.INFO
+    assert finding.measured == 1.0
+    assert finding.message == (
+        "of the 1 joints of idle_s, Hips at frame 0 is 1 px off, (257, 301) "
+        "against (256, 301)"
+    )
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_joint_two_pixels_off_its_golden_is_refused(tmp_path: pathlib.Path) -> None:
+    golden = tmp_path / "idle_s.txt"
+    golden.write_text(golden_text([a_landmark()]))
+
+    finding = landmark_golden(
+        "idle_s", golden, [a_landmark(y=303)], GOLDEN_LIMITS, update=False
+    )
+
+    assert finding.severity is Severity.ERROR
+    assert finding.measured == 2.0
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_golden_of_another_pose_is_undefined_rather_than_a_distance(
+    tmp_path: pathlib.Path,
+) -> None:
+    golden = tmp_path / "idle_s.txt"
+    golden.write_text(golden_text([a_landmark(bone="Neck")]))
+
+    finding = landmark_golden(
+        "idle_s", golden, [a_landmark()], GOLDEN_LIMITS, update=False
+    )
+
+    assert finding.severity is Severity.ERROR
+    assert finding.unit == "undefined measurements"
+    assert "records another set of joints or frames" in finding.message
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_rewriting_a_golden_measures_nothing_at_all(tmp_path: pathlib.Path) -> None:
+    """Reading back a file this run just wrote would be the run agreeing with
+    itself, so the update is a skip: a declared flag switched the rule off."""
+    golden = tmp_path / "goldens" / "idle_s.txt"
+
+    finding = landmark_golden(
+        "idle_s", golden, [a_landmark()], GOLDEN_LIMITS, update=True
+    )
+
+    assert finding.severity is Severity.SKIPPED
+    assert finding.measured == 0.0
+    assert "MARROWFALL_UPDATE_GOLDENS=1 rewrote idle_s.txt" in finding.message
+    assert golden_landmarks(golden.read_text()) == [a_landmark()]
+
+
+# --- the goldens this repository committed --------------------------------
+
+
+def committed_goldens() -> list[pathlib.Path]:
+    root = pathlib.Path(__file__).resolve().parents[4]
+    found = sorted((root / "art/goldens/survivor").glob("*.txt"))
+    assert len(found) == 6, "three clips, two directions each"
+    return found
+
+
+@pytest.mark.parametrize("path", committed_goldens(), ids=lambda path: path.stem)
+def test_a_committed_golden_records_a_body_the_right_way_up(
+    path: pathlib.Path,
+) -> None:
+    """The calibration of the projection itself, on all six committed files:
+    a camera basis read before the scene was evaluated projected the depth
+    where the height belongs, and it put the head 18 px under the hips."""
+    marks = golden_landmarks(path.read_text())
+    assert len(marks) == 72, "24 joints at three sampled frames"
+
+    for frame in sorted({mark.frame for mark in marks}):
+        pose = [mark for mark in marks if mark.frame == frame]
+        where = f"frame {frame} of {path.stem}"
+        row = {mark.bone: mark.y for mark in pose}
+        assert row["Head"] < row["Hips"], where
+        # The lowest joint of a body on the ground is a toe. Not the highest:
+        # a run swings a forearm past the head, which `run_s` frame 19 does.
+        assert max(pose, key=lambda mark: mark.y).bone in {
+            "LeftToeBase",
+            "RightToeBase",
+        }, where
+
+
+@pytest.mark.parametrize("path", committed_goldens(), ids=lambda path: path.stem)
+def test_every_committed_landmark_is_inside_the_canvas_it_was_projected_on(
+    path: pathlib.Path,
+) -> None:
+    """512 px, which is `spec.bake.render_size` for the survivor."""
+    for mark in golden_landmarks(path.read_text()):
+        assert 0 <= mark.x < 512, f"{mark} in {path.stem}"
+        assert 0 <= mark.y < 512, f"{mark} in {path.stem}"

@@ -54,17 +54,23 @@ from framing import (
     SAME_BODY,
     BakeSettings,
     Bounds,
+    Camera,
     Framing,
+    Landmark,
     Vec3,
     bone_from_data_path,
     direction_rotation,
     forearm_roll_sign,
     frame_filename,
+    frames_are_keys,
+    golden_samples,
     is_forearm,
     key_light_rotation,
+    landmark_golden,
     missing_bones,
     off_this_body,
     pin_horizontally,
+    project,
     rest_height,
     root_kept,
     root_travel,
@@ -151,6 +157,26 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=[],
         metavar="RULE=NUMBER",
         help="The published limit for one rule, passed by the runner.",
+    )
+    parser.add_argument(
+        "--goldens",
+        type=Path,
+        help="Directory holding this character's landmark goldens, one file "
+        "per clip per golden direction.",
+    )
+    parser.add_argument(
+        "--golden-direction",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="A direction to take a landmark golden in. Repeatable, and the "
+        "runner chooses which.",
+    )
+    parser.add_argument(
+        "--update-goldens",
+        action="store_true",
+        help="Rewrite every golden from this run instead of reading it. The "
+        "runner passes this only when MARROWFALL_UPDATE_GOLDENS is set.",
     )
     parser.add_argument(
         "--forearm-roll",
@@ -243,14 +269,7 @@ def measure_framing(
 
     for animation in animations:
         assign_action(character.armature, animation.action)
-        start, end = animation.action.frame_range
-        for frame in sampled_frames(
-            start,
-            end,
-            bpy.context.scene.render.fps,
-            settings.fps[animation.name],
-            settings.trim_start,
-        ):
+        for frame in frames_of(animation, settings):
             bpy.context.scene.frame_set(frame)
             depsgraph = bpy.context.evaluated_depsgraph_get()
             for obj in character.meshes:
@@ -263,6 +282,22 @@ def measure_framing(
                     radius = max(radius, math.hypot(world.x, world.y))
                 evaluated.to_mesh_clear()
     return Framing(lo_z=lo_z, hi_z=hi_z, radius=radius)
+
+
+def frames_of(animation: Animation, settings: BakeSettings) -> list[int]:
+    """Which frames of one clip the bake renders.
+
+    One owner, because the framing pass, the render and the two measurements
+    must all be about the same frames.
+    """
+    start, end = animation.action.frame_range
+    return sampled_frames(
+        start,
+        end,
+        bpy.context.scene.render.fps,
+        settings.fps[animation.name],
+        settings.trim_start,
+    )
 
 
 def inspect(character: Character) -> None:
@@ -607,34 +642,35 @@ def parent_to_pivot() -> bpy.types.Object:
     return pivot
 
 
+def setup_scene(framing: Framing, settings: BakeSettings) -> bpy.types.Object:
+    """The camera, the lights, the render settings and the pivot the character
+    turns on.
+
+    Separate from the render so the goldens are projected through the scene the
+    frames are drawn in, and measured before eight minutes of rendering rather
+    than after.
+    """
+    setup_camera(framing)
+    setup_lighting()
+    setup_render(settings.size)
+    return parent_to_pivot()
+
+
 def bake(
     out: Path,
     character: Character,
     animations: list[Animation],
-    framing: Framing,
     settings: BakeSettings,
+    pivot: bpy.types.Object,
 ) -> None:
     directions = settings.direction_names
-
-    setup_camera(framing)
-    setup_lighting()
-    setup_render(settings.size)
-    pivot = parent_to_pivot()
-
     out.mkdir(parents=True, exist_ok=True)
     scene = bpy.context.scene
     total = 0
 
     for animation in animations:
         assign_action(character.armature, animation.action)
-        start, end = animation.action.frame_range
-        frames = sampled_frames(
-            start,
-            end,
-            scene.render.fps,
-            settings.fps[animation.name],
-            settings.trim_start,
-        )
+        frames = frames_of(animation, settings)
         total += len(frames) * len(directions)
 
         for dir_index, dir_name in enumerate(directions):
@@ -651,6 +687,103 @@ def bake(
         )
 
     print(f"\ndone: {total} frames -> {out}")
+
+
+def measure_sampled_frames(
+    animations: list[Animation], settings: BakeSettings, limits: dict[str, float]
+) -> list[Finding]:
+    """`bake.sampled_frames_are_keys`, one finding per clip.
+
+    Read off the action rather than the file, which is the only place the keys
+    behind a rendered pose can be seen at all.
+    """
+    return [
+        frames_are_keys(
+            animation.name,
+            frames_of(animation, settings),
+            [
+                [point.co[0] for point in curve.keyframe_points]
+                for curve in action_fcurves(animation.action)
+            ],
+            limits,
+        )
+        for animation in animations
+    ]
+
+
+def bake_camera(settings: BakeSettings) -> Camera:
+    """The scene's own camera, as the pixel mapper a golden is projected with."""
+    # Nothing has evaluated the scene since the camera was placed, and a
+    # transform set through the API reaches `matrix_world` only when it does.
+    bpy.context.view_layer.update()
+    camera = bpy.context.scene.camera
+    # A camera carries no scale, so its own axes are where it turned them: +X
+    # is right across the image and +Y is up it.
+    turned = camera.matrix_world.to_quaternion()
+    return Camera(
+        location=tuple(camera.matrix_world.translation),
+        right=tuple(turned @ Vector((1.0, 0.0, 0.0))),
+        up=tuple(turned @ Vector((0.0, 1.0, 0.0))),
+        ortho_scale=camera.data.ortho_scale,
+        size=settings.size,
+    )
+
+
+def joint_pixels(
+    character: Character, frame: int, camera: Camera, bones: list[str]
+) -> list[Landmark]:
+    """Every joint of one pose, in the pixels of the frame that renders it."""
+    armature = character.armature
+    marks = []
+    for bone in bones:
+        world = armature.matrix_world @ armature.pose.bones[bone].matrix
+        x, y = project(tuple(world.to_translation()), camera)
+        marks.append(Landmark(frame=frame, bone=bone, x=x, y=y))
+    return marks
+
+
+def measure_goldens(
+    character: Character,
+    animations: list[Animation],
+    settings: BakeSettings,
+    pivot: bpy.types.Object,
+    goldens: Path | None,
+    directions: list[str],
+    update: bool,
+    limits: dict[str, float],
+) -> list[Finding]:
+    """`bake.landmark_golden`, three frames by two directions per clip.
+
+    The pivot is turned to each golden direction first, so what is projected
+    is where the joints are in the frame that direction renders.
+    """
+    if goldens is None:
+        sys.exit("error: --goldens DIR is needed to read the landmark goldens")
+    scene = bpy.context.scene
+    camera = bake_camera(settings)
+    ring = settings.direction_names
+    bones = sorted(bone.name for bone in character.armature.data.bones)
+    findings = []
+    for animation in animations:
+        assign_action(character.armature, animation.action)
+        frames = frames_of(animation, settings)
+        for direction in directions:
+            if direction not in ring:
+                sys.exit(f"error: --golden-direction {direction} is not in {ring}")
+            pivot.rotation_euler.z = direction_rotation(
+                ring.index(direction), len(ring)
+            )
+            measured = []
+            for sample in golden_samples(len(frames)):
+                scene.frame_set(frames[sample])
+                measured += joint_pixels(character, sample, camera, bones)
+            subject = f"{animation.name}_{direction}"
+            findings.append(
+                landmark_golden(
+                    subject, goldens / f"{subject}.txt", measured, limits, update
+                )
+            )
+    return findings
 
 
 def parse_rates(entries: list[str]) -> dict[str, int]:
@@ -707,16 +840,29 @@ def main() -> None:
     stripped = not args.keep_root_motion
     if stripped:
         strip_root_motion(character.armature)
-    write_report(
-        measure_root_travel(
-            character.armature, animations, stripped, limits_from(args.limit)
-        )
-    )
+    limits = limits_from(args.limit)
+    findings = measure_root_travel(character.armature, animations, stripped, limits)
+    findings += measure_sampled_frames(animations, settings, limits)
 
     # Everything is in one scene, so the camera is framed once across every
     # animation and the character cannot change size between them.
     framing = measure_framing(character, animations, settings)
-    bake(args.out, character, animations, framing, settings)
+    pivot = setup_scene(framing, settings)
+    findings += measure_goldens(
+        character,
+        animations,
+        settings,
+        pivot,
+        args.goldens,
+        args.golden_direction,
+        args.update_goldens,
+        limits,
+    )
+    # The report is the deliverable; the render is two minutes. A moved
+    # golden or an unkeyed frame stops here, so it costs seconds.
+    if write_report(findings).has_errors:
+        return
+    bake(args.out, character, animations, settings, pivot)
 
 
 def save_blend(path: Path) -> None:

@@ -11,6 +11,7 @@ use serde_json::json;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::check::{Artifacts, Report, Severity, mesh};
+use xtask_art::cli::Asked;
 use xtask_art::library::{Animation, HUMANOID, MotionSource};
 use xtask_art::lock::TaskRef;
 use xtask_art::providers::meshy::{self, Endpoint};
@@ -780,7 +781,7 @@ fn checking_by_hand_writes_the_same_reports_the_fixer_step_did() {
     )
     .unwrap();
 
-    xtask_art::cli::check(dir.path(), None, false).unwrap();
+    xtask_art::cli::check(dir.path(), None, Asked::Measure).unwrap();
 
     assert_eq!(
         reports.map(|stage| rules_of(dir.path(), stage)),

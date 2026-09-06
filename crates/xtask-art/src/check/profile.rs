@@ -181,6 +181,28 @@ pub struct ConceptLimits {
     pub cross_view_percent: f64,
 }
 
+/// The `[profile.bake]` table: what the rendered frames must be before they
+/// are packed.
+///
+/// `bake.frame_count` and `bake.sampled_frames_are_keys` have no row, and
+/// neither does `bake.forearm_roll`: a count of defects and a patch that must
+/// be off have nothing to tune.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BakeLimits {
+    /// How little of its own canvas a rendered frame may cover, as a percent.
+    pub frame_coverage_percent: f64,
+    /// How close the content of a frame may come to the canvas border, in
+    /// pixels.
+    pub in_frame_pixels: f64,
+    /// How far two opposite directions may sit from being each other's
+    /// reflection about the canvas center, in pixels.
+    pub pivot_pixels: f64,
+    /// How far a projected joint may sit from the pixel the committed golden
+    /// records for it.
+    pub landmark_pixels: f64,
+}
+
 /// The `[profile.cleanup]` table: the numbers the Blender fixer runs on.
 ///
 /// Not ceilings. The fixer measures nothing, so nothing here is read against
@@ -289,6 +311,9 @@ pub struct Profile {
     /// Every published mesh limit. The mesh gates run on the character, not
     /// on the skeleton, and they read these.
     pub mesh: MeshLimits,
+    /// Every published bake limit, read on the rendered frames before they
+    /// are packed.
+    pub bake: BakeLimits,
     /// What the fixer welds, drops and mirrors at, handed to Blender on argv.
     pub cleanup: CleanupParams,
     /// Every published clip limit, read by the retarget's own gates.
@@ -535,6 +560,16 @@ impl Profile {
             // And a travel threshold of zero would call every clip traveling,
             // because no two frames of real motion sit at the same place.
             ("source.travel_meters", self.source.travel_meters),
+            // A bake limit of zero passes a frame that rendered nothing, one
+            // the camera cut off, and a ring that turns about anywhere at
+            // all: the three are `ge` and `le` floors on a real measurement.
+            (
+                "bake.frame_coverage_percent",
+                self.bake.frame_coverage_percent,
+            ),
+            ("bake.in_frame_pixels", self.bake.in_frame_pixels),
+            ("bake.pivot_pixels", self.bake.pivot_pixels),
+            ("bake.landmark_pixels", self.bake.landmark_pixels),
         ] {
             ensure!(
                 value.is_finite() && value > 0.0,

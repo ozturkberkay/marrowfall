@@ -19,7 +19,7 @@ pub use sprites::{Anchor, AnimationAtlas, CharacterAssets, FrameRect};
 
 /// Compass directions in the order the Blender bake writes them. Index 0 faces
 /// the camera, and the model turns clockwise from there. So the ring runs
-/// south, south-west, west, and on round. Must match `DIRECTION_NAMES` in
+/// south, south-west, west, and on around. Must match `DIRECTION_NAMES` in
 /// `tools/blender/src/framing.py`, which a test cross-checks.
 const DIRECTIONS_4: [&str; 4] = ["s", "w", "n", "e"];
 const DIRECTIONS_8: [&str; 8] = ["s", "sw", "w", "nw", "n", "ne", "e", "se"];
@@ -75,6 +75,11 @@ impl Rect {
         self.x == 0 || self.y == 0 || self.x + self.width >= width || self.y + self.height >= height
     }
 }
+
+/// The alpha a pixel needs to count as content. One threshold for the whole
+/// pipeline, so a frame the bake gates call content is the frame the trim
+/// keeps.
+pub const OPAQUE: u8 = 1;
 
 /// Smallest rectangle containing every pixel at or above `alpha_threshold`.
 pub fn content_bounds(image: &RgbaImage, alpha_threshold: u8) -> Option<Rect> {
@@ -169,7 +174,7 @@ pub fn union_bounds(frames: &[Frame]) -> (Option<Rect>, Vec<String>) {
     let mut clipped = Vec::new();
     for frame in frames {
         let (width, height) = (frame.image.width(), frame.image.height());
-        let Some(bounds) = content_bounds(&frame.image, 1) else {
+        let Some(bounds) = content_bounds(&frame.image, OPAQUE) else {
             continue;
         };
         if bounds.touches_border(width, height) {
@@ -399,7 +404,7 @@ pub fn pack_animation(
             imageops::FilterType::Lanczos3,
         );
         // A fully transparent frame still needs a slot, so give it one pixel.
-        let bounds = content_bounds(&scaled, 1).unwrap_or(Rect {
+        let bounds = content_bounds(&scaled, OPAQUE).unwrap_or(Rect {
             x: 0,
             y: 0,
             width: 1,

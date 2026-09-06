@@ -104,9 +104,21 @@ fn frames_for(dir: &Path, name: &str, direction: &str) -> Vec<PathBuf> {
     found
 }
 
-/// Every animation × every direction at final sprite size, read from the packed
-/// atlases so what you review is exactly what ships.
-pub fn sprites(assets: &CharacterAssets, paths: &Paths) -> Result<()> {
+/// How wide or tall the committed copy of the contact sheet may be.
+///
+/// The survivor's own sheet is 3792 x 777, three animations of sixteen
+/// directions, so his committed one is 2048 x 420 and 365 KB, with every
+/// sprite in it still 128 px wide. The full-resolution one stays under
+/// `art/preview/`, gitignored, and CI uploads it as an artifact.
+pub const SHEET_MAX_EDGE: u32 = 2048;
+
+/// The contact sheet: every animation × every direction at final sprite size,
+/// read from the packed atlases so what is reviewed is exactly what ships.
+///
+/// Written twice. The full-resolution copy is local scratch, and the
+/// downscaled one is committed beside the atlas it pictures, so the art and
+/// its picture are one diff.
+pub fn sheet(assets: &CharacterAssets, paths: &Paths) -> Result<()> {
     let mut rows: Vec<RgbaImage> = Vec::new();
     for animation in assets.animations.values() {
         let path = paths.assets().join(&animation.file);
@@ -157,7 +169,39 @@ pub fn sprites(assets: &CharacterAssets, paths: &Paths) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
     }
-    write_grid(&rows, 1, &paths.preview().join("sprites.png"))
+    let full = paths.preview().join("sheet.png");
+    write_grid(&rows, 1, &full)?;
+    downscale(&full, &paths.assets().join("sheet.png"), SHEET_MAX_EDGE)
+}
+
+/// Writes `source` again, no larger than `edge` on either side.
+fn downscale(source: &Path, dest: &Path, edge: u32) -> Result<()> {
+    let sheet = image::open(source)
+        .with_context(|| format!("reading {}", source.display()))?
+        .to_rgba8();
+    let (width, height) = (sheet.width(), sheet.height());
+    let widest = width.max(height);
+    let smaller = if widest > edge {
+        let scale = f64::from(edge) / f64::from(widest);
+        let side = |value: u32| ((f64::from(value) * scale).round() as u32).max(1);
+        imageops::resize(
+            &sheet,
+            side(width),
+            side(height),
+            imageops::FilterType::Lanczos3,
+        )
+    } else {
+        sheet
+    };
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    smaller
+        .save(dest)
+        .with_context(|| format!("writing {}", dest.display()))?;
+    println!("  sheet → {}", dest.display());
+    Ok(())
 }
 
 /// Composites images into a grid `columns` wide on the backdrop.

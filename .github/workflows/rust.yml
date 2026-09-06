@@ -79,6 +79,12 @@ jobs:
       - name: Install the pinned JavaScript packages
         run: bun install --frozen-lockfile
 
+      # A golden records where every joint of the survivor lands on screen,
+      # and this variable rewrites one instead of reading it. Nothing in CI
+      # may accept new art by regenerating what it is measured against.
+      - name: Refuse a rewritten golden
+        run: test -z "${MARROWFALL_UPDATE_GOLDENS:-}"
+
       # `crates/game` is the whole simulation and depends on nothing external,
       # so this is the fast signal that matters most.
       - name: Test simulation
@@ -86,6 +92,26 @@ jobs:
 
       - name: Test workspace
         run: cargo nextest run --workspace
+
+      # The judgment half of the art review. Drawn from the atlases already
+      # committed, so no Blender is involved: a reviewer downloads the picture
+      # of what ships and the sheet beside the atlas is its thumbnail.
+      - name: Draw the contact sheet
+        run: cargo run --package xtask-art -- check --sheet
+
+      # Redrawing is deterministic, so the committed thumbnail has to come
+      # back byte for byte. If it does not, the picture in the diff is not the
+      # atlases that ship and the sign-off was on the wrong art. The checkout
+      # above passes `lfs: true`, without which this would compare a pointer.
+      - name: Refuse a stale contact sheet
+        run: git diff --exit-code -- 'project/assets/characters/*/sheet.png'
+
+      - name: Upload the contact sheet
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: contact-sheet
+          path: art/preview/*/sheet.png
+          if-no-files-found: error
 
   coverage:
     name: Coverage

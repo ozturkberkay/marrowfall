@@ -10,7 +10,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use xtask_art::blender::Build;
 use xtask_art::check::profile::Profile;
-use xtask_art::check::{Finding, Report, clip};
+use xtask_art::check::{Finding, Report, bake, clip};
 use xtask_art::library::AnimationLibrary;
 use xtask_art::lock::Inputs;
 use xtask_art::spec::{Bake, CharacterSpec, CharacterType, Paths, Remesh, Subject, Texture, View};
@@ -120,7 +120,7 @@ pub fn a_spec(name: &str) -> CharacterSpec {
             resolution: xtask_art::spec::TextureResolution::K2,
         },
         bake: Bake {
-            directions: 8,
+            directions: A_SPEC_DIRECTIONS,
             render_size: 256,
             sprite_height: 160,
             forearm_roll: 0.0,
@@ -226,13 +226,27 @@ pub fn a_cleaned_mesh() -> Vec<u8> {
     crate::meshes::SyntheticMesh::figure().to_glb()
 }
 
-/// Every subject the bake's own rules report on: one per axis of every clip.
+/// Every subject the bake's own two travel rules report on: one per axis of
+/// every clip.
 pub fn bake_subjects(names: &[&str]) -> Vec<String> {
     names
         .iter()
         .flat_map(|name| clip::AXES.map(|axis| format!("{name} {axis}")))
         .collect()
 }
+
+/// The ring `a_spec` bakes, and the two directions a golden is taken in.
+pub fn a_ring() -> &'static [&'static str] {
+    xtask_art::pack::direction_names(A_SPEC_DIRECTIONS).expect("a known ring")
+}
+
+pub fn golden_directions() -> [&'static str; 2] {
+    bake::golden_directions(a_ring()).expect("two golden directions")
+}
+
+/// How many directions `a_spec` renders. Eight, so a golden pair is `s` and
+/// `e` and the reflection every `bake.pivot` reading needs exists.
+pub const A_SPEC_DIRECTIONS: u32 = 8;
 
 /// One bake finding, built through the published rule so its limit, its
 /// space and its severity are the real ones.
@@ -254,13 +268,40 @@ pub fn a_bake_report_of(item: &str, findings: Vec<Finding>) -> String {
     serde_json::to_string(&report).expect("encoding the stub report")
 }
 
-/// And the report the bake writes when nothing is wrong.
-pub fn a_bake_report(item: &str, names: &[&str]) -> String {
-    let findings = bake_subjects(names)
+/// Every finding `bake_sprites.py` writes when nothing is wrong: the two
+/// travel rules per axis, the sampled frames of each clip, and one golden per
+/// clip per golden direction.
+pub fn a_bake_findings(names: &[&str]) -> Vec<Finding> {
+    let profile = Profile::of(&repo_root(), xtask_art::library::HUMANOID)
+        .expect("the committed humanoid profile");
+    let mut findings: Vec<Finding> = bake_subjects(names)
         .iter()
         .map(|subject| a_bake_finding(subject, 0.0))
         .collect();
-    a_bake_report_of(item, findings)
+    for name in names {
+        findings.push(bake::SAMPLED_FRAMES_ARE_KEYS.measured(
+            &profile,
+            name,
+            0.0,
+            1,
+            "stub".to_owned(),
+        ));
+        for direction in golden_directions() {
+            findings.push(bake::LANDMARK_GOLDEN.measured(
+                &profile,
+                &bake::golden(name, direction),
+                0.0,
+                1,
+                "stub".to_owned(),
+            ));
+        }
+    }
+    findings
+}
+
+/// And that report, as the JSON a stub hands back.
+pub fn a_bake_report(item: &str, names: &[&str]) -> String {
+    a_bake_report_of(item, a_bake_findings(names))
 }
 
 /// Writes the library plus a stub GLB for each animation, so a bake finds them.

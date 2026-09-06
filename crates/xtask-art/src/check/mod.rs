@@ -10,6 +10,8 @@
 //! against. The runner only counts errors.
 
 pub mod aim;
+pub mod atlas;
+pub mod bake;
 pub mod clip;
 pub mod concept;
 pub mod foot;
@@ -367,6 +369,8 @@ pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
         .chain(source::RULES)
         .chain(clip::RULES)
         .chain(foot::RULES)
+        .chain(bake::RULES)
+        .chain(atlas::RULES)
 }
 
 /// Every finding one stage attempt produced, for one item.
