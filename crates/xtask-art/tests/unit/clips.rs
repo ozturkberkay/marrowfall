@@ -176,6 +176,19 @@ impl CrossRig {
         self
     }
 
+    /// Repeats the first frame at the end, so the clip is a whole cycle.
+    ///
+    /// `pose` runs one full turn over [`FRAMES`], so the frame after the last
+    /// is the first one again. `clip.loop` reads exactly that, and
+    /// [`CrossRig::without_the_last_frame`] is then a clip cut one frame
+    /// short of coming back round.
+    pub fn looping(mut self) -> Self {
+        let first = self.frames[0].1.clone();
+        let at = OUTPUT_FIRST_FRAME + self.frames.len() as f64;
+        self.frames.push((at / FPS, first));
+        self
+    }
+
     /// Writes the output one frame short of the source, which is a clip that
     /// lost a key on the way out.
     pub fn without_the_last_frame(mut self) -> Self {

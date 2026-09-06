@@ -1,12 +1,19 @@
 """What the retarget reports about the clip it just wrote.
 
-Two jobs, both free of `bpy`.
+Three jobs, all free of `bpy`.
 
 - **The counts.** Requirement 9, per bone: channels that are not straight
   lines between the frames the transfer wrote, and keys outside the frames the
   source had. Both are the transfer's own invariants, so both are structurally
   true when the code is right and worth nothing unless something can see them
   break.
+- **The frame grid.** Requirement 3: the scene runs at the clip's own
+  `source_fps`, so every key of the source lands on a whole frame and the
+  render range is the action's own. This is the only place an off-grid import
+  is visible at all. The retarget samples whole frames, so what it writes out
+  sits on the grid whatever it read: a 30 fps clip read in a 24 fps scene
+  spans 0.8 to 16.8, and rounding that to 1 to 17 drops four frames and
+  exports a file nothing downstream can tell from a correct one.
 - **The source motion sidecar.** `clip.swing` and `clip.twist` measure the
   delivered GLB against the vendor file, and the vendor file is an FBX that
   the Rust `gltf` reader cannot open. So this run writes the source's own
@@ -25,6 +32,7 @@ Free of `bpy`, so it is unit tested with no Blender.
 import pathlib
 from collections.abc import Iterable
 
+from findings import Comparison, Finding, Rule
 from framing import Frozen, bone_from_data_path
 from pydantic import model_validator
 from transfer import Mat4, Quat, mat_rotation
@@ -35,6 +43,37 @@ Bezier, which rounds off every joint's path between two sampled frames."""
 
 CONSTANT = "CONSTANT"
 """The only extrapolation it writes: outside the clip the pose is held."""
+
+CHANNELS = "the F-curves of the output action, before export"
+
+GRID = "each key of the clip, against the frame grid its declared source_fps sets"
+
+RANGE = "the frames the retarget samples, against the source's own key times"
+
+INTERPOLATION = Rule(
+    id="clip.interpolation",
+    comparison=Comparison.EQ,
+    unit="channels",
+    measured_on=CHANNELS,
+)
+
+REFERENCE_POSE_KEY = Rule(
+    id="clip.reference_pose_key",
+    comparison=Comparison.EQ,
+    unit="keys",
+    measured_on=CHANNELS,
+)
+
+FPS_GRID = Rule(
+    id="clip.fps_grid", comparison=Comparison.LE, unit="frames", measured_on=GRID
+)
+
+FPS_GRID_RANGE = Rule(
+    id="clip.fps_grid.range", comparison=Comparison.EQ, unit="frames", measured_on=RANGE
+)
+
+RULES = (INTERPOLATION, REFERENCE_POSE_KEY, FPS_GRID, FPS_GRID_RANGE)
+"""Every rule the retarget reports, so it asks for one published limit each."""
 
 
 class Channel(Frozen):
@@ -84,6 +123,79 @@ def defects(channels: Iterable[Channel], frames: range) -> dict[str, Defects]:
             + sum(round(frame) not in frames for frame in channel.frames),
         )
     return counted
+
+
+def counted(channels: Iterable[Channel], frames: range) -> list[Finding]:
+    """`clip.interpolation` and `clip.reference_pose_key`, per bone.
+
+    Both count defects, so neither has a tunable limit and neither reads one.
+    """
+    counts = defects(channels, frames)
+    return [
+        INTERPOLATION.measured(
+            bone,
+            count.not_linear,
+            f"{bone} has {count.not_linear} channel(s) that are not {LINEAR} "
+            f"with {CONSTANT} extrapolation",
+        )
+        for bone, count in sorted(counts.items())
+    ] + [
+        REFERENCE_POSE_KEY.measured(
+            bone,
+            count.outside_range,
+            f"{bone} carries {count.outside_range} key(s) outside the "
+            f"source's frame range {frames.start}..{frames.stop - 1}",
+        )
+        for bone, count in sorted(counts.items())
+    ]
+
+
+class Grid(Frozen):
+    """The source action's own key times and frame range.
+
+    Kept as plain numbers because the retarget removes the source action
+    before it reports: an action left in the file would be exported beside
+    ours.
+    """
+
+    keys: tuple[float, ...]
+    span: tuple[float, float]
+
+
+def on_the_grid(keys: Iterable[float], rate: int, rule: Rule) -> list[Finding]:
+    """`clip.fps_grid`, one finding per key of the source action.
+
+    Per key rather than per worst, because which keys drifted is what says
+    whether the rate is wrong or one key is: a wrong rate drifts every key by
+    a different amount and leaves the first one alone.
+    """
+    return [
+        rule.measured(
+            f"key at frame {key:g}",
+            abs(key - round(key)),
+            f"the key at {key:g} sits {abs(key - round(key)):g} frames off a "
+            f"whole one in a {rate} fps scene",
+        )
+        for key in sorted(set(keys))
+    ]
+
+
+def whole_range(sampled: range, keys: Iterable[float], rule: Rule) -> Finding:
+    """`clip.fps_grid.range`: the sampled frames are the source's own keys.
+
+    The retarget reads whole frames between the two ends of the action, so a
+    30 fps clip read at 24 spans 0.8 to 16.8, rounds to 1 to 17 and drops four
+    of its 21 frames. That count is the reading. It reads a gap the other way
+    too: a source that does not key every frame is one the retarget samples
+    between its keys.
+    """
+    lost = abs(len(sampled) - len(set(keys)))
+    return rule.measured(
+        f"frames {sampled.start}..{sampled.stop - 1}",
+        float(lost),
+        f"the retarget samples {len(sampled)} frame(s) and the source has "
+        f"{len(set(keys))} key time(s)",
+    )
 
 
 class Frame(Frozen):

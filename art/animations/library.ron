@@ -9,28 +9,67 @@
 // here means this project's standard biped: 24 bones, no fingers, under the
 // Mixamo and HumanIK names, which a hand-built rig must match to be
 // interchangeable. Those names are in `art/skeletons/humanoid.toml`.
+//
+// `fps` is the sprite sampling rate and `source_fps` is the clip's own rate.
+// The two are unrelated: `idle` is sampled 8 times a second out of a clip
+// authored at 24. Both `source_fps` and `travels` are measurements, and the
+// design document records what each was read on.
 AnimationLibrary(
     animations: {
         "idle": Animation(
             skeleton: "humanoid",
             loops: true,
             fps: 8,
+            // Key times 1/24 s apart in the committed GLB.
+            source_fps: 24,
+            // Its hips end 0.000 m from where they started, wandering 0.011 m.
+            travels: false,
             source: Meshy(action_id: 251),
         ),
         "run": Animation(
             skeleton: "humanoid",
             loops: true,
             fps: 24,
+            source_fps: 24,
+            // Measured, not assumed: the hips end 0.000 m from where they
+            // started. They sway 0.028 m sideways on the way, which is a run
+            // cycle in place rather than travel.
+            travels: false,
             source: Meshy(action_id: 15),
         ),
         "walk_back": Animation(
             skeleton: "humanoid",
             loops: true,
             fps: 20,
+            source_fps: 24,
+            // Its hips end 1.271 m back from where they started.
+            travels: true,
             // Known bad: this clip does not return to its start pose, so it
             // hitches once a loop. Mirroring cannot complete it either, its
             // gait is not left/right symmetric. Needs replacing.
             source: Meshy(action_id: 544),
+        ),
+        // Mixamo motion. The file may not be redistributed, so these live in
+        // the gitignored `art/animations/local/` and every machine fetches
+        // its own with `cargo art fetch`.
+        "strafe_left": Animation(
+            skeleton: "humanoid",
+            loops: true,
+            fps: 24,
+            // Mixamo renders every export at the rate the request asks for,
+            // and the export asks for this one.
+            source_fps: 30,
+            // 2.312 m sideways, and the export is requested traveling.
+            travels: true,
+            source: Mixamo(product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9"),
+        ),
+        "strafe_right": Animation(
+            skeleton: "humanoid",
+            loops: true,
+            fps: 24,
+            source_fps: 30,
+            travels: true,
+            source: Mixamo(product_id: "c9c96f9e-b96c-11e4-a802-0aaa78deedf9"),
         ),
     },
 )

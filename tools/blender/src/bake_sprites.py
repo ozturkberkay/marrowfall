@@ -48,7 +48,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import bpy
-from findings import guard
+from findings import Finding, guard, limits_from, write_report
 from framing import (
     BakeSettings,
     Bounds,
@@ -61,11 +61,15 @@ from framing import (
     is_forearm,
     key_light_rotation,
     missing_bones,
+    pin_horizontally,
     rest_height,
+    root_channel_fault,
+    root_kept,
+    root_travel,
     sampled_frames,
     translation_scale,
 )
-from mathutils import Quaternion, Vector
+from mathutils import Matrix, Quaternion, Vector
 from pydantic import BaseModel, ConfigDict
 
 
@@ -139,6 +143,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Leave the root bone's translation intact. By default it is "
         "removed, because the game moves the character and a traveling "
         "animation slides out of frame. Diagnostics only.",
+    )
+    parser.add_argument(
+        "--limit",
+        action="append",
+        default=[],
+        metavar="RULE=NUMBER",
+        help="The published limit for one rule, passed by the runner.",
     )
     parser.add_argument(
         "--forearm-roll",
@@ -507,46 +518,103 @@ def size_to_character(character: Character, animations: list[Animation]) -> None
         print(f"sized {animation.name} translation by {ratio:.4f}")
 
 
-def strip_root_motion(armature: bpy.types.Object) -> None:
-    """Pins the root bone in place across every action.
+def location_curves(action: bpy.types.Action, bone: str) -> list[bpy.types.FCurve]:
+    """A bone's three location curves in x, y, z order, or none at all.
 
-    Library animations usually travel: a walk-backward moves along -Y. The game
-    moves the character itself, so a traveling animation would slide out of
-    frame, and because the camera is tilted, horizontal travel projects onto
-    the *vertical* screen axis too, inflating the crop for every frame.
-
-    Only the horizontal channels are pinned. Flattening the vertical one too
-    would delete the run cycle's bob and leave a jump permanently on the
-    ground, that is animation, not travel. That bob has already been sized to
-    this character by `size_to_character`, which runs first.
-
-    Translation is flattened to its first-frame value rather than zeroed, so the
-    character keeps whatever offset the rig was authored with.
+    Anything in between is refused rather than skipped: a bone silently left
+    out of the strip is one that keeps traveling.
     """
-    roots = [bone.name for bone in armature.pose.bones if bone.parent is None]
-    if not roots:
-        return
+    path = f'pose.bones["{bone}"].location'
+    curves = sorted(
+        (fc for fc in action_fcurves(action) if fc.data_path == path),
+        key=lambda fc: fc.array_index,
+    )
+    fault = root_channel_fault(
+        bone, action.name, [len(fc.keyframe_points) for fc in curves]
+    )
+    if fault is not None:
+        sys.exit(f"error: {fault}")
+    return curves
 
+
+def root_bones(armature: bpy.types.Object) -> list[str]:
+    """Every bone with nothing above it, which is what carries travel."""
+    return [bone.name for bone in armature.pose.bones if bone.parent is None]
+
+
+def bone_basis(armature: bpy.types.Object, bone: str) -> Matrix:
+    """What turns a root bone's `location` into a world displacement.
+
+    Composed, never applied: `matrix_world @ matrix_local` is the frame the
+    bone's own `location` is expressed in, and a root bone has no parent to
+    compose above it.
+    """
+    return (armature.matrix_world @ armature.data.bones[bone].matrix_local).to_3x3()
+
+
+def strip_root_motion(armature: bpy.types.Object) -> None:
+    """Pins the root bone's horizontal WORLD motion across every action.
+
+    The game moves the character itself, so a traveling clip would slide out
+    of frame and inflate the crop. In world space, because a root bone's own
+    channels are not world axes: `Hips` local Z is world minus Z tilted 8.9
+    degrees on this rig. Height is kept, because a bob is animation. The
+    horizontal is held at the first frame rather than zeroed, so the character
+    keeps whatever offset the rig was authored with.
+    """
+    roots = root_bones(armature)
     for action in bpy.data.actions:
         for name in roots:
-            path = f'pose.bones["{name}"].location'
-            for curve in (fc for fc in action_fcurves(action) if fc.data_path == path):
-                # Index 2 is the vertical channel. Measured, not assumed: the
-                # Hips rest matrix maps local Z to world Z on this rig, and a
-                # run's bob shows up there (0.095 units) while its horizontal
-                # travel does not (0.029 and 0.011).
-                if curve.array_index == 2:
-                    continue
-                points = curve.keyframe_points
-                if not points:
-                    continue
-                anchor = points[0].co[1]
-                for point in points:
-                    point.co[1] = anchor
-                    point.handle_left[1] = anchor
-                    point.handle_right[1] = anchor
+            curves = location_curves(action, name)
+            if not curves:
+                continue
+            basis = bone_basis(armature, name)
+            inverse = basis.inverted()
+            keys = range(len(curves[0].keyframe_points))
+            world = [
+                basis @ Vector([curve.keyframe_points[key].co[1] for curve in curves])
+                for key in keys
+            ]
+            pinned = pin_horizontally([tuple(point) for point in world])
+            for key, point in zip(keys, pinned, strict=True):
+                for curve, value in zip(curves, inverse @ Vector(point), strict=True):
+                    written = curve.keyframe_points[key]
+                    written.co[1] = value
+                    written.handle_left[1] = value
+                    written.handle_right[1] = value
+            for curve in curves:
                 curve.update()
     print(f"pinned root motion on {roots}")
+
+
+def measure_root_travel(
+    armature: bpy.types.Object,
+    animations: list[Animation],
+    stripped: bool,
+    limits: dict[str, float],
+) -> list[Finding]:
+    """`clip.root_travel` and `clip.root_bob`, per axis per clip, on the copy
+    just pinned.
+
+    The pinned copy is never written to disk, so this is the only boundary
+    where the residual can be read at all.
+    """
+    scene = bpy.context.scene
+    findings = []
+    for animation in animations:
+        assign_action(armature, animation.action)
+        start, end = animation.action.frame_range
+        for bone in root_bones(armature):
+            if not stripped:
+                findings += root_kept(animation.name, bone, limits)
+                continue
+            path = []
+            for frame in range(round(start), round(end) + 1):
+                scene.frame_set(frame)
+                head = armature.matrix_world @ armature.pose.bones[bone].matrix
+                path.append(tuple(head.to_translation()))
+            findings += root_travel(animation.name, bone, path, limits)
+    return findings
 
 
 def take_action(
@@ -725,8 +793,14 @@ def main() -> None:
     # Fix-ups must run after the actions are in, since they edit F-curves.
     apply_forearm_roll(character.armature, settings.forearm_roll)
     size_to_character(character, animations)
-    if not args.keep_root_motion:
+    stripped = not args.keep_root_motion
+    if stripped:
         strip_root_motion(character.armature)
+    write_report(
+        measure_root_travel(
+            character.armature, animations, stripped, limits_from(args.limit)
+        )
+    )
 
     # Everything is in one scene, so the camera is framed once across every
     # animation and the character cannot change size between them.

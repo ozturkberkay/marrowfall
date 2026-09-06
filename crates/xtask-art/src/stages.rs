@@ -5,7 +5,7 @@
 //! that is the driver's job in `main.rs`, so they stay easy to reason about
 //! and to invoke individually.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ use anyhow::{Context as _, Result};
 use crate::blender::{self, BLENDER_SRC};
 use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
-use crate::check::{Artifacts, clip};
+use crate::check::{Artifacts, Report, Rule, clip, source};
 use crate::library::{Animation, AnimationLibrary, MotionSource};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -288,6 +288,130 @@ fn strip_animation(glb: &Path, name: &str, repo_root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Measures a vendor clip before anything is fitted to it.
+///
+/// Between the download and the retarget, on the file as it arrived. Nothing
+/// downstream still holds the vendor's own geometry, because the transfer
+/// keeps our bone names and our rest pose, so this is the only boundary where
+/// `source.child_axis` can be read at all.
+pub fn check_source(
+    download: &Path,
+    name: &str,
+    animation: &Animation,
+    repo_root: &Path,
+) -> Result<()> {
+    let script = repo_root.join(BLENDER_SRC).join("check_source.py");
+    anyhow::ensure!(
+        script.exists(),
+        "missing source check script at {}",
+        script.display()
+    );
+    let skeleton = &animation.skeleton;
+    let profile = Profile::of(repo_root, skeleton)?;
+    let table = AimTable::of(repo_root, skeleton)?;
+    let children = source::mapped_children(&profile, table.bones(table.canonical())?)
+        .into_iter()
+        .map(|(role, child)| format!("{role}={child}"))
+        .collect::<Vec<String>>()
+        .join(",");
+    let axis = profile.child_axis.vector();
+    let mut args = vec![
+        OsString::from("--source"),
+        download.into(),
+        OsString::from("--skeleton"),
+        Profile::path(repo_root, skeleton).into(),
+        OsString::from("--convention"),
+        animation.source.bone_convention().into(),
+        OsString::from("--source-fps"),
+        animation.source_fps.to_string().into(),
+        OsString::from("--travels"),
+        animation.travels.to_string().into(),
+        OsString::from("--children"),
+        children.into(),
+        OsString::from("--child-axis"),
+        format!("{},{},{}", axis.x, axis.y, axis.z).into(),
+    ];
+    args.extend(published(source::RULES, &profile));
+
+    let artifacts = Artifacts::new(repo_root, source::STAGE, name, FIRST_ATTEMPT)?;
+    let report = blender::run(&script, &args, &artifacts, repo_root)
+        .with_context(|| format!("measuring {}", download.display()))?
+        .with_context(|| format!("the source check of {name} wrote no report"))?;
+    refuse_off_registry(&report, &profile, name, "source check")?;
+    anyhow::ensure!(
+        !report.has_errors(),
+        "{name} is not the clip the library declares it is, {} defect(s) \
+         listed in {}",
+        defect_count(&report),
+        artifacts.report().display()
+    );
+    Ok(())
+}
+
+/// `--limit RULE=NUMBER` for every rule a script reports, read off the rule
+/// list itself.
+///
+/// A published limit is profile data that Rust validates once, so no Blender
+/// script opens a skeleton file to find one, and none of them can report a
+/// limit the list does not carry.
+fn published(rules: impl IntoIterator<Item = &'static Rule>, profile: &Profile) -> Vec<OsString> {
+    rules
+        .into_iter()
+        .flat_map(|rule| {
+            [
+                OsString::from("--limit"),
+                blender::pair(rule.id, (rule.limit)(profile).to_string()),
+            ]
+        })
+        .collect()
+}
+
+/// Refuses a report whose findings disagree with what `--list-rules` prints.
+fn refuse_off_registry(report: &Report, profile: &Profile, name: &str, what: &str) -> Result<()> {
+    let off = report.off_registry(profile);
+    anyhow::ensure!(
+        off.is_empty(),
+        "the {what} of {name} reported findings the rule list does not \
+         carry, so nothing published what they were read against: {}",
+        off.join("; ")
+    );
+    Ok(())
+}
+
+/// Refuses a bake report that left one of its own subjects unread.
+///
+/// The bake's two rules own one subject per axis of every clip it was given.
+/// A gate that goes quiet cannot be told from one that never ran, so a
+/// missing subject stops the stage rather than passing it.
+fn refuse_unreported(report: &Report, names: &[&str], item: &str) -> Result<()> {
+    let seen: BTreeSet<&str> = report
+        .findings()
+        .iter()
+        .map(|finding| finding.subject.as_str())
+        .collect();
+    let missing: Vec<String> = names
+        .iter()
+        .flat_map(|name| clip::AXES.map(|axis| format!("{name} {axis}")))
+        .filter(|subject| !seen.contains(subject.as_str()))
+        .collect();
+    anyhow::ensure!(
+        missing.is_empty(),
+        "the bake of {item} reported nothing about {}, so nothing was read \
+         there: a rule that goes quiet cannot be told from one that never ran",
+        missing.join(", ")
+    );
+    Ok(())
+}
+
+/// How many of a report's findings are outside their own limit.
+fn defect_count(report: &Report) -> usize {
+    report
+        .findings()
+        .iter()
+        .filter(|finding| !finding.holds())
+        .count()
+}
+
 /// Fits a downloaded clip onto the skeleton's canonical rig, writing the
 /// animation GLB the bake reads.
 pub fn retarget(
@@ -315,7 +439,7 @@ pub fn retarget(
     // Not a `Stage`: the retarget runs inside the fetch path and the lock
     // keeps its six stages. It still gets its own report.
     let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
-    let args = vec![
+    let mut args = vec![
         OsString::from("--source"),
         source.into(),
         OsString::from("--rig"),
@@ -328,25 +452,26 @@ pub fn retarget(
         name.into(),
         OsString::from("--source-motion"),
         artifacts.source_motion().into(),
+        OsString::from("--source-fps"),
+        animation.source_fps.to_string().into(),
     ];
+    let profile = Profile::of(repo_root, skeleton)?;
+    args.extend(published(clip::RETARGET_RULES, &profile));
     let mut report = blender::run(&script, &args, &artifacts, repo_root)
         .with_context(|| format!("retargeting {}", source.display()))?
         .with_context(|| format!("the retarget of {name} wrote no report"))?;
-    let profile = Profile::of(repo_root, skeleton)?;
-    let off = report.off_registry(&profile);
-    anyhow::ensure!(
-        off.is_empty(),
-        "the retarget of {name} reported findings the rule list does not \
-         carry, so nothing published what they were read against: {}",
-        off.join("; ")
-    );
-    // Blender counted what only an action carries. These three read the file
+    refuse_off_registry(&report, &profile, name, "retarget")?;
+    // Blender counted what only an action carries. These five read the file
     // it exported, which is where a wrong export would otherwise hide.
     report.extend(clip::check_files(
-        out,
-        &artifacts.source_motion(),
-        &rig,
-        repo_root,
+        &clip::Fitted {
+            output: out,
+            source_motion: &artifacts.source_motion(),
+            rig: &rig,
+            repo_root,
+            source_fps: animation.source_fps,
+            loops: animation.loops,
+        },
         &profile,
         &AimTable::of(repo_root, skeleton)?,
         FIRST_ATTEMPT,
@@ -355,11 +480,7 @@ pub fn retarget(
     anyhow::ensure!(
         !report.has_errors(),
         "the retarget of {name} left {} defect(s), listed in {}",
-        report
-            .findings()
-            .iter()
-            .filter(|finding| !finding.holds())
-            .count(),
+        defect_count(&report),
         artifacts.report().display()
     );
     Ok(())
@@ -404,7 +525,9 @@ pub fn bake(
     let mut args = bake_args(paths, spec);
     args.push("--character".into());
     args.push(character.into());
-    for (name, animation) in library.resolve(&spec.animations, &spec.subject.skeleton)? {
+    let clips = library.resolve(&spec.animations, &spec.subject.skeleton)?;
+    let names: Vec<&str> = clips.iter().map(|(name, _)| *name).collect();
+    for (name, animation) in clips {
         let glb = library.glb(repo_root, name);
         anyhow::ensure!(
             glb.exists(),
@@ -421,17 +544,21 @@ pub fn bake(
         args.push("--fps".into());
         args.push(blender::pair(name, animation.fps.to_string()));
     }
+    let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
+    args.extend(published(clip::BAKE_RULES, &profile));
     let artifacts = Artifacts::new(repo_root, Stage::Bake.as_str(), &spec.name, FIRST_ATTEMPT)?;
+    let report = blender::run(&script, &args, &artifacts, repo_root)?
+        .with_context(|| format!("the bake of {} wrote no report", spec.name))?;
+    refuse_off_registry(&report, &profile, &spec.name, "bake")?;
     anyhow::ensure!(
-        blender::run(&script, &args, &artifacts, repo_root)?.is_none(),
-        "the bake reported findings nobody reads yet"
+        !report.has_errors(),
+        "the bake of {} left {} defect(s), listed in {}",
+        spec.name,
+        defect_count(&report),
+        artifacts.report().display()
     );
+    refuse_unreported(&report, &names, &spec.name)?;
 
-    let names: Vec<&str> = library
-        .resolve(&spec.animations, &spec.subject.skeleton)?
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
     preview::bake(&names, pack::direction_names(spec.bake.directions)?, paths)?;
 
     let frames = std::fs::read_dir(paths.staging())

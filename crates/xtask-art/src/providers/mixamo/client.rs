@@ -47,12 +47,20 @@ pub struct Product {
     pub description: String,
 }
 
+/// The `gms_hash` key that decides whether the clip travels.
+///
+/// Every other export setting is echoed back untouched. This one is asked for
+/// in writing, because decision 12 fetches every source traveling. The name
+/// is unconfirmed against a live response, so `source.traveling` is the guard
+/// that would catch an in-place export either way.
+const IN_PLACE: &str = "inplace";
+
 /// What an export request needs: the provider's own opaque parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Motion {
     pub name: String,
-    /// Read from the product call and echoed back unchanged, so settings such
-    /// as `mirror` and `inplace` keep the provider's defaults.
+    /// Read from the product call and echoed back with the in-place flag
+    /// set, so settings such as `mirror` keep the provider's defaults.
     pub gms_hash: Value,
 }
 
@@ -123,14 +131,15 @@ impl Client {
         })
     }
 
-    /// Asks Mixamo to render one motion onto the stock body.
-    pub async fn export(&self, motion: &Motion, token: &Token) -> Result<()> {
+    /// Asks Mixamo to render one motion onto the stock body, at the rate the
+    /// library declares for it.
+    pub async fn export(&self, motion: &Motion, source_fps: u32, token: &Token) -> Result<()> {
         let request = self
             .http
             .post(format!("{}/animations/export", self.base))
             .header("X-Requested-With", "XMLHttpRequest")
             .bearer_auth(token.expose_secret())
-            .json(&export_body(motion));
+            .json(&export_body(motion, source_fps)?);
         self.get_json(request, "/animations/export").await?;
         Ok(())
     }
@@ -174,10 +183,15 @@ impl Client {
     }
 
     /// The whole export: look the product up, ask for it, wait, download it.
-    pub async fn motion_fbx(&self, product_id: &str, token: &Token) -> Result<Vec<u8>> {
+    pub async fn motion_fbx(
+        &self,
+        product_id: &str,
+        source_fps: u32,
+        token: &Token,
+    ) -> Result<Vec<u8>> {
         let motion = self.product(product_id).await?;
         println!("  exporting {:?} from Mixamo…", motion.name);
-        self.export(&motion, token).await?;
+        self.export(&motion, source_fps, token).await?;
         let url = self.monitor(token).await?;
         self.download(&url).await
     }
@@ -259,25 +273,57 @@ pub fn products_in(payload: &Value) -> Vec<Product> {
         .collect()
 }
 
-/// Body for exporting one motion.
-pub fn export_body(motion: &Motion) -> Value {
-    json!({
+/// Body for exporting one motion, at the rate the library declares.
+///
+/// `source_fps` is the library's own field rather than a literal, so the rate
+/// the clip is rendered at and the rate the retarget reads it at are one
+/// number. Two would drift, and a 30 fps clip read on a 24 fps grid lands at
+/// frames 0.8 to 16.8.
+pub fn export_body(motion: &Motion, source_fps: u32) -> Result<Value> {
+    Ok(json!({
         "character_id": CHARACTER_ID,
         "type": "Motion",
         "product_name": motion.name,
-        "gms_hash": [flatten_params(&motion.gms_hash)],
+        "gms_hash": [traveling(flatten_params(&motion.gms_hash))?],
         "preferences": {
             "format": "fbx7",
             // With its skin: an FBX carries its rest pose in the skin's bind
             // pose, and one exported without a mesh comes back posed instead,
             // which is the pose the whole retarget is measured against.
             "skin": "true",
-            "fps": "30",
+            "fps": source_fps.to_string(),
             // The bake resamples anyway, so this only bounds how smooth that
             // resample can be.
             "reducekf": "0",
         },
-    })
+    }))
+}
+
+/// Asks for the clip with its root motion, in writing.
+///
+/// The field is opaque, so nothing before this says it has keys to set.
+fn traveling(mut gms_hash: Value) -> Result<Value> {
+    let Some(keys) = gms_hash.as_object_mut() else {
+        bail!(
+            "/animations/export needs a gms_hash with keys to set {IN_PLACE:?} on, \
+             and the product call returned {}",
+            shape_of(&gms_hash)
+        );
+    };
+    keys.insert(IN_PLACE.to_owned(), Value::Bool(false));
+    Ok(gms_hash)
+}
+
+/// What a JSON value is, for an error a human reads.
+fn shape_of(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
 }
 
 /// Collapses `params` from the pairs the product call returns into the

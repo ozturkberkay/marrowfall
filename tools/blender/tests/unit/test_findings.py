@@ -19,9 +19,11 @@ from findings import (
     Finding,
     Progress,
     Report,
+    Rule,
     Severity,
     attempt,
     guard,
+    limits_from,
     report_path,
     write_report,
     write_sentinel,
@@ -479,3 +481,84 @@ def test_a_hand_run_script_needs_no_sentinel(
     recorder.run()
     assert recorder.registered == []
     assert saved == []
+
+
+# --- the rule registry, as a script reads it -------------------------------
+
+
+def a_rule() -> Rule:
+    """One published gate, with the limit the runner passes for it."""
+    return Rule(
+        id="clip.root_travel",
+        comparison=Comparison.LE,
+        unit="meters",
+        measured_on="the root bone's world head, after strip_root_motion",
+    ).at({"clip.root_travel": 0.02})
+
+
+@pytest.fixture
+def under_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Every finding carries the attempt off the path the runner set."""
+    monkeypatch.setenv(REPORT_ENV, str(tmp_path / "bake.survivor.2.json"))
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_measurement_inside_its_limit_is_information() -> None:
+    finding = a_rule().measured("idle x", 0.001, "stub")
+
+    assert finding.severity is Severity.INFO
+    assert (finding.limit, finding.comparison) == (0.02, Comparison.LE)
+    assert finding.attempt == 2, "off the report path, never from the caller"
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_measurement_outside_it_is_an_error_whatever_the_caller_thinks() -> None:
+    """The comparison decides. A rule that filed its own defect as
+    information would be quiet about it, which is how four channels left on
+    Bezier once exited 0."""
+    assert a_rule().measured("idle x", 0.315, "stub").severity is Severity.ERROR
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_skipped_subject_carries_the_rule_s_own_limit_and_no_measurement() -> None:
+    finding = a_rule().skipped("idle z", "the strip keeps this axis")
+
+    assert finding.severity is Severity.SKIPPED
+    assert (finding.measured, finding.limit) == (0.0, 0.02)
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_an_undefined_measurement_is_an_error_with_a_unit_of_its_own() -> None:
+    """Never a NaN, and never this rule's unit, which would be a lie."""
+    finding = a_rule().undefined("idle x", "two joints at the same place")
+
+    assert finding.severity is Severity.ERROR
+    assert (finding.measured, finding.limit) == (1.0, 0.0)
+    assert finding.unit == "undefined measurements"
+    assert not finding.holds
+
+
+def test_a_rule_with_no_published_limit_refuses_to_report_at_all() -> None:
+    """The runner passes one limit per rule, so a missing one is a wiring
+    fault rather than a limit of zero nobody chose."""
+    with pytest.raises(KeyError, match="clip.root_travel"):
+        Rule(
+            id="clip.root_travel",
+            comparison=Comparison.LE,
+            unit="meters",
+            measured_on="somewhere",
+        ).at({"clip.loop": 2.0})
+
+
+def test_the_published_limits_are_read_off_the_pairs_the_runner_passes() -> None:
+    assert limits_from(["clip.fps_grid=0.0001", "clip.loop=2"]) == {
+        "clip.fps_grid": 0.0001,
+        "clip.loop": 2.0,
+    }
+    assert limits_from([]) == {}
+
+
+@pytest.mark.parametrize("entry", ["clip.loop", "clip.loop=two", "=2"])
+def test_a_limit_that_is_not_a_number_is_refused(entry: str) -> None:
+    with pytest.raises(ValueError, match="RULE=NUMBER"):
+        limits_from([entry])

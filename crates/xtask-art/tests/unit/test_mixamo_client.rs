@@ -8,6 +8,9 @@ use xtask_art::providers::mixamo::{Client, client::CHARACTER_ID};
 
 use crate::support::EnvGuard;
 
+/// What the library declares for a Mixamo clip.
+const SOURCE_FPS: u32 = 30;
+
 /// An FBX-shaped body, long enough to pass the size check.
 fn an_fbx() -> Vec<u8> {
     let mut fbx = b"Kaydara FBX Binary  \x00".to_vec();
@@ -144,7 +147,7 @@ async fn a_motion_is_exported_polled_and_downloaded() {
 
     let bytes = client(&server)
         .await
-        .motion_fbx("c9ccc468", &a_token())
+        .motion_fbx("c9ccc468", SOURCE_FPS, &a_token())
         .await
         .unwrap();
     assert_eq!(bytes, an_fbx());
@@ -162,7 +165,7 @@ async fn a_stale_session_says_so_instead_of_repeating_the_status_code() {
 
     let error = client(&server)
         .await
-        .motion_fbx("c9ccc468", &a_token())
+        .motion_fbx("c9ccc468", SOURCE_FPS, &a_token())
         .await
         .unwrap_err()
         .to_string();
@@ -227,7 +230,7 @@ async fn an_export_that_never_finishes_gives_up_and_says_where_to_look() {
 
     let error = client(&server)
         .await
-        .motion_fbx("c9ccc468", &a_token())
+        .motion_fbx("c9ccc468", SOURCE_FPS, &a_token())
         .await
         .unwrap_err()
         .to_string();
@@ -259,7 +262,7 @@ async fn a_download_that_is_not_a_clip_fails_before_anything_is_written() {
 
     let error = client(&server)
         .await
-        .motion_fbx("c9ccc468", &a_token())
+        .motion_fbx("c9ccc468", SOURCE_FPS, &a_token())
         .await
         .unwrap_err()
         .to_string();

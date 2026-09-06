@@ -28,7 +28,8 @@ evaluated once per source frame rather than once per bone per frame.
         --source art/staging/downloads/walk_back.fbx \
         --rig art/skeletons/humanoid.glb --convention mixamo \
         --out art/animations/local/walk_back.glb --name walk_back \
-        --source-motion art/staging/reports/retarget.walk_back.1.source.json
+        --source-motion art/staging/reports/retarget.walk_back.1.source.json \
+        --source-fps 30 --limit clip.fps_grid=0.0001
 """
 
 import argparse
@@ -37,8 +38,17 @@ import sys
 
 import bpy
 from bake_sprites import action_fcurves, assign_action, scale_translation
-from clip import CONSTANT, LINEAR, Channel, defects, source_motion
-from findings import Comparison, Finding, Severity, attempt, guard, write_report
+from clip import (
+    FPS_GRID,
+    FPS_GRID_RANGE,
+    Channel,
+    Grid,
+    counted,
+    on_the_grid,
+    source_motion,
+    whole_range,
+)
+from findings import Finding, guard, limits_from, write_report
 from framing import translation_scale
 from mathutils import Matrix
 from skeleton import Skeleton, bare_bone_name, unfilled_roles
@@ -53,13 +63,6 @@ from transfer import (
     segment_length,
     transfer,
 )
-
-FRAME_TOLERANCE = 1e-4
-"""How far a key time may sit off a whole frame. T7's `clip.fps_grid` limit."""
-
-INTERPOLATION = "clip.interpolation"
-REFERENCE_POSE_KEY = "clip.reference_pose_key"
-CHANNELS = "the F-curves of the output action, before export"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -94,6 +97,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--name", required=True, help="Library name, which the action is stored under."
+    )
+    parser.add_argument(
+        "--source-fps",
+        type=int,
+        required=True,
+        help=(
+            "The clip's own rate, which the scene is set to. glTF stores key "
+            "times in seconds, so the scene's rate decides which frames they "
+            "land on, and `clip.fps_grid` reports that they landed whole."
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        action="append",
+        default=[],
+        metavar="RULE=NUMBER",
+        help="The published limit for one rule, passed by the runner.",
     )
     return parser.parse_args(argv)
 
@@ -160,25 +180,47 @@ def source_action(known: set[bpy.types.Action], path: pathlib.Path) -> bpy.types
     return fresh[0]
 
 
-def source_frames(action: bpy.types.Action, path: pathlib.Path) -> range:
-    """The frames the source really has, refused if they are not whole.
+def source_frames(action: bpy.types.Action) -> range:
+    """The frames the source is sampled at, rounded to the scene's grid.
 
-    glTF stores key times in seconds, so the scene's rate decides which
-    frames they land on: a 30 fps clip read in a 24 fps scene spans 0.8 to
-    16.8, and rounding that to 1 to 17 drops four frames without a word. T7
-    sets the scene rate from the library's `source_fps` and reports
-    `clip.fps_grid`; until then a range that is not whole is refused.
+    Rounded, and reported rather than refused: `clip.fps_grid` measures every
+    key against a whole frame and `clip.fps_grid.range` measures the render
+    range, so a clip read at the wrong rate leaves a numbered defect per key
+    instead of an exit nobody can read afterwards.
     """
     lo, hi = action.frame_range
-    for edge in (lo, hi):
-        if abs(edge - round(edge)) > FRAME_TOLERANCE:
-            sys.exit(
-                f"error: {path.name} spans frames {lo} to {hi} in a "
-                f"{bpy.context.scene.render.fps} fps scene, which is not a whole "
-                f"frame range. Its own rate is not the scene's, and sampling it "
-                f"on this grid would drop frames"
-            )
     return range(round(lo), round(hi) + 1)
+
+
+def source_grid(action: bpy.types.Action) -> Grid:
+    """Where the source's keys really sit, on the scene's own frame grid.
+
+    Read before the action is removed, which the retarget does so the
+    exporter cannot write the vendor's own action out beside ours.
+    """
+    lo, hi = action.frame_range
+    return Grid(
+        keys=tuple(
+            key.co[0]
+            for curve in action_fcurves(action)
+            for key in curve.keyframe_points
+        ),
+        span=(lo, hi),
+    )
+
+
+def set_rate(rate: int) -> None:
+    """Runs the scene at the clip's own rate.
+
+    Set twice: before the source is imported, because the glTF importer turns
+    seconds into frames using whatever rate the scene is on, and again after,
+    because the FBX importer sets the scene from the file and would otherwise
+    decide this for us. `fps_base` is pinned to 1 because nothing in the
+    library declares a fractional rate.
+    """
+    scene = bpy.context.scene
+    scene.render.fps = rate
+    scene.render.fps_base = 1.0
 
 
 def as_mat4(matrix: Matrix) -> Mat4:
@@ -330,58 +372,23 @@ def channels(action: bpy.types.Action) -> list[Channel]:
     ]
 
 
-def measure(action: bpy.types.Action, frames: range) -> list[Finding]:
-    """What this run reports: requirement 9, per bone.
+def measure(
+    fitted: bpy.types.Action,
+    grid: Grid,
+    frames: range,
+    limits: dict[str, float],
+) -> list[Finding]:
+    """What this run reports: requirement 9 per bone, and requirement 3 per key.
 
-    Both rules count defects, so neither has a tunable limit. The counting
-    itself is `clip.defects`, which imports no `bpy` and has its own
-    negatives.
+    Every one is built in `clip.py`, which imports no `bpy` and has its own
+    negatives, so the severity is never decided here.
     """
-    counted = defects(channels(action), frames)
+    scene = bpy.context.scene
     return [
-        finding(
-            INTERPOLATION,
-            bone,
-            count.not_linear,
-            "channels",
-            f"{bone} has {count.not_linear} channel(s) that are not {LINEAR} "
-            f"with {CONSTANT} extrapolation",
-        )
-        for bone, count in sorted(counted.items())
-    ] + [
-        finding(
-            REFERENCE_POSE_KEY,
-            bone,
-            count.outside_range,
-            "keys",
-            f"{bone} carries {count.outside_range} key(s) outside the "
-            f"source's frame range {frames.start}..{frames.stop - 1}",
-        )
-        for bone, count in sorted(counted.items())
+        *counted(channels(fitted), frames),
+        *on_the_grid(grid.keys, scene.render.fps, FPS_GRID.at(limits)),
+        whole_range(frames, grid.keys, FPS_GRID_RANGE.at(limits)),
     ]
-
-
-def finding(rule: str, subject: str, measured: int, unit: str, message: str) -> Finding:
-    """One defect count against a limit of zero.
-
-    The comparison decides the severity, never this caller: a rule that
-    filed its own defect as information would be quiet about it.
-    """
-    comparison, limit = Comparison.EQ, 0.0
-    return Finding(
-        rule=rule,
-        severity=(
-            Severity.INFO if comparison.holds(measured, limit) else Severity.ERROR
-        ),
-        subject=subject,
-        measured=float(measured),
-        limit=limit,
-        comparison=comparison,
-        unit=unit,
-        attempt=attempt(),
-        measured_on=CHANNELS,
-        message=message,
-    )
 
 
 def export(out: pathlib.Path, armature: bpy.types.Object) -> None:
@@ -410,15 +417,12 @@ def export(out: pathlib.Path, armature: bpy.types.Object) -> None:
     )
 
 
-def retarget(
-    source_path: pathlib.Path,
-    rig_path: pathlib.Path,
-    out: pathlib.Path,
-    name: str,
-    convention: str,
-    motion_path: pathlib.Path,
-) -> None:
+def retarget(args: argparse.Namespace) -> None:
+    source_path, rig_path, out = args.source, args.rig, args.out
     bpy.ops.wm.read_factory_settings(use_empty=True)
+    # Before the imports: the glTF importer turns key times in seconds into
+    # frames using whatever rate the scene is on.
+    set_rate(args.source_fps)
     skeleton = read_skeleton(rig_path)
     ours = import_armature(rig_path)
     keep_only(ours)
@@ -426,8 +430,11 @@ def retarget(
 
     known = set(bpy.data.actions)
     source = import_armature(source_path)
+    # And again after: the FBX importer sets the scene from the file, which
+    # would leave the rate to the vendor rather than to the library.
+    set_rate(args.source_fps)
     action = source_action(known, source_path)
-    source_roles = refuse_unfilled(source_path, source, skeleton, convention)
+    source_roles = refuse_unfilled(source_path, source, skeleton, args.convention)
 
     # Only the roles both rigs fill are driven. Anything else our rig holds at
     # rest, so its driven children still compose from the right place.
@@ -452,7 +459,8 @@ def retarget(
 
     bones = target_bones(ours, our_roles, set(driven))
     object_matrix = as_mat4(ours.matrix_world)
-    frames = source_frames(action, source_path)
+    frames = source_frames(action)
+    grid = source_grid(action)
     poses = {}
     source_world = {}
     for frame in frames:
@@ -466,7 +474,7 @@ def retarget(
         source_world,
         bpy.context.scene.render.fps,
         bpy.context.scene.render.fps_base,
-    ).write(motion_path)
+    ).write(args.source_motion)
 
     stride = skeleton.stride_segment
     ratio = translation_scale(
@@ -476,15 +484,15 @@ def retarget(
     # The source's own action outlives its armature, and the exporter would
     # write it into the GLB beside ours.
     bpy.data.actions.remove(action)
-    fitted = write_keys(ours, name, poses)
+    fitted = write_keys(ours, args.name, poses)
     scale_translation(fitted, ratio)
     linear_and_constant(fitted)
-    write_report(measure(fitted, frames))
+    write_report(measure(fitted, grid, frames, limits_from(args.limit)))
     export(out, ours)
 
     worst = max(driven, key=lambda role: quat_degrees(offset[role]))
     print(
-        f"retargeted {name}: {len(driven)} role(s) onto {rig_path.name} over "
+        f"retargeted {args.name}: {len(driven)} role(s) onto {rig_path.name} over "
         f"{len(frames)} frame(s), worst offset {worst} "
         f"{quat_degrees(offset[worst]):.2f} deg, root travel sized by "
         f"{ratio:.4f} -> {out}"
@@ -493,15 +501,7 @@ def retarget(
 
 def main() -> None:
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
-    args = parse_args(argv)
-    retarget(
-        args.source,
-        args.rig,
-        args.out,
-        args.name,
-        args.convention,
-        args.source_motion,
-    )
+    retarget(parse_args(argv))
 
 
 def save_blend(path: pathlib.Path) -> None:

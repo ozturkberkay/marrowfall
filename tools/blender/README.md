@@ -21,19 +21,21 @@ under `crates/xtask-art/src/check/`.
 | Module | `bpy` | What it is |
 | --- | --- | --- |
 | `transfer.py` | no | the retarget maths: world matrices in, local poses out |
-| `clip.py` | no | the two counts the retarget reports, and the source motion sidecar |
+| `clip.py` | no | what the retarget reports: the two counts, the frame grid, and the source motion sidecar |
+| `source.py` | no | what a vendor clip is, measured before anything is fitted to it |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
-| `framing.py` | no | the bake's camera geometry and frame sampling |
-| `findings.py` | no | the Finding record, the report, and the success sentinel |
+| `framing.py` | no | the bake's camera geometry, frame sampling, and the root strip |
+| `findings.py` | no | the Finding record, the rule, the report, and the success sentinel |
+| `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
 | `strip_animation.py` | yes | drops the mesh a provider ships with a clip |
 
-The five `bpy`-free modules are unit tested by `uv run pytest` at 100 percent
+The six `bpy`-free modules are unit tested by `uv run pytest` at 100 percent
 coverage, with no Blender anywhere. That split is not tidiness: `bpy` only
 exists inside Blender, so a module that imports it cannot be tested at all.
 
-## Two things a script never does
+## Three things a script never does
 
 **It never decides its own exit code from its own findings.** It measures,
 writes its report through `findings.write_report`, and finishes. The Rust
@@ -41,6 +43,13 @@ runner reads that report and decides. Blender exits 0 when a script raises
 from a handler, a thread or `atexit`, so the exit code cannot say whether a
 run finished: `findings.guard` writes a success sentinel as its last act and
 Rust asserts the file exists.
+
+**It never names a limit.** Every published limit is `[profile]` data that
+Rust reads and validates once, so the runner passes `--limit RULE=NUMBER` for
+each rule a script reports and `findings.Rule` reads it back. A script that
+named its own would be a second copy of a number `--list-rules` prints, and
+`Report::off_registry` refuses a report that disagrees with that list anyway,
+down to the comparison and the severity.
 
 **It never applies an object transform to a rig that owns an action.**
 `transform_apply` rescales the rest geometry and leaves every location key
@@ -50,6 +59,23 @@ travel reads as 231.599 m. World matrices are composed instead, as
 `matrix_world.inverted()`. A unit test reads every script here and fails on
 the call, because the last caller was deleted and nothing else would notice
 it coming back.
+
+## Why the root strip works in world space
+
+The root bone's `location` channels are in its own rest axes, and on this rig
+`Hips` local Z is world minus Z tilted 8.9 degrees. Pinning channels 0 and 1
+and keeping channel 2 therefore sinks a left strafe by 0.32 m and lifts a
+right strafe by 0.39 m, against a real bob of 0.043 m. `strip_root_motion`
+takes every key to world space, pins it there with `framing.pin_horizontally`,
+and brings it back: measured, the three committed clips then read about 2
+nanometers on both horizontal axes, against 0.0428 m on X under the strip this
+replaces.
+
+The up axis is kept, because a run's bob is animation rather than travel, and
+flattening it would leave a jump permanently on the ground. So it has a rule
+and a limit of its own, `clip.root_bob` at 0.15 m: the fitted clips read
+0.0089 to 0.0535 there, and the 0.2911 m the old strip sank a left strafe by
+is still refused.
 
 ## Why one script writes a sidecar
 

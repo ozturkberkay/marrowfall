@@ -5,9 +5,12 @@
 
 import itertools
 import math
+import pathlib
 
 import pytest
+from findings import Severity
 from framing import (
+    BAKE_RULES,
     CAMERA_ELEVATION_DEG,
     DIRECTION_NAMES,
     FRAMING_MARGIN,
@@ -23,9 +26,14 @@ from framing import (
     is_forearm,
     key_light_rotation,
     missing_bones,
+    pin_horizontally,
     rest_height,
+    root_channel_fault,
+    root_kept,
+    root_travel,
     sampled_frames,
     translation_scale,
+    worst_axis_travel,
 )
 from pydantic import ValidationError
 
@@ -438,3 +446,136 @@ def test_a_ratio_that_could_only_be_the_wrong_rig_is_refused(target: float) -> N
     """Half to five times covers a child and a giant; past that is a bad file."""
     with pytest.raises(ValueError, match="wrong rig"):
         translation_scale(1.7, target)
+
+
+# --- the strip, and what it leaves behind ---------------------------------
+
+
+@pytest.fixture
+def under_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    monkeypatch.setenv("MARROWFALL_REPORT", str(tmp_path / "bake.survivor.1.json"))
+
+
+def test_pinning_holds_the_horizontal_and_keeps_every_height() -> None:
+    """A run's bob is animation, not travel: flattening it too would leave a
+    jump permanently on the ground."""
+    path = [(1.0, 2.0, 0.0), (3.0, 5.0, 0.1), (4.0, 9.0, -0.2)]
+
+    assert pin_horizontally(path) == [
+        (1.0, 2.0, 0.0),
+        (1.0, 2.0, 0.1),
+        (1.0, 2.0, -0.2),
+    ]
+
+
+def test_pinning_nothing_is_nothing() -> None:
+    assert pin_horizontally([]) == []
+
+
+def test_travel_is_the_worst_frame_and_not_the_last_one() -> None:
+    """An endpoint difference cancels a symmetric excursion, which is the
+    pattern this design condemns: this path ends where it started."""
+    out_and_back = [(0.0, 0.0, 0.0), (0.5, -0.3, 0.1), (0.0, 0.0, 0.0)]
+
+    assert worst_axis_travel(out_and_back) == (0.5, 0.3, 0.1)
+
+
+def test_a_clip_with_no_frame_has_no_travel_to_measure() -> None:
+    with pytest.raises(ValueError, match="no frame"):
+        worst_axis_travel([])
+
+
+BAKE_LIMITS = {"clip.root_travel": 0.02, "clip.root_bob": 0.15}
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_each_axis_is_read_by_the_rule_that_published_a_limit_for_it() -> None:
+    """Two rules, because the strip pins the horizontal axes and keeps the
+    vertical one. The bob measures 0.0089 to 0.0535 m on the committed clips,
+    which is past the 0.02 m the horizontal pair allows."""
+    findings = root_travel(
+        "run", "Hips", [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0535)], BAKE_LIMITS
+    )
+
+    assert [f.subject for f in findings] == ["run x", "run y", "run z"]
+    assert [f.rule for f in findings] == [
+        "clip.root_travel",
+        "clip.root_travel",
+        "clip.root_bob",
+    ]
+    assert [f.severity for f in findings] == [Severity.INFO] * 3
+    assert "0.0535" in findings[2].message
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_root_that_still_slides_horizontally_is_an_error() -> None:
+    """0.0428 m on X is what pinning the root's own channels 0 and 1 leaves
+    on a left strafe."""
+    findings = root_travel(
+        "strafe_left", "Hips", [(0.0, 0.0, 0.0), (0.0428, 0.017, 0.0377)], BAKE_LIMITS
+    )
+
+    assert findings[0].severity is Severity.ERROR
+    assert findings[1].severity is Severity.INFO, "0.017 m is inside the limit"
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_root_sunk_a_third_of_a_meter_is_an_error_on_the_up_axis() -> None:
+    """The `[synth]` negative for the bob gate: 0.2911 m is what those same
+    channels leave on Z, against a real bob of 0.0377."""
+    findings = root_travel(
+        "strafe_left", "Hips", [(0.0, 0.0, 0.0), (0.0, 0.0, 0.3)], BAKE_LIMITS
+    )
+
+    assert findings[2].severity is Severity.ERROR
+    assert findings[2].rule == "clip.root_bob"
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_keeping_the_root_motion_skips_both_rules_on_every_axis() -> None:
+    """A declared flag switched them off, which is the one thing a number
+    cannot say."""
+    findings = root_kept("run", "Hips", BAKE_LIMITS)
+
+    assert [f.subject for f in findings] == ["run x", "run y", "run z"]
+    assert [f.severity for f in findings] == [Severity.SKIPPED] * 3
+    assert "--keep-root-motion" in findings[0].message
+
+
+def test_both_bake_rules_carry_the_ids_the_rust_registry_publishes() -> None:
+    assert [rule.id for rule in BAKE_RULES] == ["clip.root_travel", "clip.root_bob"]
+
+
+def test_a_bone_with_no_location_channel_is_simply_not_keyed() -> None:
+    assert root_channel_fault("Hips", "run", []) is None
+
+
+def test_three_channels_of_one_length_are_what_the_pin_reads() -> None:
+    assert root_channel_fault("Hips", "run", [21, 21, 21]) is None
+
+
+@pytest.mark.parametrize("found", [[21], [21, 21]])
+def test_a_root_keyed_on_some_of_its_axes_is_refused_by_name(
+    found: list[int],
+) -> None:
+    """Skipping the bone would leave it traveling with nothing reporting it."""
+    fault = root_channel_fault("Hips", "run", found)
+
+    assert fault is not None
+    assert "Hips" in fault and f"{len(found)} of 3" in fault
+
+
+def test_location_channels_of_different_lengths_are_refused() -> None:
+    """A pin reads all three channels of one key, so key 20 of X against key
+    20 of a shorter Y is a coordinate that does not exist."""
+    fault = root_channel_fault("Hips", "run", [21, 21, 20])
+
+    assert fault is not None
+    assert "[20, 21]" in fault
+
+
+def test_three_empty_location_channels_are_refused_too() -> None:
+    fault = root_channel_fault("Hips", "run", [0, 0, 0])
+
+    assert fault is not None
+    assert "[0]" in fault

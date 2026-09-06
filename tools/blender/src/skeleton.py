@@ -91,6 +91,13 @@ class Skeleton(Frozen):
         return cls(**{k: v for k, v in tables.items() if k not in OTHER_READERS})
 
     @property
+    def chain_top(self) -> str:
+        """The one role every other role hangs under, which is the role that
+        carries a clip's travel. The validator refuses a skeleton with any
+        other number of tops, so this cannot be ambiguous."""
+        return next(iter(self.roles - set(self.retarget_chain)))
+
+    @property
     def roles(self) -> set[str]:
         """Every role this skeleton has, which the canonical convention
         defines because it is the one rig that must fill them all."""

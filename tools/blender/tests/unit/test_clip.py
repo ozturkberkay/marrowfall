@@ -15,13 +15,19 @@ from pathlib import Path
 import pytest
 from clip import (
     CONSTANT,
+    FPS_GRID,
+    FPS_GRID_RANGE,
     LINEAR,
     Channel,
     Defects,
     SourceMotion,
+    counted,
     defects,
+    on_the_grid,
     source_motion,
+    whole_range,
 )
+from findings import Severity
 from pydantic import ValidationError
 from transfer import IDENTITY, Mat4
 
@@ -255,3 +261,81 @@ def test_the_sidecar_is_written_where_the_runner_asked(tmp_path: Path) -> None:
     motion.write(path)
 
     assert json.loads(path.read_text())["rest"] == {"hips": [1.0, 0.0, 0.0, 0.0]}
+
+
+# --- the findings themselves ----------------------------------------------
+
+
+@pytest.fixture
+def under_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Every finding carries the attempt off the path the runner set."""
+    monkeypatch.setenv("MARROWFALL_REPORT", str(tmp_path / "retarget.run.1.json"))
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_every_bone_reports_on_both_counted_rules() -> None:
+    """Including the clean ones: a rule that goes quiet when it passes cannot
+    be told from a rule that never ran."""
+    findings = counted([a_channel(), a_channel(bone="Spine")], FRAMES)
+
+    assert [(f.rule, f.subject) for f in findings] == [
+        ("clip.interpolation", "Hips"),
+        ("clip.interpolation", "Spine"),
+        ("clip.reference_pose_key", "Hips"),
+        ("clip.reference_pose_key", "Spine"),
+    ]
+    assert all(f.severity is Severity.INFO for f in findings)
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_bezier_channel_is_an_error_the_counting_never_decided() -> None:
+    findings = counted([a_channel(interpolations=("BEZIER",))], FRAMES)
+
+    broken = next(f for f in findings if f.rule == "clip.interpolation")
+    assert (broken.severity, broken.measured) == (Severity.ERROR, 1.0)
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_every_key_of_a_clip_on_its_own_grid_reads_nothing() -> None:
+    rule = FPS_GRID.at({"clip.fps_grid": 1e-4})
+
+    findings = on_the_grid([1.0, 2.0, 3.0], 30, rule)
+
+    assert [f.subject for f in findings] == [
+        "key at frame 1",
+        "key at frame 2",
+        "key at frame 3",
+    ]
+    assert all(f.measured == 0.0 for f in findings)
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_a_thirty_fps_clip_read_at_twenty_four_is_rejected_key_by_key() -> None:
+    """Fact 6, exactly: the shipped `strafe_left.glb` spans 0.8 to 16.8 in a
+    24 fps scene, and rounding that to 1 to 17 drops four frames."""
+    rule = FPS_GRID.at({"clip.fps_grid": 1e-4})
+
+    findings = on_the_grid([0.8, 1.8, 2.8, 16.8], 24, rule)
+
+    assert [round(f.measured, 4) for f in findings] == [0.2, 0.2, 0.2, 0.2]
+    assert all(f.severity is Severity.ERROR for f in findings)
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_the_sampled_frames_are_the_source_s_own_key_times() -> None:
+    rule = FPS_GRID_RANGE.at({"clip.fps_grid.range": 0.0})
+
+    holds = whole_range(range(1, 22), [float(f) for f in range(1, 22)], rule)
+
+    assert (holds.severity, holds.measured) == (Severity.INFO, 0.0)
+    assert holds.subject == "frames 1..21"
+
+
+@pytest.mark.usefixtures("under_a_report")
+def test_rounding_an_off_grid_range_reports_the_frames_it_dropped() -> None:
+    """21 keys at 0.8 to 16.8 round to frames 1 to 17, which is 17 samples."""
+    rule = FPS_GRID_RANGE.at({"clip.fps_grid.range": 0.0})
+
+    lost = whole_range(range(1, 18), [0.8 + step for step in range(21)], rule)
+
+    assert (lost.severity, lost.measured) == (Severity.ERROR, 4.0)

@@ -78,6 +78,17 @@ pub struct Animation {
     /// third of its silhouette, so one shared rate is simultaneously too fast
     /// for one and too slow for the other.
     pub fps: u32,
+    /// The rate the clip itself was authored at, which is not [`Self::fps`].
+    /// glTF stores key times in seconds, so reading a 30 fps clip in a 24 fps
+    /// scene lands its frames at 0.8 to 16.8 and rounding drops four of them.
+    /// The retarget sets the scene rate from this, and `clip.fps_grid` is the
+    /// rule that says every key landed whole.
+    pub source_fps: u32,
+    /// Whether the clip's hips end up somewhere other than where they
+    /// started. `source.traveling` reads exactly this against the vendor
+    /// file, so the declaration and the measurement cannot mean two
+    /// different things.
+    pub travels: bool,
     pub source: MotionSource,
 }
 
@@ -197,6 +208,11 @@ impl AnimationLibrary {
     }
 
     /// The defaults `cargo art` writes when a project has no library yet.
+    ///
+    /// Every `source_fps` and every `travels` here is a measurement, listed
+    /// beside the rule that reads it in the design document. The three Meshy
+    /// clips carry keys 1/24 s apart, and only `walk_back` moves its hips
+    /// anywhere: 1.271 m, against 0.000 for `run` and idle's 0.000.
     pub fn template() -> Self {
         Self {
             animations: BTreeMap::from([
@@ -207,6 +223,8 @@ impl AnimationLibrary {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
                         fps: 8,
+                        source_fps: 24,
+                        travels: false,
                         source: MotionSource::Meshy { action_id: 251 },
                     },
                 ),
@@ -216,6 +234,8 @@ impl AnimationLibrary {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
                         fps: 24,
+                        source_fps: 24,
+                        travels: false,
                         source: MotionSource::Meshy { action_id: 15 },
                     },
                 ),
@@ -225,6 +245,8 @@ impl AnimationLibrary {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
                         fps: 20,
+                        source_fps: 24,
+                        travels: true,
                         source: MotionSource::Meshy { action_id: 544 },
                     },
                 ),

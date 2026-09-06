@@ -10,8 +10,9 @@ decides what to do with them.
 """
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
+from findings import Comparison, Finding, Rule
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Direction 0 faces the camera. `direction_rotation` turns the model by a
@@ -297,6 +298,153 @@ def rest_height(points: Iterable[Vec3]) -> float:
     """
     heights = [point[2] for point in points]
     return max(heights) - min(heights) if heights else 0.0
+
+
+PINNED = (
+    "the root bone's world head against its first frame, per horizontal axis, "
+    "after strip_root_motion"
+)
+
+KEPT = (
+    "the root bone's world head against its first frame, on the up axis, "
+    "after strip_root_motion"
+)
+
+ROOT_TRAVEL = Rule(
+    id="clip.root_travel",
+    comparison=Comparison.LE,
+    unit="meters",
+    measured_on=PINNED,
+)
+"""What is left on the two axes the strip pins."""
+
+ROOT_BOB = Rule(
+    id="clip.root_bob",
+    comparison=Comparison.LE,
+    unit="meters",
+    measured_on=KEPT,
+)
+"""And what is left on the one it keeps, which is the bob."""
+
+BAKE_RULES = (ROOT_TRAVEL, ROOT_BOB)
+"""Every rule the bake reports, so it asks for one published limit each.
+Published in `crates/xtask-art/src/check/clip.rs`, which is what
+`--list-rules` prints."""
+
+AXES = ("x", "y", "z")
+"""What a per-axis finding names itself, in the order a Vec3 holds them."""
+
+UP_AXIS = 2
+"""Which component is up, in the Blender world space these rules read.
+`[profile] up_axis` says the same thing for the rig gates."""
+
+
+def pin_horizontally(path: Sequence[Vec3]) -> list[Vec3]:
+    """Every point moved back onto the first one's horizontal position, each
+    keeping its own height.
+
+    World points, because the root's own channels are not world axes: on this
+    rig `Hips` local Z is world minus Z tilted 8.9 degrees (fact 5). Height is
+    kept because a bob is animation, and `clip.root_bob` reads it.
+    """
+    if not path:
+        return []
+    first = path[0]
+    return [(first[0], first[1], point[2]) for point in path]
+
+
+def worst_axis_travel(path: Sequence[Vec3]) -> Vec3:
+    """How far each axis gets from the first point, at its worst.
+
+    A maximum over the whole path rather than the difference between its
+    ends: an endpoint difference cancels a symmetric excursion, and a clip
+    that slides half a meter out and back inflates the crop for every frame
+    of every direction.
+    """
+    if not path:
+        raise ValueError("a clip with no frame has no travel to measure")
+    worst = tuple(
+        max(abs(point[axis] - path[0][axis]) for point in path) for axis in range(3)
+    )
+    return (worst[0], worst[1], worst[2])
+
+
+def root_channel_fault(bone: str, action: str, keys: Sequence[int]) -> str | None:
+    """Why a root bone's location channels cannot be pinned, or None.
+
+    `keys` is one key count per location channel found. A world-space pin
+    reads all three channels of one key together, so anything but three
+    channels of the same non-zero length is a pin against a coordinate that
+    does not exist. No channel at all is not a fault: that bone is not keyed.
+    """
+    if not keys:
+        return None
+    if len(keys) != 3:
+        return (
+            f"{bone} in {action!r} has {len(keys)} of 3 location channels, and "
+            f"a world-space pin reads all three of them together"
+        )
+    counts = sorted(set(keys))
+    if len(counts) != 1 or counts == [0]:
+        return (
+            f"the location curves of {bone} in {action!r} hold {counts} keys, "
+            f"and a world-space pin reads all three channels of one key together"
+        )
+    return None
+
+
+def bake_rule(axis: int) -> Rule:
+    """Which of the two bake rules reads one axis of the world."""
+    return ROOT_BOB if axis == UP_AXIS else ROOT_TRAVEL
+
+
+def root_travel(
+    name: str, bone: str, path: Sequence[Vec3], limits: dict[str, float]
+) -> list[Finding]:
+    """Both bake rules, one finding per axis of one clip.
+
+    The two horizontal axes are `clip.root_travel`: `pin_horizontally` puts
+    them on the first frame's value, so any reading at all is a residual. The
+    up axis is `clip.root_bob`, and it has a limit of its own because what is
+    left there is the bob the strip keeps on purpose.
+    """
+    findings = []
+    for index, (axis, worst) in enumerate(
+        zip(AXES, worst_axis_travel(path), strict=True)
+    ):
+        if index == UP_AXIS:
+            message = (
+                f"{bone} bobs {worst:.4f} m along {axis} over {name}, which "
+                f"the strip keeps"
+            )
+        else:
+            message = (
+                f"{bone} drifts {worst:.4f} m along {axis} over {name} once "
+                f"its horizontal motion is pinned"
+            )
+        findings.append(
+            bake_rule(index).at(limits).measured(f"{name} {axis}", worst, message)
+        )
+    return findings
+
+
+def root_kept(name: str, bone: str, limits: dict[str, float]) -> list[Finding]:
+    """Both bake rules as skips, for a run that kept the root motion.
+
+    `--keep-root-motion` is a declared flag, so every axis still reports:
+    a rule that goes quiet cannot be told from one that never ran.
+    """
+    findings = []
+    for index, axis in enumerate(AXES):
+        findings.append(
+            bake_rule(index)
+            .at(limits)
+            .skipped(
+                f"{name} {axis}",
+                f"--keep-root-motion left {bone} traveling on purpose",
+            )
+        )
+    return findings
 
 
 def translation_scale(source: float, target: float) -> float:

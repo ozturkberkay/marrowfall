@@ -1,17 +1,21 @@
 //! The clip gates: what a fitted clip must be, measured against the file the
 //! motion was bought in.
 //!
-//! Five rules, from two different measurements.
+//! Ten rules, measured at three boundaries.
 //!
-//! - [`INTERPOLATION`] and [`REFERENCE_POSE_KEY`] are counted inside Blender,
-//!   because the glTF exporter resamples every channel on the way out and
-//!   writes its own interpolation, so a Bezier action exports as `LINEAR` and
-//!   the defect is invisible in the file. `clip.py` does the counting with no
-//!   `bpy`, so both have a negative control that runs in CI.
-//! - [`SWING`], [`TWIST`] and [`OBJECT_TRANSFORM`] are measured here, in Rust,
-//!   on the delivered GLB. Between `transfer.py` and that file sit
-//!   `write_keys`, the travel scale, the interpolation pass and the exporter,
-//!   and nothing else measures any of them.
+//! - [`INTERPOLATION`], [`REFERENCE_POSE_KEY`] and [`FPS_GRID_RANGE`] are
+//!   counted inside Blender at the retarget, because none of the three
+//!   survives the export: the glTF exporter resamples every channel and
+//!   writes its own interpolation, so a Bezier action exports as `LINEAR`,
+//!   and a render range is a scene property no file carries. `clip.py` does
+//!   the counting with no `bpy`, so those have a negative control in CI.
+//! - [`SWING`], [`TWIST`], [`OBJECT_TRANSFORM`], [`FPS_GRID`] and [`LOOP`]
+//!   are measured here, in Rust, on the delivered GLB. Between `transfer.py`
+//!   and that file sit `write_keys`, the travel scale, the interpolation pass
+//!   and the exporter, and nothing else measures any of them.
+//! - [`ROOT_TRAVEL`] and [`ROOT_BOB`] are measured at the bake, in
+//!   `bake_sprites.py`, because they read the copy `strip_root_motion` has
+//!   just pinned and that copy is never written to disk.
 //!
 //! Rust owns every rule either way. The ids, units, limits and spaces live
 //! here so `cargo art check --list-rules` prints them, and
@@ -192,34 +196,151 @@ pub const OBJECT_TRANSFORM: Rule = Rule {
     limit: |_| 0.0,
 };
 
+/// Every key of the clip lands on a whole frame of its own rate.
+///
+/// glTF stores key times in seconds, so the scene's rate decides which frames
+/// they land on: a 30 fps clip read in a 24 fps scene spans 0.8 to 16.8, and
+/// rounding that to 1 to 17 drops four frames without a word.
+///
+/// Measured at two sites, because the retarget sees an off-grid import and
+/// this module sees an export that resampled. Correction 12 has the detail.
+pub const FPS_GRID: Rule = Rule {
+    id: "clip.fps_grid",
+    comparison: Comparison::Le,
+    unit: "frames",
+    space: "each key of the clip, against the frame grid its declared source_fps sets",
+    limit: |profile| profile.clip.fps_grid_frames,
+};
+
+/// And the retarget samples exactly the frames the source authored.
+///
+/// A 30 fps clip read in a 24 fps scene spans 0.8 to 16.8, rounds to 1 to 17,
+/// and drops four of its 21 frames. Measured inside Blender, on the action,
+/// because the exported file carries what was sampled rather than what was
+/// there.
+pub const FPS_GRID_RANGE: Rule = Rule {
+    id: "clip.fps_grid.range",
+    comparison: Comparison::Eq,
+    unit: "frames",
+    space: "the frames the retarget samples, against the source's own key times",
+    limit: |_| 0.0,
+};
+
+/// The root stays put once the bake has stripped its horizontal motion.
+///
+/// A maximum over frames rather than an endpoint difference, because an
+/// endpoint difference cancels a symmetric excursion. It can only ever read a
+/// residual, so it is not a second [`super::source::TRAVELING`], which asks
+/// whether the vendor sent the travel, or [`super::source::WANDER`], which is
+/// the excursion the pin removed.
+pub const ROOT_TRAVEL: Rule = Rule {
+    id: "clip.root_travel",
+    comparison: Comparison::Le,
+    unit: "meters",
+    space: "the root bone's world head against its first frame, per horizontal axis, \
+            after strip_root_motion",
+    limit: |profile| profile.clip.root_travel_meters,
+};
+
+/// And the up axis keeps its bob, which is a rule of its own.
+///
+/// The strip keeps this axis because a bob is animation, so the limit is
+/// calibrated on the bob rather than on a residual: wide enough for the
+/// 0.0535 m a run reads, narrow enough to reject the 0.2911 m that pinning
+/// the root's own channels 0 and 1 sinks a left strafe by.
+pub const ROOT_BOB: Rule = Rule {
+    id: "clip.root_bob",
+    comparison: Comparison::Le,
+    unit: "meters",
+    space: "the root bone's world head against its first frame, on the up axis, \
+            after strip_root_motion",
+    limit: |profile| profile.clip.root_bob_meters,
+};
+
+/// A looping clip ends in the pose it started in.
+///
+/// Playback jumps from the last key back to the first, so a pose that has not
+/// come back round is a visible hitch once a loop. `skipped` for a clip that
+/// does not loop, where the two ends have no reason to agree at all.
+pub const LOOP: Rule = Rule {
+    id: "clip.loop",
+    comparison: Comparison::Le,
+    unit: "degrees",
+    space: "the local rotation of each joint at the clip's last key, against its first",
+    limit: |profile| profile.clip.loop_degrees,
+};
+
 /// Every rule this module owns, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 5] = [
+pub const RULES: [&Rule; 10] = [
     &INTERPOLATION,
     &REFERENCE_POSE_KEY,
+    &FPS_GRID,
+    &FPS_GRID_RANGE,
     &SWING,
     &TWIST,
     &OBJECT_TRANSFORM,
+    &ROOT_TRAVEL,
+    &ROOT_BOB,
+    &LOOP,
 ];
 
-/// Runs the three file-side clip rules on one fitted clip.
+/// One fitted clip, as the file-side rules need it: the file itself, the
+/// sidecar the retarget wrote beside it, the rig it was fitted to, and the
+/// two things the library declares about it.
+///
+/// The declarations arrive as the two values they are rather than as the
+/// record that holds them: this module measures, and what an animation
+/// library looks like is not its business.
+pub struct Fitted<'a> {
+    pub output: &'a Path,
+    pub source_motion: &'a Path,
+    pub rig: &'a Path,
+    pub repo_root: &'a Path,
+    pub source_fps: u32,
+    pub loops: bool,
+}
+
+/// The rules `retarget_animation.py` reports, whose limits the runner
+/// publishes to it on argv. [`FPS_GRID`] is in both lists on purpose: the
+/// retarget reads the action and this module reads the delivered file.
+pub const RETARGET_RULES: [&Rule; 4] = [
+    &INTERPOLATION,
+    &REFERENCE_POSE_KEY,
+    &FPS_GRID,
+    &FPS_GRID_RANGE,
+];
+
+/// And the two `bake_sprites.py` reports.
+pub const BAKE_RULES: [&Rule; 2] = [&ROOT_TRAVEL, &ROOT_BOB];
+
+/// What a per-axis bake subject names itself, after the clip's own name.
+/// `framing.AXES` spells the same three.
+pub const AXES: [&str; 3] = ["x", "y", "z"];
+
+/// Runs the five file-side clip rules on one fitted clip.
 ///
 /// A missing or unreadable input is one error finding per rule, never a skip:
 /// a gate that goes quiet on absent input proves nothing.
 pub fn check_files(
-    output: &Path,
-    source_motion: &Path,
-    rig: &Path,
-    repo_root: &Path,
+    fitted: &Fitted<'_>,
     profile: &Profile,
     table: &AimTable,
     attempt: u32,
 ) -> Result<Vec<Finding>> {
+    let &Fitted {
+        output,
+        source_motion,
+        rig,
+        repo_root,
+        source_fps,
+        loops,
+    } = fitted;
     let bones = table.bones(table.canonical())?.clone();
     let clip = relative_to(output, repo_root);
     let bytes = match std::fs::read(output) {
         Ok(bytes) => bytes,
         Err(error) => {
-            return Ok([&SWING, &TWIST, &OBJECT_TRANSFORM]
+            return Ok([&SWING, &TWIST, &OBJECT_TRANSFORM, &FPS_GRID, &LOOP]
                 .map(|rule| {
                     rule.undefined(&clip, attempt, format!("{clip} cannot be read: {error}"))
                 })
@@ -258,7 +379,91 @@ pub fn check_files(
             )]
         }
     };
-    Ok([compared, objects].concat())
+    let grid = match gltf_clip::keys(&bytes) {
+        Ok(keys) => [
+            fps_grid(&keys, source_fps, profile, attempt),
+            closes_the_loop(&keys, loops, profile, attempt),
+        ]
+        .concat(),
+        Err(error) => [&FPS_GRID, &LOOP]
+            .map(|rule| {
+                rule.undefined(
+                    &clip,
+                    attempt,
+                    format!("{clip} carries no readable key grid: {error:#}"),
+                )
+            })
+            .to_vec(),
+    };
+    Ok([compared, objects, grid].concat())
+}
+
+/// `clip.fps_grid`, one finding per key of the delivered file.
+///
+/// Per key rather than per worst, because which key drifted is what says
+/// whether the rate is wrong or one key is.
+pub fn fps_grid(
+    keys: &gltf_clip::Keys,
+    source_fps: u32,
+    profile: &Profile,
+    attempt: u32,
+) -> Vec<Finding> {
+    if source_fps == 0 {
+        return vec![FPS_GRID.undefined(
+            "the whole clip",
+            attempt,
+            "the library declares a source_fps of 0, which is no rate at all".to_owned(),
+        )];
+    }
+    keys.seconds
+        .iter()
+        .map(|seconds| {
+            let frame = seconds * f64::from(source_fps);
+            let off = (frame - frame.round()).abs();
+            FPS_GRID.measured(
+                profile,
+                &format!("key at {seconds:.6} s"),
+                off,
+                attempt,
+                format!(
+                    "{seconds:.6} s is frame {frame:.4} at {source_fps} fps, {off:.6} frames off a whole one"
+                ),
+            )
+        })
+        .collect()
+}
+
+/// `clip.loop`, one finding per joint, or one skip per joint when the library
+/// says this clip does not repeat.
+pub fn closes_the_loop(
+    keys: &gltf_clip::Keys,
+    loops: bool,
+    profile: &Profile,
+    attempt: u32,
+) -> Vec<Finding> {
+    keys.ends
+        .iter()
+        .map(|(bone, (first, last))| {
+            if !loops {
+                return LOOP.skipped(
+                    profile,
+                    bone,
+                    attempt,
+                    format!("{bone}: the library declares this clip does not repeat"),
+                );
+            }
+            // A quaternion and its negation are the same rotation, hence the
+            // absolute value: without it half of these read a full turn out.
+            let apart = 2.0 * first.dot(*last).abs().min(1.0).acos().to_degrees();
+            LOOP.measured(
+                profile,
+                bone,
+                apart,
+                attempt,
+                format!("{bone} ends {apart:.3} degrees from the pose it started in"),
+            )
+        })
+        .collect()
 }
 
 /// `clip.swing` and `clip.twist`, one finding each per role. Pure: both

@@ -260,6 +260,39 @@ swing_degrees = 0.01
 # over the worst real reading. T15 regenerates the rig closer to the 40 degree
 # target and can retighten it.
 twist_degrees = 15.0
+# How far a key may sit off a whole frame of the clip's own `source_fps`. The
+# three committed clips read under 1e-6 frames, worst 9.5e-7, which is the
+# `f32` a GLB stores key times in. Read on another rate's grid the same clips
+# read 0.5, so this sits 5,000x under the defect it exists to catch.
+fps_grid_frames = 1e-4
+# How far the root may still drift on either horizontal axis after the bake
+# strips its horizontal motion. The three committed clips read about 2
+# nanometers, which is the `f32` an F-curve stores; the shipped `strafe_left`
+# output reads 0.0428 m on X under the strip this replaces.
+root_travel_meters = 0.02
+# How far the root may move on the up axis, which the strip keeps on purpose
+# because a bob is animation. Measured on the four fitted clips: 0.0089
+# (idle), 0.0377 (strafe_left), 0.0391 (walk_back) and 0.0535 (run). This sits
+# 2.8x over the worst of those and still rejects the 0.2911 m that pinning the
+# root's own channels 0 and 1 sinks a left strafe by.
+root_bob_meters = 0.15
+# How far a looping clip's last pose may sit from its first, per bone. `run`
+# reads 0.000 degrees and `idle` 0.487. `walk_back` reads 6.910 on nine of its
+# bones, which is the hitch `art/animations/library.ron` has recorded in prose
+# all along and which nothing could measure until now.
+loop_degrees = 2.0
+
+# Every published source limit, read at fetch time before a clip is fitted to
+# anything. `crates/xtask-art/src/check/source.rs` publishes them and
+# `tools/blender/src/check_source.py` measures them.
+[profile.source]
+# The line `travels` in `art/animations/library.ron` draws, read on the hips
+# from the vendor file's first frame to its last, horizontally. `strafe_left.fbx`
+# measures 2.3117 m and the committed `run.glb` measures 0.0000, so this sits
+# two orders from either side of the question it decides. How far the hips
+# wander on the way is `source.wander`, which records rather than gates and
+# therefore reads against a ceiling in `check/source.rs` instead.
+travel_meters = 0.02
 
 # The real hierarchy. Read by `rig.parents` and `rig.single_root`.
 [profile.parents]

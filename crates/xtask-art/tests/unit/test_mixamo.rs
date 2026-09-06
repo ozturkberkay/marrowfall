@@ -14,6 +14,10 @@ fn an_fbx(bytes: usize) -> Vec<u8> {
     fbx
 }
 
+/// What the library declares for a Mixamo clip: the export renders at this
+/// rate and the retarget reads it at the same one.
+const SOURCE_FPS: u32 = 30;
+
 fn a_motion() -> Motion {
     Motion {
         name: "Walking Backward".to_owned(),
@@ -49,19 +53,71 @@ fn a_search_response_of_an_unexpected_shape_lists_nothing() {
 
 #[test]
 fn the_export_body_echoes_the_providers_own_parameters() {
-    let body = export_body(&a_motion());
+    let body = export_body(&a_motion(), SOURCE_FPS).unwrap();
 
-    // gms_hash is opaque: read from the product call, sent back untouched, so
-    // defaults like `mirror` and `inplace` stay the provider's.
-    assert_eq!(body["gms_hash"], json!([a_motion().gms_hash]));
+    // gms_hash is opaque: read from the product call and sent back with one
+    // key set, so a default like `mirror` stays the provider's.
+    assert_eq!(body["gms_hash"][0]["mirror"], json!(false));
+    assert_eq!(body["gms_hash"][0]["model-id"], json!(123_530_901));
     assert_eq!(body["product_name"], "Walking Backward");
     assert_eq!(body["type"], "Motion");
     assert_eq!(body["character_id"], CHARACTER_ID);
 }
 
+/// Decision 12: every source is fetched traveling, so the femur ratio can
+/// size the step to our own body.
+///
+/// **The key name is unconfirmed.** The only `gms_hash` in this repository is
+/// the one `a_motion` writes by hand, and nothing here may touch the network,
+/// so this pins that the request carries the flag rather than that Mixamo
+/// reads it. `source.traveling` is what catches an in-place export.
+#[test]
+fn the_export_asks_for_the_clip_with_its_root_motion() {
+    let mut in_place = a_motion();
+    in_place.gms_hash["inplace"] = json!(true);
+
+    for motion in [a_motion(), in_place] {
+        assert_eq!(
+            export_body(&motion, SOURCE_FPS).unwrap()["gms_hash"][0]["inplace"],
+            json!(false),
+            "whatever the product said, the export asks for travel"
+        );
+    }
+}
+
+/// And a `gms_hash` that is not an object at all: the field is opaque, so
+/// nothing before this says what shape the product call returned.
+#[test]
+fn a_gms_hash_that_carries_no_keys_names_the_endpoint_and_the_shape() {
+    for (shape, gms_hash) in [("an array", json!([])), ("a string", json!("nope"))] {
+        let motion = Motion {
+            gms_hash,
+            ..a_motion()
+        };
+        let error = export_body(&motion, SOURCE_FPS).unwrap_err().to_string();
+
+        assert!(error.contains("/animations/export"), "got: {error}");
+        assert!(error.contains(shape), "got: {error}");
+    }
+}
+
+/// The rate is the library's own field rather than a literal, so the rate a
+/// clip is rendered at and the rate the retarget reads it at are one number.
+#[test]
+fn the_export_renders_at_the_rate_the_library_declares() {
+    assert_eq!(
+        export_body(&a_motion(), 30).unwrap()["preferences"]["fps"],
+        "30"
+    );
+    assert_eq!(
+        export_body(&a_motion(), 24).unwrap()["preferences"]["fps"],
+        "24"
+    );
+}
+
 #[test]
 fn the_export_asks_for_an_unreduced_fbx_with_its_skin() {
-    let body = export_body(&a_motion());
+    let body = export_body(&a_motion(), SOURCE_FPS).unwrap();
     assert_eq!(body["preferences"]["format"], "fbx7");
     // The bake resamples anyway, so unreduced keys only bound how smooth that
     // resample can be.
