@@ -1,0 +1,115 @@
+{
+  "stage": "bake",
+  "item": "survivor",
+  "attempt": 1,
+  "findings": [
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "idle x",
+      "measured": 1.775333657860756e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along x over idle once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "idle y",
+      "measured": 1.3969838619232178e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along y over idle once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_bob",
+      "severity": "info",
+      "subject": "idle z",
+      "measured": 0.008866548538208008,
+      "limit": 0.15,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
+      "message": "Hips bobs 0.0089 m along z over idle, which the strip keeps"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "run x",
+      "measured": 1.862645149230957e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along x over run once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "run y",
+      "measured": 3.725290298461914e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along y over run once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_bob",
+      "severity": "info",
+      "subject": "run z",
+      "measured": 0.053548574447631836,
+      "limit": 0.15,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
+      "message": "Hips bobs 0.0535 m along z over run, which the strip keeps"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "walk_back x",
+      "measured": 1.3969838619232178e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along x over walk_back once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "walk_back y",
+      "measured": 3.725290298461914e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along y over walk_back once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_bob",
+      "severity": "info",
+      "subject": "walk_back z",
+      "measured": 0.039071083068847656,
+      "limit": 0.15,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
+      "message": "Hips bobs 0.0391 m along z over walk_back, which the strip keeps"
+    }
+  ]
+}

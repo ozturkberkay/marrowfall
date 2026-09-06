@@ -53,7 +53,7 @@ class Severity(enum.StrEnum):
     INFO = "info"
     """Measured, and inside its limit."""
     SKIPPED = "skipped"
-    """Not measured: a spec field switched this rule off."""
+    """Not measured: a declaration switched this rule off for this subject."""
 
 
 class Comparison(enum.StrEnum):
@@ -126,6 +126,108 @@ class Finding(BaseModel):
     def holds(self) -> bool:
         """Whether the measurement is inside its limit."""
         return self.comparison.holds(self.measured, self.limit)
+
+
+class Rule(BaseModel):
+    """One published gate, as `cargo art check --list-rules` prints it.
+
+    The mirror of `Rule` in `crates/xtask-art/src/check/mod.rs`, and for the
+    same reason: a script builds its Findings through a rule rather than by
+    hand, so it cannot report a comparison, a unit or a space the printed list
+    does not carry, and it never decides for itself whether its own
+    measurement passed. `Report::off_registry` refuses a report that
+    disagrees with the list either way, so a rule spelled wrong here fails the
+    run rather than passing quietly.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    comparison: Comparison
+    unit: str
+    measured_on: str
+    limit: float = 0.0
+    """What the measurement is read against. The runner passes every limit
+    that is profile data, so this default is only ever right for a rule
+    counting defects, which has no tunable limit at all."""
+
+    def at(self, limits: dict[str, float]) -> "Rule":
+        """The same rule carrying the limit the runner published for it."""
+        if self.id not in limits:
+            raise KeyError(
+                f"{self.id} has no published limit; the runner passes one per "
+                f"rule and gave {sorted(limits)}"
+            )
+        return self.model_copy(update={"limit": limits[self.id]})
+
+    def measured(self, subject: str, measured: float, message: str) -> Finding:
+        """One measurement. The comparison decides the severity, never the
+        caller: a rule that filed its own defect as information would be
+        quiet about it."""
+        return self._finding(
+            Severity.INFO
+            if self.comparison.holds(measured, self.limit)
+            else Severity.ERROR,
+            subject,
+            measured,
+            message,
+        )
+
+    def skipped(self, subject: str, message: str) -> Finding:
+        """A rule a declaration switched off for this subject, which is the
+        one thing a number cannot say."""
+        return self._finding(Severity.SKIPPED, subject, 0.0, message)
+
+    def undefined(self, subject: str, message: str) -> Finding:
+        """A measurement that does not exist: two joints at the same place, a
+        bone with no axis. Always an error, because a gate never emits NaN and
+        never goes quiet."""
+        return Finding(
+            rule=self.id,
+            severity=Severity.ERROR,
+            subject=subject,
+            measured=1.0,
+            limit=0.0,
+            comparison=Comparison.EQ,
+            unit="undefined measurements",
+            attempt=attempt(),
+            measured_on=self.measured_on,
+            message=message,
+        )
+
+    def _finding(
+        self, severity: Severity, subject: str, measured: float, message: str
+    ) -> Finding:
+        return Finding(
+            rule=self.id,
+            severity=severity,
+            subject=subject,
+            measured=measured,
+            limit=self.limit,
+            comparison=self.comparison,
+            unit=self.unit,
+            attempt=attempt(),
+            measured_on=self.measured_on,
+            message=message,
+        )
+
+
+def limits_from(entries: Iterable[str]) -> dict[str, float]:
+    """`RULE=LIMIT` pairs into a mapping, as the runner passes them.
+
+    Every published limit is profile data that Rust reads and validates once,
+    so no script here opens a skeleton file to find one.
+    """
+    limits = {}
+    for entry in entries:
+        rule, _, limit = entry.partition("=")
+        try:
+            limits[rule] = float(limit)
+        except ValueError:
+            raise ValueError(f"--limit needs RULE=NUMBER, got {entry!r}") from None
+        if not rule:
+            raise ValueError(f"--limit needs RULE=NUMBER, got {entry!r}")
+    return limits
 
 
 class Report(BaseModel):

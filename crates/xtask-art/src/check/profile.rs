@@ -157,10 +157,10 @@ pub struct MeshLimits {
 }
 
 /// The `[profile.clip]` table: what a fitted clip may differ from the file it
-/// was fitted from.
+/// was fitted from, from itself a loop later, and from standing still once
+/// the bake has pinned its root.
 ///
-/// Both are angles in degrees, read against a per bone worst over the whole
-/// clip. Neither is a guess: the Test Plan carries what each was measured on.
+/// None of these is a guess: the Test Plan carries what each was measured on.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClipLimits {
@@ -171,6 +171,29 @@ pub struct ClipLimits {
     /// How far the roll the clip carries may sit from the roll the two bind
     /// poses call for.
     pub twist_degrees: f64,
+    /// How far a key may sit off a whole frame of the clip's own
+    /// `source_fps`, in frames.
+    pub fps_grid_frames: f64,
+    /// How far the root may still drift on either horizontal axis once the
+    /// bake has stripped its horizontal motion, in meters.
+    pub root_travel_meters: f64,
+    /// How far the root may move on the up axis over a clip, in meters. The
+    /// bake keeps that motion on purpose, so this is a bob rather than a
+    /// residual and it has a limit of its own.
+    pub root_bob_meters: f64,
+    /// How far a looping clip's last pose may sit from its first, per bone.
+    pub loop_degrees: f64,
+}
+
+/// The `[profile.source]` table: what a vendor file must be before anything
+/// is fitted to it.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceLimits {
+    /// The line `travels` in the animation library draws: a clip that travels
+    /// must move its hips at least this far, and one that does not must move
+    /// them no further.
+    pub travel_meters: f64,
 }
 
 /// A target angle and how far from it is still acceptable.
@@ -210,6 +233,9 @@ pub struct Profile {
     pub mesh: MeshLimits,
     /// Every published clip limit, read by the retarget's own gates.
     pub clip: ClipLimits,
+    /// Every published source limit, read at fetch time before a clip is
+    /// fitted to anything.
+    pub source: SourceLimits,
     /// Bone to its parent. Every bone but the root has a row.
     pub parents: BTreeMap<String, String>,
     /// Bone to the child its `child_axis` must point at.
@@ -403,10 +429,17 @@ impl Profile {
             ("mesh.mirror_percent", self.mesh.mirror_percent),
             ("mesh.triangles", self.mesh.triangles),
             ("mesh.printability_edges", self.mesh.printability_edges),
-            // A clip limit of zero would fail every correct clip: both are
-            // calibrated noise floors and neither is ever exactly reached.
+            // A clip limit of zero would fail every correct clip: each is a
+            // calibrated tolerance and none is ever exactly reached.
             ("clip.swing_degrees", self.clip.swing_degrees),
             ("clip.twist_degrees", self.clip.twist_degrees),
+            ("clip.fps_grid_frames", self.clip.fps_grid_frames),
+            ("clip.root_travel_meters", self.clip.root_travel_meters),
+            ("clip.root_bob_meters", self.clip.root_bob_meters),
+            ("clip.loop_degrees", self.clip.loop_degrees),
+            // And a travel threshold of zero would call every clip traveling,
+            // because no two frames of real motion sit at the same place.
+            ("source.travel_meters", self.source.travel_meters),
         ] {
             ensure!(
                 value.is_finite() && value > 0.0,

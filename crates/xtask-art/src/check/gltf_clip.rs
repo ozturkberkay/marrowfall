@@ -97,6 +97,66 @@ pub fn read(bytes: &[u8], bones: &BTreeMap<String, String>) -> Result<Motion> {
     Motion::new(by_role(&rest), frames)
 }
 
+/// One clip's own key grid, and the pose at each end of it.
+///
+/// [`read`] answers where every bone pointed, which needs the role map and a
+/// composed world matrix. These two rules need neither: `clip.fps_grid` asks
+/// whether the file's key times land on whole frames of the rate the library
+/// declares, and `clip.loop` asks whether the last pose is the first one
+/// again.
+pub struct Keys {
+    /// Seconds from the file's own first key, in order.
+    ///
+    /// Counted from the first key rather than from zero, because a Mixamo
+    /// clip runs frames 1 to 21 and a Meshy one starts at 0. Where a clip
+    /// starts is not a defect; how far apart its keys sit is.
+    pub seconds: Vec<f64>,
+    /// Joint name to its own local rotation at the first key and at the last.
+    ///
+    /// Local, so one wrong hips reports once rather than dragging every bone
+    /// below it into the count.
+    pub ends: BTreeMap<String, (DQuat, DQuat)>,
+}
+
+/// The key grid and the two end poses of one clip.
+pub fn keys(bytes: &[u8]) -> Result<Keys> {
+    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
+    let document = &gltf.document;
+    let joints: BTreeSet<usize> = document
+        .skins()
+        .flat_map(|skin| skin.joints())
+        .map(|joint| joint.index())
+        .collect();
+    ensure!(
+        !joints.is_empty(),
+        "the file declares no skin, so it holds no skeleton"
+    );
+    let channels = Channels::read(document, gltf.blob.as_deref())?;
+    let times = channels.key_times(&joints);
+    ensure!(
+        !times.is_empty(),
+        "the file carries no animation, so it holds no clip"
+    );
+    let (first, last) = (times[0], times[times.len() - 1]);
+    let ends = world_nodes(document)?
+        .iter()
+        .filter(|entry| joints.contains(&entry.node.index()))
+        .map(|entry| {
+            let declared = Trs::of(&entry.node)?;
+            let at = |seconds| {
+                channels
+                    .sampled(entry.node.index(), declared, seconds)
+                    .rotation
+            };
+            Ok((node_name(&entry.node), (at(first), at(last))))
+        })
+        .collect::<Result<_>>()?;
+    Ok(Keys {
+        seconds: times.iter().map(|time| time - first).collect(),
+        ends,
+    })
+}
+
 /// The node graph, parents first, with each node's own declared transform.
 struct Tree {
     /// Node indices in the order `world_nodes` returns them, which is parents

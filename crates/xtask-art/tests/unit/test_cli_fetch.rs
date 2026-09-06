@@ -19,14 +19,20 @@ use crate::support::EnvGuard;
 const PRODUCT: &str = "c9ccc468-b96c-11e4-a802-0aaa78deedf9";
 
 /// The template library plus one clip that has to be fetched.
+///
+/// `source_fps` and `loops` describe the synthetic cross-rig pair the Blender
+/// stub hands back rather than a real Mixamo clip: it runs 8 frames at 24 fps
+/// off an open curve, so its two ends do not meet.
 fn a_library() -> AnimationLibrary {
     let mut library = AnimationLibrary::template();
     library.animations.insert(
         "walk_back".to_owned(),
         Animation {
             skeleton: HUMANOID.to_owned(),
-            loops: true,
+            loops: false,
             fps: 20,
+            source_fps: 24,
+            travels: true,
             source: MotionSource::Mixamo {
                 product_id: PRODUCT.to_owned(),
             },
@@ -80,6 +86,8 @@ fn motion_that_arrives_another_way_is_skipped_with_the_reason() {
             skeleton: HUMANOID.to_owned(),
             loops: false,
             fps: 12,
+            source_fps: 24,
+            travels: false,
             source: MotionSource::Authored,
         },
     );
@@ -187,7 +195,9 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::create_dir_all(root.join("tools/blender/src")).unwrap();
-    std::fs::write(root.join("tools/blender/src/retarget_animation.py"), "").unwrap();
+    for script in ["check_source.py", "retarget_animation.py"] {
+        std::fs::write(root.join("tools/blender/src").join(script), "").unwrap();
+    }
     std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
 
     // A real rig, because `clip.object_transform` reads the clip's own object
@@ -206,13 +216,30 @@ fn a_repo(library: &AnimationLibrary) -> tempfile::TempDir {
 }
 
 /// The report writing, as the real script looks like from outside: the
-/// header comes off the path the runner set, and `MARROWFALL_STUB_FINDING`
-/// stands in for the 44 findings the retarget really writes.
+/// header comes off the path the runner set, and one finding per stage
+/// stands in for the 66 the retarget and the 32 the source check really
+/// write. An unset variable leaves an empty report, which is a run that
+/// passed.
 const WRITES_A_REPORT: &str = r#"
 name=$(basename "$MARROWFALL_REPORT" .json)
 stage=${name%%.*}; rest=${name#*.}; item=${rest%.*}; attempt=${rest##*.}
+if [ "$stage" = "fetch" ]; then finding="$MARROWFALL_STUB_SOURCE_FINDING"
+else finding="$MARROWFALL_STUB_FINDING"; fi
 printf '{"stage":"%s","item":"%s","attempt":%s,"findings":[%s]}' \
-  "$stage" "$item" "$attempt" "$MARROWFALL_STUB_FINDING" > "$MARROWFALL_REPORT"
+  "$stage" "$item" "$attempt" "$finding" > "$MARROWFALL_REPORT"
+"#;
+
+/// The fetch path runs two scripts, and a stub testing the second one still
+/// has to let the first through.
+const PASSES_THE_SOURCE_CHECK: &str = r#"
+case "${MARROWFALL_REPORT##*/}" in
+  fetch.*)
+    printf '{"stage":"fetch","item":"walk_back","attempt":1,"findings":[]}' \
+      > "$MARROWFALL_REPORT"
+    : > "$MARROWFALL_SENTINEL"
+    exit 0
+    ;;
+esac
 "#;
 
 /// One executable stub, named after what it does wrong.
@@ -240,16 +267,18 @@ fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
         dir,
         "blender-stub.sh",
         &format!(
-            r#"printf '%s\n' "$@" > "$MARROWFALL_STUB_ARGV"
+            r#"printf '%s\n' "$@" >> "$MARROWFALL_STUB_ARGV"
 out=""; motion=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
   if [ "$1" = "--source-motion" ]; then motion="$2"; fi
   shift
 done
-mkdir -p "$(dirname "$out")" "$(dirname "$motion")"
-cp "{clip}" "$out"
-cp "{source}" "$motion"
+if [ -n "$out" ]; then
+  mkdir -p "$(dirname "$out")" "$(dirname "$motion")"
+  cp "{clip}" "$out"
+  cp "{source}" "$motion"
+fi
 {WRITES_A_REPORT}
 : > "$MARROWFALL_SENTINEL"
 exit 0
@@ -349,7 +378,32 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
     assert!(glb.exists(), "the retarget's output");
 
     let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    // The source check runs first, on the file as it arrived.
+    assert!(argv.contains("check_source.py"), "got: {argv}");
+    assert!(
+        argv.find("check_source.py") < argv.find("retarget_animation.py"),
+        "measured before anything was fitted to it: {argv}"
+    );
+    assert!(argv.contains("--travels\ntrue"), "got: {argv}");
+    assert!(
+        argv.contains("--children\nhips=spine_lower,"),
+        "the mapped child per role, off `[profile.tails]`: {argv}"
+    );
+    assert!(argv.contains("--child-axis\n0,1,0"), "got: {argv}");
+    // Every published limit is profile data Rust reads once, so no script
+    // opens a skeleton file to find one.
+    for limit in [
+        "source.traveling=0.02",
+        "source.child_axis=180",
+        "clip.fps_grid=0.0001",
+    ] {
+        assert!(argv.contains(limit), "{limit} is not published: {argv}");
+    }
     assert!(argv.contains("retarget_animation.py"), "got: {argv}");
+    assert!(
+        argv.contains("--source-fps\n24"),
+        "the library's own rate: {argv}"
+    );
     assert!(argv.contains("humanoid.glb"), "fitted to the rig: {argv}");
     assert!(
         argv.contains("--convention\nmixamo"),
@@ -419,7 +473,7 @@ async fn a_retarget_that_writes_nothing_is_not_recorded_as_fetched() {
     let stub = a_stub(
         dir.path(),
         "silent-stub.sh",
-        ": > \"$MARROWFALL_SENTINEL\"\nexit 0\n",
+        &format!("{PASSES_THE_SOURCE_CHECK}: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"),
     );
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
@@ -448,7 +502,9 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
     let stub = a_stub(
         dir.path(),
         "no-clip-stub.sh",
-        &format!("{WRITES_A_REPORT}\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"),
+        &format!(
+            "{PASSES_THE_SOURCE_CHECK}{WRITES_A_REPORT}\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n"
+        ),
     );
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
@@ -465,7 +521,7 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
 
     // The clip gates are what report it: a missing input is an error with a
     // stated reason, never a skip.
-    assert!(error.contains("left 3 defect(s)"), "got: {error}");
+    assert!(error.contains("left 5 defect(s)"), "got: {error}");
     let report = std::fs::read_to_string(
         dir.path()
             .join("art/staging/reports/retarget.walk_back.1.json"),
@@ -539,6 +595,124 @@ async fn a_retarget_that_calls_a_defect_information_is_refused() {
 
     assert!(error.contains("severity"), "got: {error}");
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// A clip that is not what the library declares stops before the retarget,
+/// because the whole point of measuring the vendor file first is not to
+/// spend anything fitting the wrong one.
+#[tokio::test]
+async fn a_source_check_that_finds_a_defect_stops_before_the_retarget() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        // An in-place export of a clip the library calls traveling.
+        .set("MARROWFALL_STUB_SOURCE_FINDING", &a_source_finding(0.0));
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("not the clip the library declares"),
+        "got: {error}"
+    );
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    assert!(
+        !argv.contains("retarget_animation.py"),
+        "nothing was fitted to it: {argv}"
+    );
+    assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
+}
+
+/// And the same registry check the retarget gets, on the fetch report.
+#[tokio::test]
+async fn a_source_check_reporting_a_rule_nobody_publishes_is_refused() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set(
+            "MARROWFALL_STUB_SOURCE_FINDING",
+            &a_source_finding(2.31).replace("source.traveling", "source.made_up"),
+        );
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("source.made_up"), "got: {error}");
+}
+
+/// A vendor file with two coincident joints has no angle to report, and the
+/// undefined record that says so carries neither the rule's unit nor its
+/// limit. The fetch has to surface that defect, not abort on the shape of it.
+#[tokio::test]
+async fn a_source_check_that_could_not_take_a_measurement_reports_the_defect() {
+    let server = MockServer::start().await;
+    serve_mixamo(&server).await;
+    let dir = a_repo(&a_library());
+    let stub = a_blender_stub(dir.path());
+    let undefined = xtask_art::check::source::CHILD_AXIS.undefined(
+        "neck",
+        1,
+        "neck has no direction to measure, so no angle exists".to_owned(),
+    );
+    let mut env = EnvGuard::new();
+    env.set("MARROWFALL_MIXAMO_TOKEN", "a-bearer-token")
+        .set("MARROWFALL_MIXAMO_BASE_URL", &server.uri())
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set(
+            "MARROWFALL_STUB_SOURCE_FINDING",
+            &serde_json::to_string(&undefined).unwrap(),
+        );
+
+    let error = fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("not the clip the library declares"),
+        "got: {error}"
+    );
+}
+
+/// One `source.traveling` finding as JSON, built through the rule registry so
+/// the stub cannot report a limit the published list does not carry.
+fn a_source_finding(meters: f64) -> String {
+    let profile =
+        xtask_art::check::profile::Profile::of(&crate::support::repo_root(), HUMANOID).unwrap();
+    let finding = xtask_art::check::source::TRAVELING.measured(
+        &profile,
+        "the whole clip",
+        meters,
+        1,
+        "stub".to_owned(),
+    );
+    serde_json::to_string(&finding).unwrap()
 }
 
 /// A rule `--list-rules` does not print has no published limit, so a report

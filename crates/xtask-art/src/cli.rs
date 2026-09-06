@@ -453,13 +453,18 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
     for (name, product_id) in wanted {
         println!("{name}: fetching {product_id}…");
         let animation = library.get(&name)?;
-        let fbx = client.motion_fbx(&product_id, &token).await?;
+        let fbx = client
+            .motion_fbx(&product_id, animation.source_fps, &token)
+            .await?;
 
         let download = AnimationLibrary::staged_download(root, &name);
         std::fs::create_dir_all(download.parent().unwrap_or(root))
             .with_context(|| format!("creating {}", download.display()))?;
         std::fs::write(&download, &fbx)
             .with_context(|| format!("writing {}", download.display()))?;
+        // Before the retarget: the vendor's own rest geometry is on record
+        // from here, and nothing downstream still carries it.
+        crate::stages::check_source(&download, &name, animation, root)?;
         let glb = library.glb(root, &name);
         crate::stages::retarget(&download, &glb, &name, animation, root)?;
 
@@ -692,7 +697,7 @@ fn report_on(root: &Path, paths: &Paths, stage: &str, findings: Vec<Finding>) ->
     let mut report = Report::new(stage, &paths.name, FIRST_ATTEMPT);
     report.extend(findings)?;
     // The passing measurements stay in the report; the terminal gets the
-    // defects and anything a spec field switched off.
+    // defects and anything a declaration switched off.
     for finding in report.findings() {
         if finding.severity != Severity::Info {
             println!("  {}", defect(finding));
@@ -743,17 +748,21 @@ fn print_rule_list(root: &Path) -> Result<()> {
         "no skeleton profile in {}",
         Profile::dir(root).display()
     );
-    // Widest id, so a new rule cannot push the columns out of line.
-    let width = check::every_rule()
-        .map(|rule| rule.id.len())
-        .max()
-        .unwrap_or_default();
+    // Widest id and widest unit, so a new rule cannot push the columns out of
+    // line.
+    let widest = |of: fn(&&check::Rule) -> usize| {
+        check::every_rule()
+            .map(|rule| of(&rule))
+            .max()
+            .unwrap_or_default()
+    };
+    let (width, units) = (widest(|rule| rule.id.len()), widest(|rule| rule.unit.len()));
     for skeleton in skeletons {
         let profile = Profile::of(root, &skeleton)?;
         println!("rules for the {skeleton:?} skeleton, from its [profile]\n");
         for rule in check::every_rule() {
             println!(
-                "{:<width$} {} {:<8} {:<16} {}",
+                "{:<width$} {} {:<8} {:<units$} {}",
                 rule.id,
                 rule.comparison.as_str(),
                 (rule.limit)(&profile),

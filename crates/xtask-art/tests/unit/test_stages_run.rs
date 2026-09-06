@@ -578,6 +578,8 @@ fn a_mixamo_clip() -> Animation {
         skeleton: HUMANOID.to_owned(),
         loops: true,
         fps: 20,
+        source_fps: 30,
+        travels: true,
         source: MotionSource::Mixamo {
             product_id: "c9ccc468-b96c-11e4-a802-0aaa78deedf9".to_owned(),
         },

@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+use xtask_art::check::profile::Profile;
+use xtask_art::check::{Finding, Report, clip};
 use xtask_art::library::AnimationLibrary;
 use xtask_art::spec::{Bake, CharacterSpec, CharacterType, Remesh, Subject, Texture};
 
@@ -139,6 +141,56 @@ pub fn a_png() -> Vec<u8> {
 /// The library every test resolves names against.
 pub fn a_library() -> AnimationLibrary {
     AnimationLibrary::template()
+}
+
+/// Copies the committed skeleton profile into a temporary repo, because the
+/// stages that publish a limit to Blender read it from there.
+pub fn install_skeleton(root: &std::path::Path) {
+    let skeletons = root.join("art/skeletons");
+    std::fs::create_dir_all(&skeletons).expect("mkdir");
+    let name = format!("{}.toml", xtask_art::library::HUMANOID);
+    std::fs::copy(
+        repo_root().join("art/skeletons").join(&name),
+        skeletons.join(&name),
+    )
+    .expect("copying the committed skeleton profile");
+}
+
+/// Every subject the bake's own rules report on: one per axis of every clip.
+pub fn bake_subjects(names: &[&str]) -> Vec<String> {
+    names
+        .iter()
+        .flat_map(|name| clip::AXES.map(|axis| format!("{name} {axis}")))
+        .collect()
+}
+
+/// One bake finding, built through the published rule so its limit, its
+/// space and its severity are the real ones.
+pub fn a_bake_finding(subject: &str, meters: f64) -> Finding {
+    let profile = Profile::of(&repo_root(), xtask_art::library::HUMANOID)
+        .expect("the committed humanoid profile");
+    let rule = if subject.ends_with(" z") {
+        &clip::ROOT_BOB
+    } else {
+        &clip::ROOT_TRAVEL
+    };
+    rule.measured(&profile, subject, meters, 1, "stub".to_owned())
+}
+
+/// One bake report, as JSON, out of findings a caller chose.
+pub fn a_bake_report_of(item: &str, findings: Vec<Finding>) -> String {
+    let mut report = Report::new("bake", item, 1);
+    report.extend(findings).expect("published findings");
+    serde_json::to_string(&report).expect("encoding the stub report")
+}
+
+/// And the report the bake writes when nothing is wrong.
+pub fn a_bake_report(item: &str, names: &[&str]) -> String {
+    let findings = bake_subjects(names)
+        .iter()
+        .map(|subject| a_bake_finding(subject, 0.0))
+        .collect();
+    a_bake_report_of(item, findings)
 }
 
 /// Writes the library plus a stub GLB for each animation, so a bake finds them.

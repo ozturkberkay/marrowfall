@@ -39,6 +39,13 @@ printability_edges = 200
 [profile.clip]
 swing_degrees = 0.01
 twist_degrees = 15.0
+fps_grid_frames = 1e-4
+root_travel_meters = 0.02
+root_bob_meters = 0.15
+loop_degrees = 2.0
+
+[profile.source]
+travel_meters = 0.02
 
 [profile.parents]
 Tip = "Root"
@@ -103,6 +110,11 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.mesh.printability_edges, 200.0);
     assert_eq!(profile.clip.swing_degrees, 0.01);
     assert_eq!(profile.clip.twist_degrees, 15.0);
+    assert_eq!(profile.clip.fps_grid_frames, 1e-4);
+    assert_eq!(profile.clip.root_travel_meters, 0.02);
+    assert_eq!(profile.clip.root_bob_meters, 0.15);
+    assert_eq!(profile.clip.loop_degrees, 2.0);
+    assert_eq!(profile.source.travel_meters, 0.02);
 }
 
 /// The names are Mixamo's and HumanIK's, spine numbered from the bottom, so

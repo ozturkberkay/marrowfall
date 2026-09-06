@@ -128,6 +128,8 @@ fn an_animation_describes_the_motion_and_nothing_about_a_character() {
         skeleton: HUMANOID.to_owned(),
         loops: true,
         fps: 12,
+        source_fps: 24,
+        travels: false,
         source: MotionSource::Meshy { action_id: 251 },
     };
     assert_eq!(animation.source, MotionSource::Meshy { action_id: 251 });
@@ -163,6 +165,8 @@ fn a_mixed_library() -> AnimationLibrary {
             skeleton: HUMANOID.to_owned(),
             loops: true,
             fps: 24,
+            source_fps: 30,
+            travels: true,
             source: a_mixamo_source(),
         },
     );
@@ -317,6 +321,8 @@ fn an_animation_for_another_skeleton_is_refused() {
             skeleton: "insectoid".to_owned(),
             loops: true,
             fps: 12,
+            source_fps: 24,
+            travels: false,
             source: MotionSource::Authored,
         },
     );
@@ -339,6 +345,8 @@ fn animations_can_be_listed_per_skeleton() {
             skeleton: "insectoid".to_owned(),
             loops: true,
             fps: 12,
+            source_fps: 24,
+            travels: false,
             source: MotionSource::Authored,
         },
     );
@@ -349,4 +357,41 @@ fn animations_can_be_listed_per_skeleton() {
         library.for_skeleton("insectoid").collect::<Vec<_>>(),
         ["chitter"]
     );
+}
+
+// --- the committed library ------------------------------------------------
+
+/// Every `source_fps` and every `travels` on record, and the two product ids
+/// a fetch spends a Mixamo session on. All of them are measurements, so a
+/// silent edit here is a clip fitted at the wrong rate or a gate switched off.
+#[test]
+fn the_committed_animation_library_loads() {
+    let library = AnimationLibrary::load(&crate::support::repo_root()).unwrap();
+
+    assert_eq!(library.animations.len(), 5);
+    assert_eq!(
+        library.get("strafe_left").unwrap().source,
+        MotionSource::Mixamo {
+            product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9".to_owned()
+        }
+    );
+    assert_eq!(
+        library.get("strafe_right").unwrap().source,
+        MotionSource::Mixamo {
+            product_id: "c9c96f9e-b96c-11e4-a802-0aaa78deedf9".to_owned()
+        }
+    );
+    // Measured: key spacing for the rate, hips first frame to last for the
+    // flag. The design document records what each was read on.
+    for (name, source_fps, travels) in [
+        ("idle", 24, false),
+        ("run", 24, false),
+        ("walk_back", 24, true),
+        ("strafe_left", 30, true),
+        ("strafe_right", 30, true),
+    ] {
+        let animation = library.get(name).unwrap();
+        assert_eq!((name, animation.source_fps), (name, source_fps));
+        assert_eq!((name, animation.travels), (name, travels));
+    }
 }

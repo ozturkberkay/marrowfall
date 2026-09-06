@@ -250,6 +250,8 @@ fn adding_a_free_animation_does_not_re_run_the_paid_rig() {
             skeleton: xtask_art::library::HUMANOID.to_owned(),
             loops: true,
             fps: 24,
+            source_fps: 30,
+            travels: true,
             source: MotionSource::Mixamo {
                 product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9".to_owned(),
             },

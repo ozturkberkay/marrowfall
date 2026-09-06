@@ -13,7 +13,10 @@ use xtask_art::library::{Animation, MotionSource};
 use xtask_art::spec::Paths;
 use xtask_art::stages;
 
-use crate::support::{EnvGuard, a_library, a_spec, install_library};
+use crate::support::{
+    EnvGuard, a_bake_finding, a_bake_report, a_bake_report_of, a_library, a_spec, bake_subjects,
+    install_library, install_skeleton,
+};
 
 /// A repo tree with the script, a virtualenv and the animation library in place.
 fn a_baked_repo(with_animations: bool) -> tempfile::TempDir {
@@ -22,6 +25,7 @@ fn a_baked_repo(with_animations: bool) -> tempfile::TempDir {
     std::fs::create_dir_all(root.join("tools/blender/src")).unwrap();
     std::fs::write(root.join("tools/blender/src/bake_sprites.py"), "").unwrap();
     std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages")).unwrap();
+    install_skeleton(root);
 
     let paths = Paths::new(root, "survivor");
     std::fs::create_dir_all(paths.dir()).unwrap();
@@ -33,12 +37,20 @@ fn a_baked_repo(with_animations: bool) -> tempfile::TempDir {
 }
 
 /// A stub that parses `--out`, writes one PNG there, and finishes the way a
-/// real script does: with the success sentinel.
+/// real script does: with the success sentinel and a report on every clip.
 fn a_blender_stub(dir: &Path) -> std::path::PathBuf {
+    a_stub_reporting(dir, &a_bake_report("survivor", &["idle", "run"]))
+}
+
+/// The same stub, over a report the caller chose.
+fn a_stub_reporting(dir: &Path, report: &str) -> std::path::PathBuf {
+    let prepared = dir.join("prepared.json");
+    std::fs::write(&prepared, report).unwrap();
     let stub = dir.join("blender-stub.sh");
     std::fs::write(
         &stub,
-        r#"#!/bin/sh
+        format!(
+            r#"#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
@@ -48,9 +60,12 @@ mkdir -p "$out"
 : > "$out/idle_s_00.png"
 : > "$out/idle_s_01.png"
 : > "$out/notes.txt"
+cat {prepared:?} > "$MARROWFALL_REPORT"
 : > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
+            prepared = prepared.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(
@@ -145,40 +160,107 @@ fn stale_frames_from_a_previous_shape_are_cleared_first() {
     );
 }
 
-/// The bake reads no findings yet, so a report it produced would vanish. The
-/// tripwire goes when T14 wires the `bake.*` rules in.
+/// A bake that measured nothing is a bake whose two rules nobody read, and a
+/// gate that goes quiet cannot be told from one that never ran.
 #[test]
-fn a_bake_that_reports_findings_stops_rather_than_dropping_them() {
+fn a_bake_that_writes_no_report_at_all_stops() {
+    let error = a_bake_reporting(None);
+    assert!(error.contains("wrote no report"), "got: {error}");
+}
+
+/// And one that wrote a report but left an axis out of it. This is what
+/// deleting the bake's own `measure_root_travel` call looks like from here.
+#[test]
+fn a_bake_that_leaves_a_subject_unreported_stops() {
+    let error = a_bake_reporting(Some(without("idle z")));
+
+    assert!(error.contains("idle z"), "got: {error}");
+    assert!(error.contains("nothing was read"), "got: {error}");
+}
+
+/// The runner publishes every limit the script reports against, so a finding
+/// naming a rule the list does not carry has no published limit at all.
+#[test]
+fn a_bake_finding_off_the_rule_list_is_named_back() {
+    let error = a_bake_reporting(Some(edited("clip.root_travel", "clip.made_up")));
+    assert!(error.contains("clip.made_up"), "got: {error}");
+}
+
+/// And a real defect stops the stage rather than being counted and dropped.
+///
+/// Both numbers are what pinning the root's own channels 0 and 1 leaves on a
+/// left strafe, which is the defect these two rules exist to catch.
+#[test]
+fn a_root_that_still_slides_sideways_stops_the_bake() {
+    let error = a_bake_reporting(Some(measuring("idle x", 0.0428)));
+    assert!(error.contains("1 defect(s)"), "got: {error}");
+}
+
+/// And a root that sank, which is the other half: the up axis has a limit of
+/// its own, because the bob it keeps is animation.
+#[test]
+fn a_root_that_sank_a_third_of_a_meter_stops_the_bake() {
+    let error = a_bake_reporting(Some(measuring("idle z", 0.2911)));
+    assert!(error.contains("1 defect(s)"), "got: {error}");
+}
+
+/// The clean report with one subject taken out of it.
+fn without(dropped: &str) -> String {
+    let findings = bake_subjects(&["idle"])
+        .iter()
+        .filter(|subject| *subject != dropped)
+        .map(|subject| a_bake_finding(subject, 0.0))
+        .collect();
+    a_bake_report_of("survivor", findings)
+}
+
+/// The clean report with one subject read at `meters`, through the rule, so
+/// the severity is the one the number gives.
+fn measuring(subject: &str, meters: f64) -> String {
+    let findings = bake_subjects(&["idle"])
+        .iter()
+        .map(|each| a_bake_finding(each, if each == subject { meters } else { 0.0 }))
+        .collect();
+    a_bake_report_of("survivor", findings)
+}
+
+/// The clean report with one substring rewritten.
+fn edited(from: &str, to: &str) -> String {
+    a_bake_report("survivor", &["idle"]).replace(from, to)
+}
+
+/// Runs the bake against a stub that hands `report` back, or writes no report
+/// at all, and returns why the stage refused it.
+fn a_bake_reporting(report: Option<String>) -> String {
     let library = a_library();
     let dir = a_baked_repo(true);
-    let stub = dir.path().join("reporting.sh");
-    std::fs::write(
-        &stub,
-        r#"#!/bin/sh
-: > "$MARROWFALL_SENTINEL"
-printf '%s' '{"stage":"bake","item":"survivor","attempt":1,"findings":[]}'   > "$MARROWFALL_REPORT"
-exit 0
-"#,
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &stub,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    let stub = match report {
+        Some(report) => a_stub_reporting(dir.path(), &report),
+        None => a_silent_stub(dir.path()),
+    };
     let mut env = EnvGuard::new();
     env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
 
-    let error = stages::bake(
+    stages::bake(
         &a_spec("survivor"),
         &library,
         &Paths::new(dir.path(), "survivor"),
         dir.path(),
     )
     .unwrap_err()
-    .to_string();
+    .to_string()
+}
 
-    assert!(error.contains("nobody reads yet"), "got: {error}");
+/// A run that finished and wrote nothing.
+fn a_silent_stub(dir: &Path) -> std::path::PathBuf {
+    let stub = dir.join("silent.sh");
+    std::fs::write(&stub, "#!/bin/sh\n: > \"$MARROWFALL_SENTINEL\"\nexit 0\n").unwrap();
+    std::fs::set_permissions(
+        &stub,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    stub
 }
 
 /// A failed bake is a diagnostic, so its half-written frames stay on disk.
@@ -251,6 +333,8 @@ fn a_missing_fetched_animation_names_the_command_that_gets_it() {
             skeleton: xtask_art::library::HUMANOID.to_owned(),
             loops: true,
             fps: 24,
+            source_fps: 30,
+            travels: true,
             source: MotionSource::Mixamo {
                 product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9".to_owned(),
             },

@@ -203,6 +203,12 @@ def test_the_top_of_the_chain_cannot_be_optional() -> None:
 # --- The stride segment ---------------------------------------------------
 
 
+def test_the_top_of_the_chain_is_the_role_that_carries_travel() -> None:
+    """One role hangs under nothing, and the validator refuses any other
+    number, so `source.traveling` cannot be reading the wrong bone."""
+    assert Skeleton.parse(COMMITTED.read_text()).chain_top == "hips"
+
+
 def test_the_stride_segment_is_the_pair_root_travel_is_sized_by() -> None:
     assert a_skeleton().stride_segment == ("spine_lower", "spine_upper")
 

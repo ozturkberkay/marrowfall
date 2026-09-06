@@ -22,14 +22,34 @@ Today the committed survivor breaks seven of the `rig.*` rules, so `check`
 exits non-zero on it. The rig is regenerated later in the pipeline work, and
 the rules become required checks then.
 
-The `clip.*` rules run at the retarget boundary rather than here, because a
-clip is measured against the file its motion was bought in. That file is an
-FBX, so `retarget_animation.py` writes the source's own world orientations to
-`art/staging/reports/retarget.<clip>.1.source.json` and `check/clip.rs` reads
-that beside the GLB it just wrote. `clip.swing` is the angle between the two
-bones' own axes, absolute, and `clip.twist` is the roll between them read
-against the roll their two bind poses carry. Both are `[profile.clip]` limits,
-calibrated on a synthetic cross-rig pair.
+The `clip.*` and `source.*` rules run at their own stage boundaries rather
+than here, because each one needs something `check` does not have.
+
+The six `source.*` rules run at **fetch** time, on the vendor file as it
+arrived and before anything is fitted to it. `source.fps_declared` and the
+`source.traveling` / `source.in_place` pair say the clip is the one
+`library.ron` declares. `source.wander`, `source.child_axis` and
+`source.posture` record what nothing downstream still carries: the vendor
+rig's own geometry, and how far the hips got from where they started on the
+way. They record rather than gate, because a vendor skeleton is not ours to
+regenerate (Mixamo's `Neck` axis sits 16.933 degrees off the direction to its
+own `Head`, and it always will) and because an in-place cycle wanders 0.0276 m
+against a strafe's 2.3117, which no one threshold reads.
+
+Eight `clip.*` rules run at the **retarget** boundary. `clip.swing` and
+`clip.twist` measure the delivered GLB against the file its motion was bought
+in; that file is an FBX, so `retarget_animation.py` writes the source's own
+world orientations to `art/staging/reports/retarget.<clip>.1.source.json` and
+`check/clip.rs` reads that beside the GLB it just wrote. `clip.fps_grid` and
+`clip.fps_grid.range` are requirement 3: the scene runs at the clip's own
+`source_fps`, so a 30 fps clip cannot be read on a 24 fps grid, land at frames
+0.8 to 16.8 and lose four of them to rounding. `clip.loop` reads a looping
+clip's last pose against its first.
+
+`clip.root_travel` and `clip.root_bob` run at the **bake**, on the copy
+`strip_root_motion` has just pinned, because that copy is never written to
+disk. The strip pins the two horizontal axes and keeps the vertical one, so
+they are two rules with two limits: a residual of 0.02 m and a bob of 0.15.
 
 Every mesh rule measures **world space first, then welded**, and says so in
 its finding. glTF splits one vertex at every UV seam, so a naive read of the
@@ -85,11 +105,14 @@ shared by the last two stages rather than one block per stage.
 
 The pipeline is Rust. `tools/blender/src/` holds the only Python in the repo,
 because `bpy` is Python-only and Blender is the one tool that cannot be driven
-any other way: `bake_sprites.py`, `retarget_animation.py` and
-`strip_animation.py` run inside Blender, and `framing.py` and `findings.py`
-are the `bpy`-free modules they import. `cargo art` shells out to
-`blender --background --python …` for those three, and does everything else
-itself.
+any other way: `bake_sprites.py`, `check_source.py`, `retarget_animation.py`
+and `strip_animation.py` run inside Blender, and `clip.py`, `findings.py`,
+`framing.py`, `skeleton.py`, `source.py` and `transfer.py` are the `bpy`-free
+modules they import. `cargo art` shells out to
+`blender --background --python …` for those four, and does everything else
+itself. Every published limit those scripts report against is passed to them
+as `--limit RULE=NUMBER`, read off the same rule list `--list-rules` prints,
+so no script holds a second copy of a number.
 
 ## Shared animations
 
@@ -99,8 +122,16 @@ its license allows the animation but not republishing the file, is fetched:
 
 ```bash
 cargo art fetch            # every clip declared but missing
-cargo art fetch walk_back  # just one, --force to replace it
+cargo art fetch strafe_left  # just one, --force to replace it
 ```
+
+A fetch is three steps: the export is downloaded, `check_source.py` measures
+it against what the library declares, and only then is it fitted to the
+canonical rig. Every export is requested **traveling**, so the root carries
+the motion and the femur ratio can size the step to our own body, and at the
+rate `source_fps` declares. `source_fps` is the clip's own rate and `fps` is
+the sprite sampling rate: `idle` is sampled 8 times a second out of a clip
+authored at 24.
 
 The first run opens Chrome at Mixamo and waits while you log in, because
 exporting needs a session credential that lasts about a day. Nothing is stored:

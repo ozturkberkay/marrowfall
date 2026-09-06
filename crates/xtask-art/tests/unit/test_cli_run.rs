@@ -12,7 +12,9 @@ use xtask_art::cli::{RunOptions, run};
 use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
-use crate::support::{EnvGuard, a_library, a_png, a_spec, install_library};
+use crate::support::{
+    EnvGuard, a_bake_report, a_library, a_png, a_spec, install_library, install_skeleton,
+};
 
 fn options(from: Option<Stage>, only: Option<Stage>, retry: bool) -> RunOptions {
     RunOptions { from, only, retry }
@@ -70,15 +72,19 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
         .save(&Paths::new(root, "survivor").spec())
         .unwrap();
     install_library(root);
+    install_skeleton(root);
     dir
 }
 
 /// A stub that writes the frames the packer expects, so the bake "succeeds".
 fn install_blender_stub(root: &std::path::Path, env: &mut EnvGuard) {
+    let prepared = root.join("prepared.json");
+    std::fs::write(&prepared, a_bake_report("survivor", &["idle"])).unwrap();
     let stub = root.join("blender-stub.sh");
     std::fs::write(
         &stub,
-        r#"#!/bin/sh
+        format!(
+            r#"#!/bin/sh
 out=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--out" ]; then out="$2"; fi
@@ -87,12 +93,15 @@ done
 mkdir -p "$out"
 for d in s se e ne n nw w sw; do
   for i in 00 01; do
-    cp "$MARROWFALL_STUB_FRAME" "$out/idle_${d}_${i}.png"
+    cp "$MARROWFALL_STUB_FRAME" "$out/idle_${{d}}_${{i}}.png"
   done
 done
+cat {prepared:?} > "$MARROWFALL_REPORT"
 : > "$MARROWFALL_SENTINEL"
 exit 0
 "#,
+            prepared = prepared.display()
+        ),
     )
     .unwrap();
     std::fs::set_permissions(

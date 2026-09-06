@@ -18,6 +18,7 @@ pub mod mesh;
 pub mod motion;
 pub mod profile;
 pub mod rig;
+pub mod source;
 pub mod validator;
 
 use std::path::{Path, PathBuf};
@@ -49,10 +50,11 @@ pub enum Severity {
     /// because a rule that goes quiet when it passes cannot be told from one
     /// that never ran.
     Info,
-    /// Not measured, because a spec field switched this rule off. The
-    /// measurement and the limit carry nothing, and only the message says
-    /// why, so it is a severity of its own rather than an `info` a consumer
-    /// would have to tell apart by reading prose.
+    /// Not measured, because a declaration switched this rule off for this
+    /// subject: a spec field, a `travels` flag, a clip the library does not
+    /// call a loop, `--keep-root-motion`. The measurement carries nothing and
+    /// only the message says why, so it is a severity of its own rather than
+    /// an `info` a consumer would have to tell apart by reading prose.
     Skipped,
 }
 
@@ -200,6 +202,31 @@ impl Rule {
         }
     }
 
+    /// A rule a declaration switched off for this subject, which is the one
+    /// thing a number cannot say. It still carries this rule's own limit, so
+    /// the registry reads it like any other finding, and only the message
+    /// says why nothing was measured.
+    pub fn skipped(
+        &self,
+        profile: &Profile,
+        subject: &str,
+        attempt: u32,
+        message: String,
+    ) -> Finding {
+        Finding {
+            rule: self.id.to_owned(),
+            severity: Severity::Skipped,
+            subject: subject.to_owned(),
+            measured: 0.0,
+            limit: (self.limit)(profile),
+            comparison: self.comparison,
+            unit: self.unit.to_owned(),
+            attempt,
+            measured_on: self.space.to_owned(),
+            message,
+        }
+    }
+
     /// A measurement that does not exist: a bone with no length, an axis with
     /// no direction. It carries its own unit, the way an unreadable file does
     /// in [`validator`], because this rule's unit would be a lie. Always an
@@ -212,13 +239,17 @@ impl Rule {
             measured: 1.0,
             limit: 0.0,
             comparison: Comparison::Eq,
-            unit: "undefined measurements".to_owned(),
+            unit: UNDEFINED_UNIT.to_owned(),
             attempt,
             measured_on: self.space.to_owned(),
             message,
         }
     }
 }
+
+/// The unit an undefined measurement carries, on both sides.
+/// `findings.py::Rule.undefined` writes the same words.
+pub const UNDEFINED_UNIT: &str = "undefined measurements";
 
 /// Every rule the pipeline publishes, in the order `--list-rules` prints
 /// them. One list, so a family cannot ship with its rules unprintable.
@@ -227,6 +258,7 @@ pub fn every_rule() -> impl Iterator<Item = &'static Rule> {
         .into_iter()
         .chain(aim::RULES)
         .chain(mesh::RULES)
+        .chain(source::RULES)
         .chain(clip::RULES)
 }
 
@@ -320,6 +352,13 @@ impl Report {
     }
 
     fn disagreement(finding: &Finding, rule: &Rule, profile: &Profile) -> Option<String> {
+        // An undefined measurement is the one shape that cannot carry its
+        // rule's unit or limit: an angle that does not exist is not 180
+        // degrees. Both sides write it identically, so it agrees with any
+        // rule read on the same space.
+        if Self::undefined_shape(finding) && finding.measured_on == rule.space {
+            return None;
+        }
         let limit = (rule.limit)(profile);
         let wrong = [
             ("comparison", finding.comparison != rule.comparison),
@@ -352,10 +391,20 @@ impl Report {
         })
     }
 
+    /// Whether a finding is the record [`Rule::undefined`] writes, down to
+    /// the severity: anything softer than an error would be a gate going
+    /// quiet on a measurement it could not take.
+    fn undefined_shape(finding: &Finding) -> bool {
+        finding.severity == Severity::Error
+            && finding.comparison == Comparison::Eq
+            && finding.limit == 0.0
+            && finding.unit == UNDEFINED_UNIT
+    }
+
     /// Whether a finding's severity is the one its own comparison gives.
     ///
     /// A warning says a measurement could not be taken and a skip says a
-    /// spec field switched the rule off, so neither one follows from a
+    /// declaration switched the rule off, so neither one follows from a
     /// number. The other two do, and exactly.
     fn severity_follows(finding: &Finding) -> bool {
         match finding.severity {

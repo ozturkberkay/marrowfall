@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use glam::DQuat;
 
 use xtask_art::check::aim::AimTable;
-use xtask_art::check::clip::{OBJECT_TRANSFORM, RULES, SWING, TWIST};
+use xtask_art::check::clip::{Fitted, OBJECT_TRANSFORM, RULES, SWING, TWIST};
 use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::motion::{Frame, Motion};
 use xtask_art::check::profile::Profile;
@@ -27,6 +27,18 @@ use super::support::repo_root;
 const ROLES: usize = 22;
 
 const ATTEMPT: u32 = 1;
+
+/// What `library.ron` declares for the three committed Meshy clips: their key
+/// times sit 1/24 s apart.
+const MESHY_SOURCE_FPS: u32 = 24;
+
+/// The committed rig, and a source sidecar that is deliberately not there.
+fn beside(root: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    (
+        root.join("art/staging/reports/retarget.no_such_source.1.source.json"),
+        root.join("art/skeletons/humanoid.glb"),
+    )
+}
 
 fn profile() -> Profile {
     Profile::of(&repo_root(), "humanoid").expect("the humanoid profile")
@@ -704,20 +716,25 @@ fn a_source_motion_that_runs_backwards_is_refused() {
 }
 
 #[test]
-fn a_clip_that_is_not_on_disk_is_three_errors_and_never_a_skip() {
+fn a_clip_that_is_not_on_disk_is_five_errors_and_never_a_skip() {
     let root = repo_root();
+    let (sidecar, rig) = beside(&root);
     let findings = xtask_art::check::clip::check_files(
-        &root.join("art/animations/local/never_fetched.glb"),
-        &root.join("art/staging/reports/retarget.never_fetched.1.source.json"),
-        &root.join("art/skeletons/humanoid.glb"),
-        &root,
+        &Fitted {
+            output: &root.join("art/animations/local/never_fetched.glb"),
+            source_motion: &sidecar,
+            rig: &rig,
+            repo_root: &root,
+            source_fps: MESHY_SOURCE_FPS,
+            loops: true,
+        },
         &profile(),
         &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
         ATTEMPT,
     )
     .expect("the gate itself runs");
 
-    assert_eq!(errors(&findings).len(), 3);
+    assert_eq!(errors(&findings).len(), 5);
     assert!(
         findings[0]
             .message
@@ -730,11 +747,16 @@ fn a_clip_that_is_not_on_disk_is_three_errors_and_never_a_skip() {
 #[test]
 fn a_clip_on_disk_with_no_source_motion_beside_it_is_still_reported() {
     let root = repo_root();
+    let (sidecar, rig) = beside(&root);
     let findings = xtask_art::check::clip::check_files(
-        &crate::support::committed_glb("art/animations/run.glb"),
-        &root.join("art/staging/reports/retarget.no_such_source.1.source.json"),
-        &root.join("art/skeletons/humanoid.glb"),
-        &root,
+        &Fitted {
+            output: &crate::support::committed_glb("art/animations/run.glb"),
+            source_motion: &sidecar,
+            rig: &rig,
+            repo_root: &root,
+            source_fps: MESHY_SOURCE_FPS,
+            loops: true,
+        },
         &profile(),
         &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
         ATTEMPT,
@@ -749,4 +771,145 @@ fn a_clip_on_disk_with_no_source_motion_beside_it_is_still_reported() {
         subjects(&findings, OBJECT_TRANSFORM.id),
         ["Armature", "skin_carrier"]
     );
+}
+
+// --- the frame grid and the loop -----------------------------------------
+
+/// One clip's key grid, read out of a committed GLB.
+fn keys_of(name: &str) -> gltf_clip::Keys {
+    let bytes = std::fs::read(crate::support::committed_glb(&format!(
+        "art/animations/{name}.glb"
+    )))
+    .expect("a committed clip");
+    gltf_clip::keys(&bytes).expect("its key grid")
+}
+
+/// The largest measurement in a set of findings, all of one rule.
+fn largest(findings: &[Finding]) -> f64 {
+    findings
+        .iter()
+        .map(|finding| finding.measured)
+        .fold(0.0, f64::max)
+}
+
+/// Requirement 3, on real art: every key of every committed clip lands on a
+/// whole frame of the rate `library.ron` declares for it.
+#[test]
+fn every_committed_clip_sits_on_the_grid_its_own_rate_sets() {
+    for name in ["idle", "run", "walk_back"] {
+        let keys = keys_of(name);
+        let findings =
+            xtask_art::check::clip::fps_grid(&keys, MESHY_SOURCE_FPS, &profile(), ATTEMPT);
+
+        assert_eq!(findings.len(), keys.seconds.len(), "one per key of {name}");
+        // The `f32` a GLB stores key times in, and nothing else: 9.5e-7 of a
+        // frame against a limit of 1e-4.
+        assert!(largest(&findings) < 1e-6, "{name}: {}", largest(&findings));
+        assert!(errors(&findings).is_empty(), "{name}");
+    }
+}
+
+/// And the negative: the same clip read on another rate's grid. This is the
+/// shipped `strafe_left.glb` in a 24 fps scene, 0.8 to 16.8, in the one form
+/// CI can hold: `art/animations/local/` may not be redistributed.
+#[test]
+fn a_clip_read_on_another_rate_s_grid_is_rejected_key_by_key() {
+    let keys = keys_of("run");
+    let findings = xtask_art::check::clip::fps_grid(&keys, 30, &profile(), ATTEMPT);
+
+    assert_eq!(errors(&findings).len(), 15, "of 21 keys, 6 land whole");
+    assert!(
+        (largest(&findings) - 0.5).abs() < 1e-5,
+        "a 24 fps clip read at 30 drifts a quarter frame per key: {}",
+        largest(&findings)
+    );
+}
+
+/// A rate of zero is no grid at all, and a gate never emits a NaN.
+#[test]
+fn a_declared_rate_of_zero_is_undefined_rather_than_infinite() {
+    let findings = xtask_art::check::clip::fps_grid(&keys_of("run"), 0, &profile(), ATTEMPT);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].unit, "undefined measurements");
+}
+
+/// The message a human reads, whole. Pinned because a format string is the
+/// one place a stray run of spaces survives every other test.
+#[test]
+fn a_key_off_the_grid_says_so_in_one_readable_sentence() {
+    let findings = xtask_art::check::clip::fps_grid(&keys_of("run"), 30, &profile(), ATTEMPT);
+
+    assert_eq!(
+        findings[1].message,
+        "0.041667 s is frame 1.2500 at 30 fps, 0.250000 frames off a whole one"
+    );
+}
+
+/// `clip.loop`'s calibration, on the two committed clips that do loop.
+#[test]
+fn the_two_committed_loops_come_back_round() {
+    for (name, expected) in [("idle", 0.487), ("run", 0.000)] {
+        let findings =
+            xtask_art::check::clip::closes_the_loop(&keys_of(name), true, &profile(), ATTEMPT);
+
+        assert_eq!(findings.len(), 24, "one per joint of {name}");
+        assert!(
+            (largest(&findings) - expected).abs() < 0.001,
+            "{name} reads {}",
+            largest(&findings)
+        );
+        assert!(errors(&findings).is_empty(), "{name}");
+    }
+}
+
+/// The `[art]` negative, which `library.ron` has documented all along:
+/// `walk_back` does not return to its start pose, so it hitches once a loop.
+#[test]
+fn the_committed_clip_that_does_not_close_its_loop_is_rejected() {
+    let findings =
+        xtask_art::check::clip::closes_the_loop(&keys_of("walk_back"), true, &profile(), ATTEMPT);
+
+    let defects = errors(&findings);
+    assert_eq!(defects.len(), 9, "nine bones end somewhere else");
+    assert!(
+        (largest(&findings) - 6.910).abs() < 0.001,
+        "worst reads {}",
+        largest(&findings)
+    );
+    assert_eq!(worst(&findings, "clip.loop").subject, "LeftForeArm");
+}
+
+/// And the `[synth]` one: a clip cut one frame short of its own cycle.
+#[test]
+fn a_clip_cut_one_frame_short_no_longer_closes() {
+    let whole = correct().looping();
+    let short = correct().looping().without_the_last_frame();
+    let read = |pair: &CrossRig| {
+        let glb = pair.output_glb();
+        let keys = gltf_clip::keys(&glb).expect("the fixture's key grid");
+        xtask_art::check::clip::closes_the_loop(&keys, true, &profile(), ATTEMPT)
+    };
+
+    assert!(errors(&read(&whole)).is_empty(), "the whole cycle closes");
+    assert!(
+        !errors(&read(&short)).is_empty(),
+        "one frame short does not"
+    );
+}
+
+/// A clip the library does not call a loop has no reason for its two ends to
+/// agree, so every joint reports `skipped` rather than a number nobody reads.
+#[test]
+fn a_clip_that_does_not_repeat_reports_every_joint_as_skipped() {
+    let findings =
+        xtask_art::check::clip::closes_the_loop(&keys_of("walk_back"), false, &profile(), ATTEMPT);
+
+    assert_eq!(findings.len(), 24);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.severity == Severity::Skipped)
+    );
+    assert!(findings[0].message.contains("does not repeat"));
 }
