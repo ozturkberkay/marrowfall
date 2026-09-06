@@ -19,6 +19,12 @@ optional_roles = []
 # Total height carries the head and the feet, and neither one takes a step.
 stride_segment = ["left_upper_leg", "left_leg"]
 
+# The roles that stand on the floor. The retarget lifts every clip until the
+# lowest of these over the whole clip stands where this rig's own rest pose
+# stands, and `clip.floor_snap` reports what is left under it. Not zero: the
+# toe joint here is the ball of the foot and rests 0.0307 m above the sole.
+ground_roles = ["left_toe", "right_toe"]
+
 [conventions.meshy]
 hips = "Hips"
 spine_lower = "Spine"
@@ -276,6 +282,20 @@ root_travel_meters = 0.02
 # 2.8x over the worst of those and still rejects the 0.2911 m that pinning the
 # root's own channels 0 and 1 sinks a left strafe by.
 root_bob_meters = 0.15
+# How far the lowest ground joint may sit from the rest height the snap puts
+# it at. Read at two sites on the three Mixamo fits: the retarget's own pose
+# gives 9.3e-9 to 4.3e-8 m and the delivered GLB 3.9e-8 to 6.7e-7 m, all of it
+# `f32` storage rather than a real gap. This sits 7,493x over the worst of
+# them and still rejects the 0.0599 m the same fit leaves with the lift
+# removed. The committed `run.glb` reads 0.0017 m.
+floor_snap_meters = 0.005
+# How far a fitted clip's travel may sit from the source's travel sized by the
+# femur ratio, as a percent of that expected travel. The same three fits read
+# 4.6e-6 to 2.4e-5 percent across both sites, so this sits 81,865x over the
+# worst of them, and a fit sized five percent out reads 5.0. `strafe_left`
+# travels 2.3117 m on the vendor rig and our femur is 0.8815 of theirs, so
+# 2.0378 m is what the fit has to reproduce.
+stride_percent = 2.0
 # How far a looping clip's last pose may sit from its first, per bone. `run`
 # reads 0.000 degrees and `idle` 0.487. `walk_back` reads 6.910 on nine of its
 # bones, which is the hitch `art/animations/library.ron` has recorded in prose

@@ -338,6 +338,7 @@ pub fn check_source(
         .with_context(|| format!("measuring {}", download.display()))?
         .with_context(|| format!("the source check of {name} wrote no report"))?;
     refuse_off_registry(&report, &profile, name, "source check")?;
+    refuse_unread_rules(&report, &source::RULES, name, "source check")?;
     anyhow::ensure!(
         !report.has_errors(),
         "{name} is not the clip the library declares it is, {} defect(s) \
@@ -378,12 +379,38 @@ fn refuse_off_registry(report: &Report, profile: &Profile, name: &str, what: &st
     Ok(())
 }
 
-/// Refuses a bake report that left one of its own subjects unread.
+/// Refuses a report that carries no finding for one of the rules its script
+/// was given a limit for.
 ///
-/// The bake's two rules own one subject per axis of every clip it was given.
-/// A gate that goes quiet cannot be told from one that never ran, so a
-/// missing subject stops the stage rather than passing it.
-fn refuse_unreported(report: &Report, names: &[&str], item: &str) -> Result<()> {
+/// A gate that goes quiet cannot be told from one that never ran, so deleting
+/// the call that measures is a failing stage rather than a quiet pass.
+fn refuse_unread_rules(report: &Report, rules: &[&Rule], item: &str, what: &str) -> Result<()> {
+    let seen: BTreeSet<&str> = report
+        .findings()
+        .iter()
+        .map(|finding| finding.rule.as_str())
+        .collect();
+    let missing: Vec<&str> = rules
+        .iter()
+        .map(|rule| rule.id)
+        .filter(|id| !seen.contains(id))
+        .collect();
+    anyhow::ensure!(
+        missing.is_empty(),
+        "the {what} of {item} was published a limit for {} and reported no \
+         finding under it, so that rule was never read: a gate that goes \
+         quiet cannot be told from one that never ran",
+        missing.join(", ")
+    );
+    Ok(())
+}
+
+/// Refuses a bake report that named none of its findings after one of the
+/// per-axis subjects it owed.
+///
+/// The bake's two rules own one subject per axis of every clip it was given,
+/// so a clip missing from the report is one nothing was read on.
+fn refuse_unreported_subjects(report: &Report, names: &[&str], item: &str) -> Result<()> {
     let seen: BTreeSet<&str> = report
         .findings()
         .iter()
@@ -396,8 +423,9 @@ fn refuse_unreported(report: &Report, names: &[&str], item: &str) -> Result<()> 
         .collect();
     anyhow::ensure!(
         missing.is_empty(),
-        "the bake of {item} reported nothing about {}, so nothing was read \
-         there: a rule that goes quiet cannot be told from one that never ran",
+        "the bake of {item} named no finding after the subject(s) {}, so \
+         nothing was read on them: a gate that goes quiet cannot be told \
+         from one that never ran",
         missing.join(", ")
     );
     Ok(())
@@ -454,6 +482,8 @@ pub fn retarget(
         artifacts.source_motion().into(),
         OsString::from("--source-fps"),
         animation.source_fps.to_string().into(),
+        OsString::from("--travels"),
+        animation.travels.to_string().into(),
     ];
     let profile = Profile::of(repo_root, skeleton)?;
     args.extend(published(clip::RETARGET_RULES, &profile));
@@ -461,8 +491,10 @@ pub fn retarget(
         .with_context(|| format!("retargeting {}", source.display()))?
         .with_context(|| format!("the retarget of {name} wrote no report"))?;
     refuse_off_registry(&report, &profile, name, "retarget")?;
-    // Blender counted what only an action carries. These five read the file
-    // it exported, which is where a wrong export would otherwise hide.
+    refuse_unread_rules(&report, &clip::RETARGET_RULES, name, "retarget")?;
+    // Blender counted what only the action and the pose it evaluated carry.
+    // These read the file it exported, which is where a wrong export would
+    // otherwise hide.
     report.extend(clip::check_files(
         &clip::Fitted {
             output: out,
@@ -471,6 +503,7 @@ pub fn retarget(
             repo_root,
             source_fps: animation.source_fps,
             loops: animation.loops,
+            travels: animation.travels,
         },
         &profile,
         &AimTable::of(repo_root, skeleton)?,
@@ -557,7 +590,7 @@ pub fn bake(
         defect_count(&report),
         artifacts.report().display()
     );
-    refuse_unreported(&report, &names, &spec.name)?;
+    refuse_unreported_subjects(&report, &names, &spec.name)?;
 
     preview::bake(&names, pack::direction_names(spec.bake.directions)?, paths)?;
 

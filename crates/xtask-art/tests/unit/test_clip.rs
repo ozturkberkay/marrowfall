@@ -9,17 +9,17 @@
 
 use std::collections::BTreeMap;
 
-use glam::DQuat;
+use glam::{DQuat, DVec3};
 
 use xtask_art::check::aim::AimTable;
-use xtask_art::check::clip::{Fitted, OBJECT_TRANSFORM, RULES, SWING, TWIST};
+use xtask_art::check::clip::{FLOOR_SNAP, Fitted, OBJECT_TRANSFORM, RULES, SWING, Stride, TWIST};
 use xtask_art::check::gltf_world::Skeleton;
-use xtask_art::check::motion::{Frame, Motion};
+use xtask_art::check::motion::{Frame, Motion, SourceLengths};
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{Comparison, Finding, Report, Severity, gltf_clip};
 
 use super::clips::{CrossRig, LEG_ROLL_DEGREES};
-use super::rigs::SyntheticRig;
+use super::rigs::{Clip, Interpolation, OBJECT_SCALE, SyntheticRig};
 use super::support::repo_root;
 
 /// The 22 roles the canonical convention maps, which is the subject count
@@ -666,7 +666,8 @@ fn a_source_motion_that_is_not_a_rotation_is_refused() {
     let error = format!(
         "{:#}",
         Motion::parse(
-            r#"{"rest": {"hips": [0.0, 0.0, 0.0, 0.0]},
+            r#"{"rest": {"hips": [0.0, 0.0, 0.0, 0.0]}, "travel": 0.0,
+                "stride_segment": 0.4,
                 "frames": [{"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
         )
         .expect_err("a quaternion of no length")
@@ -679,8 +680,11 @@ fn a_source_motion_that_is_not_a_rotation_is_refused() {
 fn a_source_motion_with_no_frame_is_refused() {
     let error = format!(
         "{:#}",
-        Motion::parse(r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "frames": []}"#)
-            .expect_err("a clip with no frame")
+        Motion::parse(
+            r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "frames": [],
+                "travel": 0.0, "stride_segment": 0.4}"#
+        )
+        .expect_err("a clip with no frame")
     );
 
     assert!(error.contains("no frame"), "got: {error}");
@@ -692,6 +696,7 @@ fn a_source_motion_whose_frame_leaves_a_role_out_is_refused() {
         "{:#}",
         Motion::parse(
             r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0], "head": [1.0, 0.0, 0.0, 0.0]},
+                "travel": 0.0, "stride_segment": 0.4,
                 "frames": [{"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
         )
         .expect_err("a frame with a hole in it")
@@ -705,7 +710,8 @@ fn a_source_motion_that_runs_backwards_is_refused() {
     let error = format!(
         "{:#}",
         Motion::parse(
-            r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "frames": [
+            r#"{"rest": {"hips": [1.0, 0.0, 0.0, 0.0]}, "travel": 0.0,
+                "stride_segment": 0.4, "frames": [
                  {"seconds": 1.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}},
                  {"seconds": 0.0, "rotations": {"hips": [1.0, 0.0, 0.0, 0.0]}}]}"#
         )
@@ -715,8 +721,33 @@ fn a_source_motion_that_runs_backwards_is_refused() {
     assert!(error.contains("backwards"), "got: {error}");
 }
 
+/// The sidecar's own two lengths, refused before either rule divides by one.
 #[test]
-fn a_clip_that_is_not_on_disk_is_five_errors_and_never_a_skip() {
+fn a_source_motion_whose_stride_segment_is_zero_is_refused() {
+    let error = format!(
+        "{:#}",
+        SourceLengths::parse(r#"{"rest": {}, "frames": [], "travel": 1.0, "stride_segment": 0.0}"#)
+            .expect_err("a femur of no length")
+    );
+
+    assert!(error.contains("no ratio can be taken"), "got: {error}");
+}
+
+#[test]
+fn a_source_motion_that_travels_a_negative_distance_is_refused() {
+    let error = format!(
+        "{:#}",
+        SourceLengths::parse(
+            r#"{"rest": {}, "frames": [], "travel": -1.0, "stride_segment": 0.4}"#
+        )
+        .expect_err("a travel of less than nothing")
+    );
+
+    assert!(error.contains("no distance at all"), "got: {error}");
+}
+
+#[test]
+fn a_clip_that_is_not_on_disk_is_eight_errors_and_never_a_skip() {
     let root = repo_root();
     let (sidecar, rig) = beside(&root);
     let findings = xtask_art::check::clip::check_files(
@@ -727,6 +758,7 @@ fn a_clip_that_is_not_on_disk_is_five_errors_and_never_a_skip() {
             repo_root: &root,
             source_fps: MESHY_SOURCE_FPS,
             loops: true,
+            travels: false,
         },
         &profile(),
         &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
@@ -734,7 +766,7 @@ fn a_clip_that_is_not_on_disk_is_five_errors_and_never_a_skip() {
     )
     .expect("the gate itself runs");
 
-    assert_eq!(errors(&findings).len(), 5);
+    assert_eq!(errors(&findings).len(), 8);
     assert!(
         findings[0]
             .message
@@ -756,6 +788,7 @@ fn a_clip_on_disk_with_no_source_motion_beside_it_is_still_reported() {
             repo_root: &root,
             source_fps: MESHY_SOURCE_FPS,
             loops: true,
+            travels: false,
         },
         &profile(),
         &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
@@ -763,14 +796,60 @@ fn a_clip_on_disk_with_no_source_motion_beside_it_is_still_reported() {
     )
     .expect("the gate itself runs");
 
-    // The two comparison rules cannot run, and the object transform still
-    // can: it needs no source at all, and the committed clip holds the same
-    // armature and skin carrier the committed rig does.
-    assert_eq!(errors(&findings).len(), 2);
+    // Four rules cannot run: the two that compare against the source, and
+    // the two that size the fit against the travel it had. The object
+    // transform still can, because it needs no source at all and the
+    // committed clip holds the same armature and skin carrier the committed
+    // rig does. So does the floor: `run.glb` puts its lowest toe 0.0017 m
+    // under where the rig itself rests, inside the 5 mm the profile
+    // publishes.
+    assert_eq!(errors(&findings).len(), 4);
     assert_eq!(
         subjects(&findings, OBJECT_TRANSFORM.id),
         ["Armature", "skin_carrier"]
     );
+    assert_eq!(
+        subjects(&findings, FLOOR_SNAP.id),
+        ["RightToeBase at 0.083333 s"]
+    );
+}
+
+/// Every file-side rule reports on a real fit, or one that measures nothing
+/// cannot be told from one that was never called. `check_files` is where the
+/// Rust half of the retarget's report comes from, so this is its own
+/// `refuse_unread_rules`.
+#[test]
+fn every_file_side_rule_reports_on_the_synthetic_pair() {
+    let root = repo_root();
+    let pair = CrossRig::new(bones());
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let (clip, sidecar) = (dir.path().join("fit.glb"), dir.path().join("source.json"));
+    std::fs::write(&clip, pair.output_glb()).unwrap();
+    std::fs::write(&sidecar, pair.source_motion()).unwrap();
+
+    let findings = xtask_art::check::clip::check_files(
+        &Fitted {
+            output: &clip,
+            source_motion: &sidecar,
+            rig: &crate::support::committed_glb("art/skeletons/humanoid.glb"),
+            repo_root: &root,
+            source_fps: MESHY_SOURCE_FPS,
+            loops: false,
+            travels: true,
+        },
+        &profile(),
+        &AimTable::of(&root, "humanoid").expect("the humanoid aim table"),
+        ATTEMPT,
+    )
+    .expect("the gate itself runs");
+
+    for rule in xtask_art::check::clip::FILE_RULES {
+        assert!(
+            findings.iter().any(|finding| finding.rule == rule.id),
+            "{} reported nothing at all",
+            rule.id
+        );
+    }
 }
 
 // --- the frame grid and the loop -----------------------------------------
@@ -912,4 +991,248 @@ fn a_clip_that_does_not_repeat_reports_every_joint_as_skipped() {
             .all(|finding| finding.severity == Severity::Skipped)
     );
     assert!(findings[0].message.contains("does not repeat"));
+}
+
+// --- the floor, on the delivered file --------------------------------------
+
+/// The conformant rig held at rest, with its root keyed `meters` of world
+/// height below where the file says that rig rests.
+///
+/// Keyed and not nudged: a rig moved at rest takes its own floor with it, and
+/// a fixture that moves both sides of a comparison cancels the rule it is
+/// meant to prove. What the retarget's snap moves is the root's location
+/// keys, so that is what this moves.
+fn a_clip_off_the_floor(meters: f64) -> Vec<u8> {
+    let rig = SyntheticRig::conformant();
+    // The object node above the skeleton carries a 0.01 scale, so a local
+    // step is 100x its world one.
+    let sunk = rig.rest_translation("Hips") + DVec3::new(0.0, meters / OBJECT_SCALE, 0.0);
+    rig.to_glb(&Clip {
+        seconds: vec![0.0, 1.0],
+        rotations: BTreeMap::from([("Hips".to_owned(), vec![DQuat::IDENTITY; 2])]),
+        translations: BTreeMap::from([("Hips".to_owned(), vec![sunk; 2])]),
+        interpolation: Interpolation::Linear,
+    })
+}
+
+/// The two toe bones the committed skeleton names as its ground roles.
+fn ground_bones() -> std::collections::BTreeSet<String> {
+    let table = AimTable::of(&repo_root(), "humanoid").expect("the humanoid aim table");
+    let bones = bones();
+    table
+        .ground_roles()
+        .iter()
+        .map(|role| bones[role].clone())
+        .collect()
+}
+
+fn floor_of(bytes: &[u8]) -> Finding {
+    let ground = gltf_clip::ground(bytes, &ground_bones()).expect("a readable clip");
+    xtask_art::check::clip::floor_snap(&ground, "the clip", &profile(), ATTEMPT)
+}
+
+/// The calibration: a rig whose toes rest exactly on the floor reads 4e-9 m
+/// out of the file, which is the `f32` a GLB stores a joint position in.
+#[test]
+fn a_clip_whose_lowest_toe_sits_on_the_floor_holds() {
+    let sits = floor_of(&a_clip_off_the_floor(0.0));
+
+    assert_eq!(sits.severity, Severity::Info, "{sits:?}");
+    assert!(sits.measured < 1e-8, "{sits:?}");
+    assert_eq!(sits.subject, "LeftToeBase at 0.000000 s");
+}
+
+/// The calibration pair, either side of the published 5 mm.
+#[test]
+fn four_millimeters_of_toe_under_the_floor_holds_and_six_does_not() {
+    let inside = floor_of(&a_clip_off_the_floor(-0.004));
+    let outside = floor_of(&a_clip_off_the_floor(-0.006));
+
+    assert_eq!(inside.severity, Severity::Info, "{inside:?}");
+    assert!((inside.measured - 0.004).abs() < 1e-6, "{inside:?}");
+    assert_eq!(outside.severity, Severity::Error, "{outside:?}");
+    assert!((outside.measured - 0.006).abs() < 1e-6, "{outside:?}");
+}
+
+#[test]
+fn a_clip_with_the_snap_step_removed_is_rejected_by_the_file_it_delivered() {
+    let sunk = floor_of(&a_clip_off_the_floor(-0.06));
+
+    assert_eq!(sunk.severity, Severity::Error, "{sunk:?}");
+    assert!((sunk.measured - 0.06).abs() < 1e-6, "{sunk:?}");
+    assert_eq!(
+        sunk.message,
+        "LeftToeBase at 0.000000 s is the lowest any ground joint of the clip \
+         gets, -0.0600 m from the rest height the snap aims at"
+    );
+}
+
+/// The `[art]` negative: `idle.glb` was fitted before the snap existed, and
+/// its lowest toe hangs **0.0773 m** above the height its own rig rests at.
+/// A refit through the retarget brings it to 9.3e-9 m, so this reading is
+/// the clip and not the rule.
+#[test]
+fn the_committed_clip_that_was_never_snapped_is_rejected() {
+    let bytes = std::fs::read(crate::support::committed_glb("art/animations/idle.glb"))
+        .expect("a committed clip");
+    let ground = gltf_clip::ground(&bytes, &ground_bones()).expect("a readable clip");
+
+    let floats = xtask_art::check::clip::floor_snap(&ground, "idle", &profile(), ATTEMPT);
+
+    assert_eq!(floats.severity, Severity::Error, "{floats:?}");
+    assert!((floats.measured - 0.0773).abs() < 0.0001, "{floats:?}");
+    assert_eq!(floats.subject, "RightToeBase at 1.208333 s");
+}
+
+/// A clip whose rig has no toe at all measures nothing, and says so as an
+/// error rather than reporting a floor it never found.
+#[test]
+fn a_clip_that_carries_no_toe_is_undefined_rather_than_on_the_floor() {
+    let bytes = a_clip_off_the_floor(0.0);
+    let ground =
+        gltf_clip::ground(&bytes, &std::collections::BTreeSet::new()).expect("a readable clip");
+
+    let nothing = xtask_art::check::clip::floor_snap(&ground, "the clip", &profile(), ATTEMPT);
+
+    assert_eq!(nothing.severity, Severity::Error);
+    assert_eq!(nothing.unit, "undefined measurements");
+    assert!(nothing.message.contains("no ground joint"), "{nothing:?}");
+}
+
+/// The cross-rig fixture stands on its own floor, and the two sides of that
+/// agree: the fixture composes the pose itself to decide the lift, and the
+/// rule reads the file it wrote. Neither uses the other's arithmetic.
+#[test]
+fn the_cross_rig_fixture_stands_where_its_own_rig_rests() {
+    let pair = CrossRig::new(bones());
+
+    let sits = floor_of(&pair.output_glb());
+
+    assert_eq!(sits.severity, Severity::Info, "{sits:?}");
+    assert!(sits.measured < 1e-6, "{sits:?}");
+}
+
+/// The floor is where this rig's own rest pose stands, and two files say so
+/// to a reader who never opens the design: the skeleton file's comment on
+/// `ground_roles` and `skeleton.py`'s docstring for the same field.
+///
+/// A lint because the wrong datum is the plausible one. Snapping the toe
+/// joint itself to zero sinks every clip 30.7 mm and rejects the committed
+/// `run.glb`, and a comment saying so would send the next reader to fix the
+/// gate instead of the comment.
+#[test]
+fn no_authoritative_file_says_the_floor_snap_puts_a_toe_at_zero() {
+    let root = repo_root();
+
+    for path in [
+        "art/skeletons/humanoid.toml",
+        "tools/blender/src/skeleton.py",
+    ] {
+        let text = std::fs::read_to_string(root.join(path)).expect("a readable file");
+        assert!(
+            !text.contains("Z = 0"),
+            "{path} states the datum the design measured wrong: the lowest \
+             ground joint stands where this rig's own rest pose stands"
+        );
+    }
+}
+
+// --- the travel, on the delivered file ------------------------------------
+
+/// Both sides of the pair, gathered the way `check_files` gathers them: our
+/// own femur off the rig, and the vendor's two lengths out of the sidecar the
+/// fixture wrote. Nothing here restates a number the fixture owns.
+fn stride_of(pair: &CrossRig) -> Stride {
+    let source = SourceLengths::parse(&pair.source_motion()).expect("the sidecar");
+    Stride {
+        travel: gltf_clip::travel(&pair.output_glb(), "Hips").expect("a readable root"),
+        segment: (pair.femur(), source.stride_segment),
+        source_travel: source.travel,
+        travels: true,
+    }
+}
+
+fn sized(pair: &CrossRig) -> (Finding, Finding) {
+    let reading = stride_of(pair);
+    (
+        xtask_art::check::clip::stride(&reading, "the clip", &profile(), ATTEMPT),
+        xtask_art::check::clip::stride_ratio(&reading, "the clip", &profile(), ATTEMPT),
+    )
+}
+
+/// The calibration: a correct fit travels what its source did, sized, and the
+/// reading is the `f32` a GLB stores a joint position in.
+#[test]
+fn a_fit_that_travels_what_the_femur_asks_for_holds() {
+    let (travel, ratio) = sized(&CrossRig::new(bones()));
+
+    assert_eq!(travel.severity, Severity::Info, "{travel:?}");
+    assert!(travel.measured < 1e-4, "{travel:?}");
+    assert_eq!(ratio.severity, Severity::Info, "{ratio:?}");
+    assert!((ratio.measured - 0.8815).abs() < 1e-4, "{ratio:?}");
+}
+
+/// The negative: the same fit with its root keys five percent too far, which
+/// is what sizing every length by the wrong femur leaves.
+#[test]
+fn a_fit_whose_root_keys_are_scaled_five_percent_is_rejected() {
+    let (travel, _) = sized(&CrossRig::new(bones()).travel_sized_by(1.05));
+
+    assert_eq!(travel.severity, Severity::Error, "{travel:?}");
+    assert!((travel.measured - 5.0).abs() < 0.01, "{travel:?}");
+    assert_eq!(
+        travel.message,
+        "the clip travels 2.1397 m against the 2.0378 m its source's \
+         2.3117 m comes to at a femur ratio of 0.8815"
+    );
+}
+
+/// A clip the library declares in place has no source travel to be sized,
+/// so the declaration switches the rule off rather than dividing by nothing.
+#[test]
+fn a_clip_the_library_declares_in_place_is_skipped_on_its_flag() {
+    let reading = Stride {
+        travels: false,
+        ..stride_of(&CrossRig::new(bones()))
+    };
+
+    let travel = xtask_art::check::clip::stride(&reading, "the clip", &profile(), ATTEMPT);
+
+    assert_eq!(travel.severity, Severity::Skipped, "{travel:?}");
+    assert!(travel.message.contains("travels: false"), "{travel:?}");
+}
+
+/// `travels: true` on a source that never moved leaves no travel to take a
+/// ratio of, and a relative difference against zero is not a number.
+#[test]
+fn a_traveling_clip_whose_source_stands_still_is_undefined() {
+    let reading = Stride {
+        source_travel: 0.0,
+        ..stride_of(&CrossRig::new(bones()))
+    };
+
+    let travel = xtask_art::check::clip::stride(&reading, "the clip", &profile(), ATTEMPT);
+
+    assert_eq!(travel.severity, Severity::Error, "{travel:?}");
+    assert_eq!(travel.unit, "undefined measurements");
+}
+
+/// And a rig whose two stride joints sit on top of each other has no ratio
+/// at all, which both rules report rather than dividing by nothing.
+#[test]
+fn a_rig_with_no_stride_segment_is_undefined_on_both_rules() {
+    let pair = CrossRig::new(bones());
+    let reading = Stride {
+        segment: (0.0, pair.femur()),
+        ..stride_of(&pair)
+    };
+
+    let travel = xtask_art::check::clip::stride(&reading, "the clip", &profile(), ATTEMPT);
+    let ratio = xtask_art::check::clip::stride_ratio(&reading, "the clip", &profile(), ATTEMPT);
+
+    for finding in [&travel, &ratio] {
+        assert_eq!(finding.severity, Severity::Error, "{finding:?}");
+        assert_eq!(finding.unit, "undefined measurements");
+    }
+    assert!(ratio.message.contains("is no ratio"), "{ratio:?}");
 }

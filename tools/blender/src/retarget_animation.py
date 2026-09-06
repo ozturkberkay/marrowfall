@@ -29,7 +29,7 @@ evaluated once per source frame rather than once per bone per frame.
         --rig art/skeletons/humanoid.glb --convention mixamo \
         --out art/animations/local/walk_back.glb --name walk_back \
         --source-motion art/staging/reports/retarget.walk_back.1.source.json \
-        --source-fps 30 --limit clip.fps_grid=0.0001
+        --source-fps 30 --travels true --limit clip.fps_grid=0.0001
 """
 
 import argparse
@@ -37,26 +37,42 @@ import pathlib
 import sys
 
 import bpy
-from bake_sprites import action_fcurves, assign_action, scale_translation
+from actions import (
+    action_fcurves,
+    assign_action,
+    bone_basis,
+    location_curves,
+    scale_translation,
+)
 from clip import (
     FPS_GRID,
     FPS_GRID_RANGE,
     Channel,
+    Fit,
     Grid,
     counted,
+    floor_lift,
+    ground_from,
     on_the_grid,
+    placed,
+    rest_floor,
     source_motion,
     whole_range,
 )
 from findings import Finding, guard, limits_from, write_report
-from framing import translation_scale
-from mathutils import Matrix
+from framing import Vec3, translation_scale
+from mathutils import Matrix, Vector
 from skeleton import Skeleton, bare_bone_name, unfilled_roles
+
+# `travel` is the same measurement `source.traveling` took at the fetch
+# boundary, so the two cannot mean different things by the word.
+from source import travel
 from strip_animation import skin_carrier
 from transfer import (
     Bone,
     LocalPose,
     Mat4,
+    mat_translation,
     offsets,
     quat_degrees,
     reference_pose,
@@ -106,6 +122,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "The clip's own rate, which the scene is set to. glTF stores key "
             "times in seconds, so the scene's rate decides which frames they "
             "land on, and `clip.fps_grid` reports that they landed whole."
+        ),
+    )
+    parser.add_argument(
+        "--travels",
+        required=True,
+        choices=["true", "false"],
+        help=(
+            "What the library declares about the source's root motion. "
+            "`clip.stride` reads a clip that travels against the source's own "
+            "travel, and reports itself switched off for one that does not."
         ),
     )
     parser.add_argument(
@@ -376,9 +402,11 @@ def measure(
     fitted: bpy.types.Action,
     grid: Grid,
     frames: range,
+    fit: Fit,
     limits: dict[str, float],
 ) -> list[Finding]:
-    """What this run reports: requirement 9 per bone, and requirement 3 per key.
+    """What this run reports: requirement 9 per bone, requirement 3 per key,
+    and requirement 4 on where the clip ended up.
 
     Every one is built in `clip.py`, which imports no `bpy` and has its own
     negatives, so the severity is never decided here.
@@ -388,7 +416,50 @@ def measure(
         *counted(channels(fitted), frames),
         *on_the_grid(grid.keys, scene.render.fps, FPS_GRID.at(limits)),
         whole_range(frames, grid.keys, FPS_GRID_RANGE.at(limits)),
+        *placed(fit, limits),
     ]
+
+
+def world_heads(
+    armature: bpy.types.Object, bones: list[str], frames: range
+) -> dict[str, list[Vec3]]:
+    """Where each bone's head sits at every frame, in world space.
+
+    The pose is evaluated frame by frame, which is the one thing the transfer
+    never does: where a foot lands is not something the keys say on their own.
+    """
+    scene = bpy.context.scene
+    tracked: dict[str, list[Vec3]] = {bone: [] for bone in bones}
+    for frame in frames:
+        scene.frame_set(frame)
+        for bone, path in tracked.items():
+            head = armature.matrix_world @ armature.pose.bones[bone].matrix
+            path.append(tuple(head.to_translation()))
+    return tracked
+
+
+def lift_root(
+    armature: bpy.types.Object, action: bpy.types.Action, bone: str, lift: float
+) -> None:
+    """Moves every root location key by `lift` meters of world height.
+
+    In world space, because the root's own channels are not world axes: on
+    this rig `Hips` local Z is world minus Z tilted 8.9 degrees, the same
+    reason `strip_root_motion` pins in world space.
+    """
+    curves = location_curves(action, bone)
+    if not curves:
+        sys.exit(
+            f"error: {bone} carries no location key, so nothing can lift "
+            f"{action.name} onto the floor"
+        )
+    step = bone_basis(armature, bone).inverted() @ Vector((0.0, 0.0, lift))
+    for curve, value in zip(curves, step, strict=True):
+        for point in curve.keyframe_points:
+            point.co[1] += value
+            point.handle_left[1] += value
+            point.handle_right[1] += value
+        curve.update()
 
 
 def export(out: pathlib.Path, armature: bpy.types.Object) -> None:
@@ -469,33 +540,57 @@ def retarget(args: argparse.Namespace) -> None:
         # exported GLB against this, and nothing downstream can reopen an FBX.
         source_world[frame] = pose_in_world(source, driven)
         poses[frame] = transfer(bones, object_matrix, source_world[frame], offset)
+    segment = (
+        segment_length(rest_ours, *skeleton.stride_segment),
+        segment_length(rest_source, *skeleton.stride_segment),
+    )
+    ratio = translation_scale(segment[1], segment[0])
+    top = skeleton.chain_top
+    source_travel = travel(tuple(mat_translation(source_world[f][top]) for f in frames))
     source_motion(
         {role: rest_source[role] for role in driven},
         source_world,
         bpy.context.scene.render.fps,
         bpy.context.scene.render.fps_base,
+        source_travel,
+        segment[1],
     ).write(args.source_motion)
 
-    stride = skeleton.stride_segment
-    ratio = translation_scale(
-        segment_length(rest_source, *stride), segment_length(rest_ours, *stride)
-    )
     keep_only(ours)
     # The source's own action outlives its armature, and the exporter would
     # write it into the GLB beside ours.
     bpy.data.actions.remove(action)
     fitted = write_keys(ours, args.name, poses)
     scale_translation(fitted, ratio)
+
+    root = our_roles[top]
+    toes = [our_roles[role] for role in skeleton.ground_roles]
+    floor = rest_floor(rest_ours, skeleton.ground_roles)
+    lift = floor_lift(ground_from(world_heads(ours, toes, frames), frames), floor)
+    lift_root(ours, fitted, root, lift)
     linear_and_constant(fitted)
-    write_report(measure(fitted, grid, frames, limits_from(args.limit)))
+
+    # Read back after the lift, so the report is what the file carries rather
+    # than what the lift was asked for.
+    tracked = world_heads(ours, [*toes, root], frames)
+    fit = Fit(
+        name=args.name,
+        ground=tuple(ground_from({toe: tracked[toe] for toe in toes}, frames)),
+        floor=floor,
+        travel=(travel(tuple(tracked[root])), source_travel),
+        segment=segment,
+        ratio=ratio,
+        travels=args.travels == "true",
+    )
+    write_report(measure(fitted, grid, frames, fit, limits_from(args.limit)))
     export(out, ours)
 
     worst = max(driven, key=lambda role: quat_degrees(offset[role]))
     print(
         f"retargeted {args.name}: {len(driven)} role(s) onto {rig_path.name} over "
         f"{len(frames)} frame(s), worst offset {worst} "
-        f"{quat_degrees(offset[worst]):.2f} deg, root travel sized by "
-        f"{ratio:.4f} -> {out}"
+        f"{quat_degrees(offset[worst]):.2f} deg, lengths sized by {ratio:.4f}, "
+        f"lifted {lift:.4f} m onto the floor -> {out}"
     )
 
 

@@ -181,6 +181,12 @@ pub struct ClipLimits {
     /// bake keeps that motion on purpose, so this is a bob rather than a
     /// residual and it has a limit of its own.
     pub root_bob_meters: f64,
+    /// How far the lowest toe of a clip may sit from the floor once the
+    /// retarget has snapped it down, in meters.
+    pub floor_snap_meters: f64,
+    /// How far a fitted clip's travel may sit from the source's travel sized
+    /// by the femur ratio, as a percent of that expected travel.
+    pub stride_percent: f64,
     /// How far a looping clip's last pose may sit from its first, per bone.
     pub loop_degrees: f64,
 }
@@ -436,6 +442,8 @@ impl Profile {
             ("clip.fps_grid_frames", self.clip.fps_grid_frames),
             ("clip.root_travel_meters", self.clip.root_travel_meters),
             ("clip.root_bob_meters", self.clip.root_bob_meters),
+            ("clip.floor_snap_meters", self.clip.floor_snap_meters),
+            ("clip.stride_percent", self.clip.stride_percent),
             ("clip.loop_degrees", self.clip.loop_degrees),
             // And a travel threshold of zero would call every clip traveling,
             // because no two frames of real motion sit at the same place.

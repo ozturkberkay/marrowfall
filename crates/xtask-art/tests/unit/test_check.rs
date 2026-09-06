@@ -54,8 +54,8 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        43,
-        "13 rig rules, the aim table, 13 mesh rules, 6 source rules and 10 clip rules"
+        46,
+        "13 rig rules, the aim table, 13 mesh rules, 6 source rules and 13 clip rules"
     );
     assert_eq!(
         ids.iter()
@@ -73,6 +73,9 @@ fn every_family_reaches_the_printed_rule_list() {
         "clip.interpolation",
         "clip.root_travel",
         "clip.root_bob",
+        "clip.floor_snap",
+        "clip.stride",
+        "clip.stride_ratio",
     ] {
         assert!(ids.contains(&expected), "{expected} is not in the list");
     }
@@ -82,6 +85,11 @@ fn every_family_reaches_the_printed_rule_list() {
 /// side of the contract is a recorded report: the real ones the refit of
 /// `run.glb` and the source check of `run.glb` wrote, committed the way
 /// `mesh.printability`'s recorded response is.
+/// What a refit of our own clip reads for `clip.stride_ratio`, as the Test
+/// Plan row for that rule states it. Not 1: the rig is exported, imported and
+/// exported again, and a GLB stores a joint position as an `f32`.
+const REFIT_RATIO: f64 = 1.000_020_438_473_890_2;
+
 fn a_recorded_report(stem: &str) -> Report {
     let path = repo_root()
         .join("crates/xtask-art/tests/fixtures")
@@ -96,14 +104,36 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
     assert_eq!((report.stage(), report.item()), ("retarget", "run"));
     assert_eq!(
         report.findings().len(),
-        66,
-        "22 bones on two rules, 21 keys on the grid, and its range"
+        69,
+        "22 bones on two rules, 21 keys on the grid, its range, and the three \
+         the fit's own placement reports"
     );
     assert!(!report.has_errors(), "the refit of our own clip is clean");
     assert_eq!(
         report.off_registry(&profile()),
         Vec::<String>::new(),
         "every finding says what `--list-rules` says"
+    );
+
+    // Requirement 4 on a refit: the same clip on the same rig, so the femur
+    // ratio is 1 and the snap leaves nothing under the toe. `run` does not
+    // travel, so the declaration switches `clip.stride` off rather than
+    // dividing by a source that never moved.
+    let placed = |rule: &str| {
+        report
+            .findings()
+            .iter()
+            .find(|finding| finding.rule == rule)
+            .unwrap_or_else(|| panic!("{rule} reported nothing"))
+    };
+    assert_eq!(placed("clip.floor_snap").measured, 0.0);
+    assert_eq!(placed("clip.stride").severity, Severity::Skipped);
+    // Not "about 1": the Test Plan states this reading to its last digit,
+    // and a fixture drifting off it is the recording going stale.
+    assert!(
+        (placed("clip.stride_ratio").measured - REFIT_RATIO).abs() < 1e-9,
+        "{:?}",
+        placed("clip.stride_ratio")
     );
 }
 
@@ -870,8 +900,8 @@ fn every_blender_rule_says_what_the_registry_publishes() {
     assert_eq!(spelled, published);
     assert_eq!(
         spelled.len(),
-        12,
-        "4 at the retarget, 2 at the bake and 6 at the fetch"
+        15,
+        "7 at the retarget, 2 at the bake and 6 at the fetch"
     );
 }
 

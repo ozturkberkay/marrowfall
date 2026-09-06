@@ -48,8 +48,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 import bpy
+from actions import action_fcurves, assign_action, bone_basis, location_curves
 from findings import Finding, guard, limits_from, write_report
 from framing import (
+    SAME_BODY,
     BakeSettings,
     Bounds,
     Framing,
@@ -61,15 +63,14 @@ from framing import (
     is_forearm,
     key_light_rotation,
     missing_bones,
+    off_this_body,
     pin_horizontally,
     rest_height,
-    root_channel_fault,
     root_kept,
     root_travel,
     sampled_frames,
-    translation_scale,
 )
-from mathutils import Matrix, Quaternion, Vector
+from mathutils import Quaternion, Vector
 from pydantic import BaseModel, ConfigDict
 
 
@@ -382,55 +383,6 @@ def roll_forearm(action: bpy.types.Action, bone: str, degrees: float) -> None:
     edit_rotation_curves(action, bone, lambda current: current @ roll)
 
 
-def assign_action(armature: bpy.types.Object, action: bpy.types.Action) -> None:
-    """Makes `action` drive `armature`.
-
-    Blender 4.4+ actions are slotted: the action alone is not enough, a slot
-    must be bound or the armature simply does not move. An action imported
-    alongside its own armature arrives pre-bound; one moved in from a different
-    file does not, so the binding has to be made explicitly.
-    """
-    armature.animation_data_create()
-    data = armature.animation_data
-    data.action = action
-
-    if not hasattr(data, "action_slot"):
-        return  # pre-4.4 Blender: assigning the action is sufficient
-
-    candidates = list(getattr(data, "action_suitable_slots", []) or [])
-    if not candidates:
-        candidates = list(getattr(action, "slots", []) or [])
-    if candidates:
-        data.action_slot = candidates[0]
-    elif hasattr(action, "slots"):
-        # A slot-less action animates nothing; give it one bound to this rig.
-        slot = action.slots.new(id_type="OBJECT", name=armature.name)
-        data.action_slot = slot
-
-
-def fcurve_owners(action: bpy.types.Action) -> list:
-    """Every collection of F-curves in an action, across Blender's two APIs.
-
-    Blender 4.4 introduced slotted actions, where curves live under
-    layers/strips/channelbags; older files expose `action.fcurves` directly.
-    Removing a curve needs the collection holding it, which is why this is the
-    primitive and `action_fcurves` is built on it.
-    """
-    if hasattr(action, "fcurves"):
-        return [action]
-    return [
-        channelbag
-        for layer in action.layers
-        for strip in layer.strips
-        for channelbag in getattr(strip, "channelbags", ())
-    ]
-
-
-def action_fcurves(action: bpy.types.Action) -> list[bpy.types.FCurve]:
-    """Every F-curve in an action."""
-    return [curve for owner in fcurve_owners(action) for curve in owner.fcurves]
-
-
 def rotation_curves(action: bpy.types.Action, bone: str) -> list[bpy.types.FCurve]:
     """A bone's four rotation curves in w, x, y, z order, or none at all.
 
@@ -469,22 +421,6 @@ def edit_rotation_curves(
         curve.update()
 
 
-def scale_translation(action: bpy.types.Action, ratio: float) -> None:
-    """Sizes every `location` curve in an action.
-
-    Every curve, not only the three that are non-zero today: a constant offset
-    is a length too, and it is wrong on a differently sized body.
-    """
-    for curve in action_fcurves(action):
-        if not curve.data_path.endswith(".location"):
-            continue
-        for point in curve.keyframe_points:
-            point.co[1] *= ratio
-            point.handle_left[1] *= ratio
-            point.handle_right[1] *= ratio
-        curve.update()
-
-
 def rest_points(armature: bpy.types.Object) -> list[Vec3]:
     """Rest bone heads, in the armature's own units.
 
@@ -501,55 +437,30 @@ def rest_points(armature: bpy.types.Object) -> list[Vec3]:
     ]
 
 
-def size_to_character(character: Character, animations: list[Animation]) -> None:
-    """Sizes each clip's translation to the body about to play it.
+def refuse_another_body(character: Character, animations: list[Animation]) -> None:
+    """Refuses a clip authored against a rig this character's size is not.
 
-    Rotation is proportion independent; `location` is not, it is a length in
-    the units of the rig the clip was authored against. Both rigs are on disk,
-    so the ratio is measured rather than declared, and cannot go stale.
+    The retarget already sized every length by the femur and `clip.stride`
+    measured that it did, so a clip reaching the bake is on this body and this
+    reads 0. Scaling here would size it a second time.
     """
     height = rest_height(rest_points(character.armature))
     for animation in animations:
         try:
-            ratio = translation_scale(animation.source_height, height)
+            off = off_this_body(animation.source_height, height)
         except ValueError as error:
-            sys.exit(f"error: sizing {animation.name}: {error}")
-        scale_translation(animation.action, ratio)
-        print(f"sized {animation.name} translation by {ratio:.4f}")
-
-
-def location_curves(action: bpy.types.Action, bone: str) -> list[bpy.types.FCurve]:
-    """A bone's three location curves in x, y, z order, or none at all.
-
-    Anything in between is refused rather than skipped: a bone silently left
-    out of the strip is one that keeps traveling.
-    """
-    path = f'pose.bones["{bone}"].location'
-    curves = sorted(
-        (fc for fc in action_fcurves(action) if fc.data_path == path),
-        key=lambda fc: fc.array_index,
-    )
-    fault = root_channel_fault(
-        bone, action.name, [len(fc.keyframe_points) for fc in curves]
-    )
-    if fault is not None:
-        sys.exit(f"error: {fault}")
-    return curves
+            sys.exit(f"error: measuring {animation.name}: {error}")
+        if off > SAME_BODY:
+            sys.exit(
+                f"error: {animation.name} was authored on a rig {off:.2e} off "
+                f"this character's size, {animation.source_height:.4f} against "
+                f"{height:.4f} in armature units. It reached the bake unfitted"
+            )
 
 
 def root_bones(armature: bpy.types.Object) -> list[str]:
     """Every bone with nothing above it, which is what carries travel."""
     return [bone.name for bone in armature.pose.bones if bone.parent is None]
-
-
-def bone_basis(armature: bpy.types.Object, bone: str) -> Matrix:
-    """What turns a root bone's `location` into a world displacement.
-
-    Composed, never applied: `matrix_world @ matrix_local` is the frame the
-    bone's own `location` is expressed in, and a root bone has no parent to
-    compose above it.
-    """
-    return (armature.matrix_world @ armature.data.bones[bone].matrix_local).to_3x3()
 
 
 def strip_root_motion(armature: bpy.types.Object) -> None:
@@ -792,7 +703,7 @@ def main() -> None:
 
     # Fix-ups must run after the actions are in, since they edit F-curves.
     apply_forearm_roll(character.armature, settings.forearm_roll)
-    size_to_character(character, animations)
+    refuse_another_body(character, animations)
     stripped = not args.keep_root_motion
     if stripped:
         strip_root_motion(character.armature)

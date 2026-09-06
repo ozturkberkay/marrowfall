@@ -30,12 +30,12 @@ Free of `bpy`, so it is unit tested with no Blender.
 """
 
 import pathlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 from findings import Comparison, Finding, Rule
-from framing import Frozen, bone_from_data_path
+from framing import Frozen, Vec3, bone_from_data_path
 from pydantic import model_validator
-from transfer import Mat4, Quat, mat_rotation
+from transfer import Mat4, Quat, mat_rotation, mat_translation
 
 LINEAR = "LINEAR"
 """The only interpolation the retarget writes. `keyframe_insert` writes
@@ -49,6 +49,20 @@ CHANNELS = "the F-curves of the output action, before export"
 GRID = "each key of the clip, against the frame grid its declared source_fps sets"
 
 RANGE = "the frames the retarget samples, against the source's own key times"
+
+GROUND = (
+    "every ground joint at every frame of the clip, in Blender Z-up world "
+    "space, after the floor snap"
+)
+
+SIZED = (
+    "the root joint's horizontal travel, first frame to last, against the "
+    "source's own travel sized by the femur ratio, in Blender Z-up world space"
+)
+
+SEGMENT = (
+    "the two stride_segment joints of each rig at rest, in Blender Z-up world space"
+)
 
 INTERPOLATION = Rule(
     id="clip.interpolation",
@@ -72,7 +86,27 @@ FPS_GRID_RANGE = Rule(
     id="clip.fps_grid.range", comparison=Comparison.EQ, unit="frames", measured_on=RANGE
 )
 
-RULES = (INTERPOLATION, REFERENCE_POSE_KEY, FPS_GRID, FPS_GRID_RANGE)
+FLOOR_SNAP = Rule(
+    id="clip.floor_snap", comparison=Comparison.LE, unit="meters", measured_on=GROUND
+)
+
+STRIDE = Rule(
+    id="clip.stride", comparison=Comparison.LE, unit="percent", measured_on=SIZED
+)
+
+STRIDE_RATIO = Rule(
+    id="clip.stride_ratio", comparison=Comparison.LE, unit="ratio", measured_on=SEGMENT
+)
+
+RULES = (
+    INTERPOLATION,
+    REFERENCE_POSE_KEY,
+    FPS_GRID,
+    FPS_GRID_RANGE,
+    FLOOR_SNAP,
+    STRIDE,
+    STRIDE_RATIO,
+)
 """Every rule the retarget reports, so it asks for one published limit each."""
 
 
@@ -198,6 +232,173 @@ def whole_range(sampled: range, keys: Iterable[float], rule: Rule) -> Finding:
     )
 
 
+class Ground(Frozen):
+    """One ground joint's world height at one frame of the clip."""
+
+    bone: str
+    frame: int
+    height: float
+    """Meters up, in Blender Z-up world space."""
+
+
+def ground_from(
+    paths: Mapping[str, Sequence[Vec3]], frames: Sequence[int]
+) -> list[Ground]:
+    """One record per ground joint per frame, out of the heads Blender read."""
+    return [
+        Ground(bone=bone, frame=frame, height=head[2])
+        for bone, path in sorted(paths.items())
+        for frame, head in zip(frames, path, strict=True)
+    ]
+
+
+def rest_floor(rest_world: dict[str, Mat4], roles: Iterable[str]) -> float:
+    """The height the rig's own rest pose puts its lowest ground joint at.
+
+    Not zero: on this skeleton the toe joint is the ball of the foot and rests
+    0.0307 m above the sole, so a clip snapped to zero would bury the
+    character. A rig filling none of them has no floor and reads 0, and
+    `on_the_floor` reports that clip as undefined rather than against it.
+    """
+    return min(
+        (mat_translation(rest_world[role])[2] for role in roles if role in rest_world),
+        default=0.0,
+    )
+
+
+def lowest(ground: Sequence[Ground]) -> Ground | None:
+    """The lowest any ground joint gets over the clip.
+
+    None when the source drives none of them, which `on_the_floor` reports as
+    a measurement that does not exist rather than as a floor already reached.
+    """
+    return min(ground, key=lambda at: at.height) if ground else None
+
+
+def floor_lift(ground: Sequence[Ground], floor: float) -> float:
+    """How far up the clip must move to stand where its own rig rests.
+
+    `floor` is the height that rig's rest pose puts its lowest ground joint
+    at, which is **not** zero: on this skeleton the toe joint is the ball of
+    the foot and rests 0.0307 m above the sole.
+
+    The whole clip and not one frame: a walk that never lifts its right foot
+    is still standing on the ground it plants its left one on.
+    """
+    low = lowest(ground)
+    return 0.0 if low is None else floor - low.height
+
+
+def on_the_floor(ground: Sequence[Ground], floor: float, rule: Rule) -> Finding:
+    """`clip.floor_snap`: what is left under the lowest toe once it is lifted."""
+    low = lowest(ground)
+    if low is None:
+        return rule.undefined(
+            "the whole clip",
+            "this clip drives no ground joint, so it has no rest height to be "
+            "read against",
+        )
+    off = low.height - floor
+    return rule.measured(
+        f"{low.bone} at frame {low.frame}",
+        abs(off),
+        f"{low.bone} at frame {low.frame} is the lowest any ground joint of "
+        f"the clip gets, {off:.4f} m from the rest height the snap aims at",
+    )
+
+
+def stride(
+    name: str, fitted: float, source: float, ratio: float, travels: bool, rule: Rule
+) -> Finding:
+    """`clip.stride`: how far the fit travels against how far its source did.
+
+    Relative, so the same 2 percent means the same thing on a 0.4 m shuffle
+    and a 2.3 m strafe. A clip the library declares in place has no travel to
+    be sized, so the declaration switches the rule off.
+    """
+    if not travels:
+        return rule.skipped(
+            name,
+            f"the library declares travels: false, so {name} has no source "
+            f"travel to be sized against",
+        )
+    wanted = source * ratio
+    if wanted <= 0.0:
+        return rule.undefined(
+            name,
+            f"the source of {name} travels {source:.4f} m, so there is no "
+            f"travel for the femur ratio to size",
+        )
+    return rule.measured(
+        name,
+        abs(fitted - wanted) / wanted * 100.0,
+        f"{name} travels {fitted:.4f} m against the {wanted:.4f} m its "
+        f"source's {source:.4f} m comes to at a femur ratio of {ratio:.4f}",
+    )
+
+
+def stride_ratio(
+    name: str, ours: float, theirs: float, ratio: float, rule: Rule
+) -> Finding:
+    """`clip.stride_ratio`: the femur ratio `clip.stride` is read against.
+
+    Records rather than gates: a Mixamo rig and a refit of our own clip are
+    both right, and `translation_scale` has already refused a ratio no two
+    rigs of one species could have. See the Test Plan row for the readings.
+    """
+    return rule.measured(
+        name,
+        ratio,
+        f"our stride segment is {ours:.4f} m against the source's "
+        f"{theirs:.4f} m, so every length of {name} is sized by {ratio:.4f}",
+    )
+
+
+class Fit(Frozen):
+    """Where a fitted clip ended up, as the three placement rules read it.
+
+    Everything here is read back off the pose after the keys are written:
+    where a foot lands and how far a root travels are not things the keys say
+    on their own.
+    """
+
+    name: str
+    ground: tuple[Ground, ...]
+    floor: float
+    """Where this rig's own rest pose stands, from `rest_floor`."""
+    travel: tuple[float, float]
+    """How far the fit's root and the source's hips each got, horizontally."""
+    segment: tuple[float, float]
+    """Our stride segment's length and the source's."""
+    ratio: float
+    """The femur ratio every location key was sized by."""
+    travels: bool
+    """What the library declares about the source, which picks whether
+    `clip.stride` measures or reports itself switched off."""
+
+
+def placed(fit: Fit, limits: dict[str, float]) -> list[Finding]:
+    """`clip.floor_snap`, `clip.stride` and `clip.stride_ratio`, on one fit."""
+    return [
+        on_the_floor(fit.ground, fit.floor, FLOOR_SNAP.at(limits)),
+        stride(
+            fit.name,
+            fit.travel[0],
+            fit.travel[1],
+            fit.ratio,
+            fit.travels,
+            STRIDE.at(limits),
+        ),
+        stride_ratio(
+            fit.name,
+            fit.segment[0],
+            fit.segment[1],
+            fit.ratio,
+            STRIDE_RATIO.at(limits),
+        ),
+    ]
+
+
 class Frame(Frozen):
     """Where the source's bones pointed at one instant of the clip."""
 
@@ -217,8 +418,9 @@ class SourceMotion(Frozen):
     record is the bridge. Blender writes it here, beside the report, and
     `crates/xtask-art/src/check/clip.rs` reads it with the output GLB.
 
-    Rotations only. Both rules read where a bone points and how far it is
-    rolled about its own length, and neither reads a position.
+    Two lengths ride along, because `clip.stride` and `clip.stride_ratio`
+    measure the fit against the same unreadable file and neither of them is a
+    rotation.
     """
 
     rest: dict[str, Quat]
@@ -226,6 +428,14 @@ class SourceMotion(Frozen):
     against its own rest, which is what makes the 174 degrees of convention
     difference cancel instead of failing every correct clip."""
     frames: tuple[Frame, ...]
+    travel: float
+    """How far the source's own root got from where it started, horizontally,
+    in meters. `clip.stride` sizes this by the femur ratio and holds the
+    delivered clip to it."""
+    stride_segment: float
+    """The source rig's two `stride_segment` joints at rest, apart, in meters.
+    `clip.stride_ratio` reads it against ours, which Rust takes off the rig GLB
+    rather than from here, so the two sides of the ratio have two readers."""
 
     @model_validator(mode="after")
     def every_frame_must_carry_every_role_the_rest_pose_has(self) -> "SourceMotion":
@@ -252,6 +462,8 @@ def source_motion(
     frames: dict[int, dict[str, Mat4]],
     fps: float,
     fps_base: float,
+    travel: float,
+    stride_segment: float,
 ) -> SourceMotion:
     """The sidecar, from the world matrices the transfer already read.
 
@@ -279,6 +491,8 @@ def source_motion(
         raise ValueError("a source motion with no frame measures nothing")
     first = min(frames)
     return SourceMotion(
+        travel=travel,
+        stride_segment=stride_segment,
         rest={role: mat_rotation(matrix, role) for role, matrix in rest.items()},
         frames=tuple(
             Frame(

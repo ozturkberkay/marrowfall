@@ -32,6 +32,8 @@ const SKELETON_FILE: &str = "art/skeletons/humanoid.toml";
 /// so the mirror rows have something to reflect.
 const SMALL: &str = r#"
 canonical = "ours"
+ground_roles = ["left_fin", "right_fin"]
+stride_segment = ["hips", "left_fin"]
 
 [conventions.ours]
 hips = "Hips"
@@ -202,6 +204,87 @@ fn the_committed_table_maps_every_role_in_every_convention() {
     // is what tells them apart.
     assert_eq!(table.bones("meshy").unwrap()["spine_lower"], "Spine");
     assert_eq!(table.bones("mixamo").unwrap()["spine_lower"], "Spine");
+}
+
+/// `clip.floor_snap` puts the lowest of these on the floor, and which joints
+/// stand on it is skeleton data: a quadruped has four of them.
+#[test]
+fn the_committed_table_names_both_toes_as_the_joints_that_stand_on_the_floor() {
+    assert_eq!(table().ground_roles(), ["left_toe", "right_toe"]);
+}
+
+#[test]
+fn a_ground_role_no_convention_maps_is_refused() {
+    let error = refused(&[(
+        r#"ground_roles = ["left_fin", "right_fin"]"#,
+        r#"ground_roles = ["left_fin", "flipper"]"#,
+    )]);
+
+    assert!(
+        error.contains(r#"ground_roles names ["flipper"]"#),
+        "got: {error}"
+    );
+}
+
+/// The lowest of one joint and itself is that joint, so the second row would
+/// add nothing and hide a foot nobody reads.
+#[test]
+fn the_same_ground_role_twice_is_refused() {
+    let error = refused(&[(
+        r#"ground_roles = ["left_fin", "right_fin"]"#,
+        r#"ground_roles = ["left_fin", "left_fin"]"#,
+    )]);
+
+    assert!(
+        error.contains("ground_roles names left_fin twice"),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn a_skeleton_with_no_ground_role_is_refused() {
+    let error = refused(&[(
+        r#"ground_roles = ["left_fin", "right_fin"]"#,
+        "ground_roles = []",
+    )]);
+
+    assert!(error.contains("no ground role"), "got: {error}");
+}
+
+/// `clip.stride_ratio` measures across these two on each rig, so a row that
+/// is not a role has no joint to measure and a repeat has no length at all.
+#[test]
+fn the_committed_table_names_the_femur_as_the_segment_a_step_is_sized_by() {
+    assert_eq!(
+        table().stride_segment().as_slice(),
+        ["left_upper_leg", "left_leg"]
+    );
+}
+
+#[test]
+fn a_stride_segment_role_no_convention_maps_is_refused() {
+    let error = refused(&[(
+        r#"stride_segment = ["hips", "left_fin"]"#,
+        r#"stride_segment = ["hips", "flipper"]"#,
+    )]);
+
+    assert!(
+        error.contains(r#"stride_segment names ["flipper"]"#),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn the_same_stride_segment_role_twice_is_refused() {
+    let error = refused(&[(
+        r#"stride_segment = ["hips", "left_fin"]"#,
+        r#"stride_segment = ["hips", "hips"]"#,
+    )]);
+
+    assert!(
+        error.contains("stride_segment names hips twice"),
+        "got: {error}"
+    );
 }
 
 #[test]

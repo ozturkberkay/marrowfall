@@ -264,6 +264,25 @@ impl SyntheticRig {
             * base_object()
     }
 
+    /// One joint's own transform, derived from the world ones the way an
+    /// exporter derives it.
+    fn local(&self, index: usize) -> DMat4 {
+        let parent = self
+            .index_of(self.joints[index].parent.as_deref())
+            .map_or_else(base_object, |parent| self.world(parent));
+        parent.inverse() * self.world(index) * self.joints[index].local_extra
+    }
+
+    /// One bone's own translation, as the file declares it. A fixture keying
+    /// a translation channel starts from here, and the object node's 0.01
+    /// scale is why a local step is 100x its world one.
+    pub fn rest_translation(&self, bone: &str) -> DVec3 {
+        let index = self
+            .index_of(Some(bone))
+            .unwrap_or_else(|| panic!("no {bone} in the fixture"));
+        self.local(index).to_scale_rotation_translation().2
+    }
+
     /// The rig as a glTF document. Local transforms are derived from the
     /// world ones, which is the direction an exporter works in, and against
     /// the base object transform, so turning or scaling the object node
@@ -275,11 +294,7 @@ impl SyntheticRig {
             "children": self.children(None),
         })];
         for (index, joint) in self.joints.iter().enumerate() {
-            let parent = self
-                .index_of(joint.parent.as_deref())
-                .map_or_else(base_object, |parent| self.world(parent));
-            let local = parent.inverse() * self.world(index) * joint.local_extra;
-            let mut node = json!({ "name": joint.name, "matrix": columns(local) });
+            let mut node = json!({ "name": joint.name, "matrix": columns(self.local(index)) });
             let children = self.children(Some(&joint.id));
             if !children.is_empty() {
                 node["children"] = json!(children);
@@ -333,6 +348,15 @@ impl SyntheticRig {
             .collect()
     }
 
+    /// Every bone's rest world position, in glTF Y-up. The fixture is built
+    /// from these, so this is what it was asked for rather than a reading.
+    pub fn rest_positions(&self) -> BTreeMap<String, DVec3> {
+        self.joints
+            .iter()
+            .map(|joint| (joint.name.clone(), joint.position))
+            .collect()
+    }
+
     /// Bone to the bone above it, for the bones that have one. Declaration
     /// order is parents first, so a caller can walk this in one pass.
     pub fn hierarchy(&self) -> Vec<(String, Option<String>)> {
@@ -383,11 +407,7 @@ impl SyntheticRig {
         }
         let mut nodes = vec![object];
         for (index, joint) in self.joints.iter().enumerate() {
-            let parent = self
-                .index_of(joint.parent.as_deref())
-                .map_or_else(base_object, |parent| self.world(parent));
-            let local = parent.inverse() * self.world(index) * joint.local_extra;
-            let (scale, rotation, translation) = local.to_scale_rotation_translation();
+            let (scale, rotation, translation) = self.local(index).to_scale_rotation_translation();
             let mut node = json!({
                 "name": joint.name,
                 "translation": translation.to_array(),
@@ -408,6 +428,22 @@ impl SyntheticRig {
                 channels.push(json!({
                     "sampler": samplers.len(),
                     "target": { "node": index + 1, "path": "rotation" },
+                }));
+                samplers.push(json!({
+                    "input": input,
+                    "output": output,
+                    "interpolation": clip.interpolation.as_str(),
+                }));
+            }
+            if let Some(keys) = clip.translations.get(&joint.name) {
+                let values: Vec<f32> = keys
+                    .iter()
+                    .flat_map(|key| key.as_vec3().to_array())
+                    .collect();
+                let output = buffers.push_floats(&values, "VEC3", keys.len());
+                channels.push(json!({
+                    "sampler": samplers.len(),
+                    "target": { "node": index + 1, "path": "translation" },
                 }));
                 samplers.push(json!({
                     "input": input,
@@ -456,6 +492,10 @@ impl SyntheticRig {
 pub struct Clip {
     pub seconds: Vec<f64>,
     pub rotations: BTreeMap<String, Vec<DQuat>>,
+    /// One bone's own translation per key, in the space its node declares.
+    /// Only the root carries one in a real clip, and it is the one thing that
+    /// moves a whole pose without moving the rest the file was exported at.
+    pub translations: BTreeMap<String, Vec<DVec3>>,
     /// What every sampler declares. The retarget writes `LINEAR`, and
     /// `CUBICSPLINE` is the one a reader must refuse rather than evaluate.
     pub interpolation: Interpolation,

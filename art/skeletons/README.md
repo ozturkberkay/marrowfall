@@ -65,11 +65,18 @@ axis points out of a hip socket. Our own figures are asserted against the
 committed GLB. The Mixamo one was measured by hand on a downloaded FBX under
 `../staging/`, which is gitignored, so no test can re-derive it.
 
-## Three more tables the retarget reads
+## Five more tables the retarget reads
 
 - `optional_roles` names the roles a source convention may leave out. The
   canonical convention has to fill them all, because it is what defines the
   role set.
+- `stride_segment` names the two roles a clip's travel is sized by. A femur,
+  because total height carries the head and the feet and neither takes a step.
+  `clip.stride_ratio` records the ratio it gives.
+- `ground_roles` names the roles that stand on the floor. The retarget lifts
+  every clip until the lowest of them over the whole clip stands where this
+  rig's rest pose stands, and `clip.floor_snap` reports what is left under it.
+  Data rather than a name, because a quadruped has four of them.
 - `[retarget_chain]` is the hierarchy the transfer walks, by role. It is not
   the rig's own bone hierarchy in `[profile.parents]`: a source with three
   spine bones drives a target with four, so the walk steps over any role the

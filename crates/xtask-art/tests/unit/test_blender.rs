@@ -515,7 +515,9 @@ fn blender_scripts() -> Vec<(String, String)> {
 fn no_blender_script_applies_an_object_transform() {
     let scripts = blender_scripts();
 
-    assert!(scripts.len() >= 7, "found {} scripts", scripts.len());
+    // Every module, not only the entry points: `actions.py` holds the
+    // F-curve edits both the retarget and the bake make.
+    assert!(scripts.len() >= 11, "found {} scripts", scripts.len());
     for (name, source) in &scripts {
         for line in code_lines(source) {
             assert!(

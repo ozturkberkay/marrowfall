@@ -36,7 +36,7 @@ regenerate (Mixamo's `Neck` axis sits 16.933 degrees off the direction to its
 own `Head`, and it always will) and because an in-place cycle wanders 0.0276 m
 against a strafe's 2.3117, which no one threshold reads.
 
-Eight `clip.*` rules run at the **retarget** boundary. `clip.swing` and
+Eleven `clip.*` rules run at the **retarget** boundary. `clip.swing` and
 `clip.twist` measure the delivered GLB against the file its motion was bought
 in; that file is an FBX, so `retarget_animation.py` writes the source's own
 world orientations to `art/staging/reports/retarget.<clip>.1.source.json` and
@@ -46,10 +46,31 @@ world orientations to `art/staging/reports/retarget.<clip>.1.source.json` and
 0.8 to 16.8 and lose four of them to rounding. `clip.loop` reads a looping
 clip's last pose against its first.
 
+`clip.floor_snap`, `clip.stride` and `clip.stride_ratio` are requirement 4.
+The retarget sizes every length by the femur and lifts the clip until its
+lowest toe stands where the rig's own rest pose stands. **The floor is not
+zero**: on this skeleton the toe joint is the ball of the foot and rests
+0.0307 m above the sole. `clip.stride` holds the fit's own travel to the
+source's travel sized by that same ratio, within 2 percent, and
+`clip.stride_ratio` puts the ratio itself on record. A clip the library
+declares in place has no travel to be sized, so `travels` reports
+`clip.stride` as `skipped`.
+
+All three are measured **at two sites**, like `clip.fps_grid`: once inside
+Blender on the pose it just evaluated, and once here in Rust on the file that
+was written from it. The Rust half is what gives them a negative control in
+CI, and it re-derives our own stride segment off the rig GLB rather than
+trusting the length the retarget wrote, so the two sides of the ratio have two
+readers. The source's own travel and femur cannot be re-derived, because the
+vendor file is an FBX, so both ride in the sidecar beside its rotations.
+
 `clip.root_travel` and `clip.root_bob` run at the **bake**, on the copy
 `strip_root_motion` has just pinned, because that copy is never written to
 disk. The strip pins the two horizontal axes and keeps the vertical one, so
 they are two rules with two limits: a residual of 0.02 m and a bob of 0.15.
+The bake scales nothing: the retarget already sized every length, so a clip
+whose own rig is not this character's size is refused there rather than
+rescaled a second time.
 
 Every mesh rule measures **world space first, then welded**, and says so in
 its finding. glTF splits one vertex at every UV seam, so a naive read of the

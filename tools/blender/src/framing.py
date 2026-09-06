@@ -447,6 +447,25 @@ def root_kept(name: str, bone: str, limits: dict[str, float]) -> list[Finding]:
     return findings
 
 
+SAME_BODY = 1e-4
+"""How far two rest heights may sit apart and still be one rig, as a ratio.
+
+Calibrated: the three committed clips read **1.227e-6** against the committed
+character, which is the `f32` a GLB stores a joint position in, and a clip
+bought on another rig is percent-scale out. This sits 81x over that noise and
+1,000x under the 12 percent a Mixamo femur differs by."""
+
+
+def off_this_body(source: float, target: float) -> float:
+    """How far a clip's own rig sits from the character's, as a ratio off 1.
+
+    The retarget sizes every length by the femur, so a clip that reaches the
+    bake is already on this body and this reads 0. Anything else arrived
+    unfitted, and scaling it here would size it twice.
+    """
+    return abs(translation_scale(source, target) - 1.0)
+
+
 def translation_scale(source: float, target: float) -> float:
     """How much to grow a clip's lengths for this character.
 

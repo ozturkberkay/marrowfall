@@ -83,6 +83,10 @@ class Skeleton(Frozen):
     stride_segment: tuple[str, str]
     """The two roles whose joints root travel is sized by. A femur, because
     total height carries the head and the feet and neither takes a step."""
+    ground_roles: tuple[str, ...]
+    """The roles that stand on the floor. The floor snap puts the lowest one
+    over the clip where this rig's own rest pose stands, which is not zero:
+    the toe joint here is the ball of the foot, 0.0307 m above the sole."""
 
     @classmethod
     def parse(cls, text: str) -> "Skeleton":
@@ -135,6 +139,17 @@ class Skeleton(Frozen):
                 f"stride_segment is {list(self.stride_segment)}, which is one "
                 f"joint twice and so has no length"
             )
+        return self
+
+    @model_validator(mode="after")
+    def the_ground_roles_must_be_roles_of_this_skeleton(self) -> "Skeleton":
+        if not self.ground_roles:
+            raise ValueError("a skeleton with no ground role has no floor to sit on")
+        if unknown := sorted(set(self.ground_roles) - self.roles):
+            raise ValueError(f"ground_roles names {unknown}, which are not roles")
+        for role in self.ground_roles:
+            if self.ground_roles.count(role) > 1:
+                raise ValueError(f"ground_roles names {role} twice")
         return self
 
     @model_validator(mode="after")

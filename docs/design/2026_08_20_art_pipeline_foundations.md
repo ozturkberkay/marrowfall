@@ -760,6 +760,7 @@ spec.ron
                [clip.swing  absolute vs the vendor file, every mapped bone]
                [clip.twist  change from each rig's own rest twist]
                [clip.foot_contact.*] [clip.floor_snap]
+               [clip.stride  against the source's travel] [clip.stride_ratio]
   ▼ bake     ─▶ [clip.root_travel, clip.root_bob  on the stripped copy,
                                                   max over frames]
                [bake.*  frame_count, non_empty, in_frame, pivot, forearm_roll,
@@ -791,8 +792,9 @@ spec.ron
 art/
   skeletons/humanoid.toml   # roles + [retarget_chain] / optional_roles
                             #       + [fingerprints] + stride_segment
-                            #       + NEW [profile]   every published limit
-                            #       + NEW [aim_table] world aim per role
+                            #       + NEW ground_roles  the joints on the floor
+                            #       + NEW [profile]     every published limit
+                            #       + NEW [aim_table]   world aim per role
   animations/library.ron    # + NEW source_fps and travels per animation
   animations/library.lock   # + NEW verdict on Fetched
   goldens/survivor/         # NEW  3 frames x 2 directions per clip, text
@@ -981,7 +983,9 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `clip.twist` | 15.0 deg, the same fixture plus the A-pose against T-pose residual | le |
 | `clip.root_travel` | 0.02 m, on the two horizontal axes the strip pins | le |
 | `clip.root_bob` | 0.15 m on the up axis, which the strip keeps. Calibrated on the four fitted clips at 0.0089 to 0.0535 m, so it sits 2.8x over the worst of them and still refuses the 0.2911 m the old strip sank a left strafe by | le |
-| `clip.floor_snap` | 5 mm | le |
+| `clip.floor_snap` | 5 mm from the rest height the snap aims at. Calibrated at both sites, per the Test Plan row: worst reading 6.7e-7 m, so it sits 7,493x over that and still refuses the 0.0599 m the same fit leaves with the lift removed | le |
+| `clip.stride` | 2.0 percent of the source's own travel sized by the femur ratio. Worst reading 2.4e-5 percent across both sites, so it sits 81,865x over that, and a fit sized five percent out reads 5.0 | le |
+| `clip.stride_ratio` | 100, further apart than two rigs of one skeleton can be, so every reading is `info`. Records rather than gates: the readings are in the Test Plan row | le |
 | `clip.foot_contact.skate` | 2.5 cm at 180 cm scale | le |
 | `clip.foot_contact.penetration` | 5 mm | le |
 | `clip.foot_contact.plants` | 1 per foot per cycle | ge |
@@ -1173,11 +1177,29 @@ for axis, value in zip("xyz", worst):
 ratio = femur_length(ours) / femur_length(theirs)   # not total height
 for key in every_location_key(action):              # the same operation
     key.co[1] *= ratio
-lift = -min(world_z(toe, f) for toe in TOES for f in frames)
+# The floor is where our own rest pose stands, not zero: the toe joint is the
+# ball of the foot and rests 0.0307 m above the sole.
+floor = min(world_z(toe, rest) for toe in GROUND)
+lift = floor - min(world_z(toe, f) for toe in GROUND for f in frames)
 offset_root_by(lift)
-finding("clip.floor_snap", measured=abs(lift_after), limit=0.005,
-        comparison="le", subject="lowest toe frame")
+finding("clip.floor_snap", measured=abs(lowest_after - floor), limit=0.005,
+        comparison="le", subject=f"{toe} at frame {f}")
+finding("clip.stride", measured=percent(travel(root), travel(hips) * ratio),
+        limit=2.0, comparison="le", subject=clip)
 ```
+
+`clip.stride` holds the fit to the source it was bought from: the root travels
+first frame to last, in world space and before any strip, against the source's
+own hips sized by the same femur ratio. A clip the library declares in place
+has no travel to be sized, so `travels` reports it `skipped`.
+
+All three findings are taken again in Rust on the delivered GLB, per rule
+four. The sidecar `retarget_animation.py` already writes for `clip.swing`
+therefore carries two lengths beside its rotations, `travel` and
+`stride_segment`, because the vendor file is an FBX no Rust reader opens. Our
+own femur is **not** written there: the Rust half measures it off the rig
+GLB's rest joints, so the two sides of the ratio have two readers. Correction
+7 records what that catches and what it cannot.
 
 Both run after `strip_root_motion`, which pins the two horizontal axes in
 world space (fact 5), so `clip.root_travel` can only ever read a residual and
@@ -1406,7 +1428,9 @@ it can honestly measure does fail. See the correction below.
 | `clip.object_transform` | the committed `run.glb` against `humanoid.glb`, exactly 2 subjects: `Armature` and `skin_carrier` | `[synth]` the same clip with the armature's 0.01 scale applied, which is what `transform_apply(scale=True)` leaves, **and** `[synth]` a translation channel on the armature object, which the static reading alone cannot see | the armature scale, byte identical at `0.009999999776482582` across six exported GLBs |
 | `clip.root_travel` | the three committed clips after the new strip: **1.8e-9 to 3.7e-9 m** on both horizontal axes, which is the `f32` an F-curve stores | `[art]` the shipped `strafe_left` output under the strip this replaces, which reads **0.0428 m on X** and 0.0170 on Y. Plus `[synth]` the same numbers through `framing.root_travel` | `run.glb`. Two axes, not three: the strip keeps the up one, which is `clip.root_bob` |
 | `clip.root_bob` | the four fitted clips: **0.0089 m** (`idle`), 0.0377 (`strafe_left`), 0.0391 (`walk_back`), 0.0535 (`run`) | `[synth]` a root sunk **0.3 m**, which is the shape of the 0.2911 m the old strip left on Z after pinning the root's own channels 0 and 1 | the same four readings. 0.15 m sits 2.8x over the worst of them and 1.9x under the sink it has to refuse |
-| `clip.floor_snap` | the new output | `[synth]` the same output with the snap step removed | the lowest toe frame |
+| `clip.floor_snap` | the three Mixamo fits, at both sites. The retarget's own evaluated pose reads **9.3e-9** (`walk_back`), 1.5e-8 (`strafe_right`) and 4.3e-8 m (`strafe_left`); `check/gltf_clip.rs` on the delivered file reads **3.9e-8** (`strafe_right`), 1.3e-7 (`walk_back`) and 6.7e-7 m (`strafe_left`). The refit of `run.glb` reads exactly 0 at the retarget, and the committed `run.glb` reads **0.0016536 m** in Rust | `[art]` the committed `idle.glb`, fitted before the snap existed, whose lowest toe hangs **0.0773 m** above the datum, and which a refit brings to 9.3e-9 m. Plus `[synth]` a delivered GLB whose root is keyed **0.06 m** below where its own rig rests, and the pair either side of the limit at 4 mm and 6 mm. `[mut]` the same retarget with `lift_root` removed, which reads **0.0599 m** on `strafe_left` | the lowest ground joint's frame, against the rest height the snap aims at. **Not zero**, and not the sole either: see correction 1 |
+| `clip.stride` | the three Mixamo fits: `strafe_left` **2.0378 m** against a source travel of 2.3117 sized by 0.8815, `strafe_right` 2.5477 against 2.8901, `walk_back` 1.2465 against 1.4140. The retarget reads **4.6e-6** (`walk_back`), 7.6e-6 (`strafe_right`) and 1.3e-5 percent (`strafe_left`); Rust on the delivered file reads **1.4e-5**, 1.5e-5 and 2.4e-5 percent on the same three | `[mut]` the same retarget with `scale_translation` removed, which reads **13.4409 percent** on `strafe_left` at both sites. Plus `[synth]` a fit whose root keys are scaled by 1.05, which reads 5.0 percent in Rust and in Python, and `[synth]` `travels: true` on a source that never moves, which is undefined rather than a division by nothing | T5's hand measurement, 2.3117 m times 0.8815 giving **2.0378 m**. `travels: false` reports `skipped` on the declaration, which the refit of `run.glb` records. What the two sites prove and cannot prove is correction 7 |
+| `clip.stride_ratio` | the same three at **0.8815161761312765** in the retarget and **0.8815163067471855** in Rust, off 0.3578832274114926 m of our femur against the vendor's 0.40599429901464934. The refit of `run.glb` records **1.0000204384738902**, which `crates/xtask-art/tests/fixtures/retarget.run.1.json` carries and a unit test pins to 1e-9 | none, `info` only, per the Terminology exemption | the two `stride_segment` joints of each rig at rest. Not 1 on a refit: the rig is exported, imported and exported again, and a GLB stores a joint position as an `f32` |
 | `clip.foot_contact.plants` | the new output | `[synth]` an in-place clip, which yields zero contacts | `ge 1` per foot per cycle |
 | `clip.foot_contact.skate` | the new output | `[synth]` a clip whose planted foot is translated 5 cm during stance | real mocap 0.10 cm per frame |
 | `clip.foot_contact.penetration` | the new output | `[synth]` the root lowered 2 cm | 5 mm |
@@ -2177,6 +2201,120 @@ changes a sprite rate, or asserts a strict T-pose bind.
     severity included, and still holds it to the rule's own `measured_on`. A
     finding claiming to be undefined on another rule's space is named back as
     before.
+
+### Corrections T8 made to this document
+
+1. **The floor is not zero, and snapping to zero would bury the character.**
+   The Logic sketch says `lift = -min(world_z(toe))` and the T8 row says "snap
+   the lowest foot frame to Z equals 0". Both put the toe joint at zero.
+   Measured on the committed rig: `LeftToeBase` rests **0.031081 m** above
+   zero and `RightToeBase` 0.030723, because on this
+   skeleton the toe joint is the **ball of the foot** and there is no toe-tip
+   joint. Zero is where the sole is: `model.glb`'s mesh spans exactly 0 to
+   1.700000 m in world space, so the rest pose is already standing on the
+   ground.
+
+   The datum is therefore the rig's own rest pose: `floor` is the lower of the
+   two resting toes and the lift puts the clip's lowest toe frame there. The
+   evidence that this is the right datum is the committed art. `run.glb` and
+   `walk_back.glb` reach **0.029066** and **0.029429 m** at their lowest,
+   which is 1.7 and 1.3 mm under that floor and inside the 5 mm limit;
+   against zero they would read 29 mm and be rejected, and the fix would be to
+   sink every clip three centimeters into the tile.
+
+   The rule earns its place on the same art. `idle.glb` was fitted before any
+   snap existed and its lowest toe hangs **0.0773 m** above the datum, which
+   is the character standing in the air; a refit through the new retarget
+   brings it to 9.3e-9 m. That is the rule's `[art]` negative and a
+   `cargo art fetch idle --force` away from being fixed.
+
+   **What this datum is not.** It is not "the sole touches the floor". It is
+   "the toe joint returns to its rest height and never goes below it", and the
+   two coincide only while the foot's orientation at the clip's lowest frame
+   matches rest. That holds for today's plantigrade clips, and it fails for a
+   pointed toe at the lowest frame: a kick, a jump landing or a sprint
+   push-off would be lifted onto its toe tip and float, and a heel strike
+   would sink its heel. The rule's message therefore says what it measures,
+   "the distance from the rest height the snap aims at", rather than claiming
+   a floor. The true sole datum arrives with T9's
+   `clip.foot_contact.penetration`, which reads the mesh rather than a joint.
+
+2. **`clip.floor_snap` is measured at two sites, like `clip.fps_grid`.** The
+   retarget reads the pose it evaluated, which is the only place the lift
+   itself is visible, and `check/gltf_clip.rs` reads the delivered file's own
+   joint transforms per frame, which is where an export that resampled the
+   root would show. Both are Blender Z-up world space, because the file's
+   rest pose comes out of the same graph: the exporter writes the armature at
+   rest already, which `clip.twist` requires and `test_blender.rs` enforces.
+   The Rust half is what gives the rule a negative control in CI, per rule
+   four, and its calibration pair sits either side of the published 5 mm at
+   4 mm and 6 mm.
+
+   `clip.stride` and `clip.stride_ratio` are read at both sites for the same
+   reason, and the Rust half adds one thing the Python half cannot: it
+   re-derives **our own** stride segment off the rig GLB's rest joints rather
+   than reading the length the retarget wrote, so a wrong `segment_length`
+   is caught. It does not catch a wrong choice of `stride_segment` roles,
+   because that choice sits on both sides of the ratio. The source's own
+   travel and femur cannot be re-derived at all, because the vendor file is
+   an FBX, so both ride in the sidecar beside its rotations and
+   `check/motion.rs` refuses a travel below zero or a segment of no length.
+
+3. **The travel band is `clip.stride`, and the femur ratio is
+   `clip.stride_ratio` beside it.** The row asks for a rule rather than a
+   printed line and names neither. `clip.stride` reads the fit's own root
+   travel against the source's sized by the femur, as a **relative**
+   difference so 2 percent means the same on a 0.4 m shuffle and a 2.3 m
+   strafe. `clip.stride_ratio` records the ratio itself against a ceiling of
+   100, the way `source.wander` records at 1000 m, because a Mixamo rig and a
+   refit of our own clip are both right and no threshold reads both.
+
+   Both are calibrated on a real local fit of the three FBX files on disk,
+   which reproduces T5's hand measurement. Every reading is written once, in
+   the Test Plan row, so no comment anywhere can drift off it.
+
+4. **Which roles stand on the floor is skeleton data, like the stride
+   segment.** T5's correction 15 put `stride_segment` in the skeleton file for
+   the same reason, and a quadruped's floor is four joints, not two. So
+   `humanoid.toml` gains `ground_roles`, refused at load time if it names
+   something that is not a role, names one twice, or is empty. Both readers
+   validate it: `skeleton.py` for the retarget and `check/aim.rs` for the file
+   side, which is the reader that already owns the role tables.
+
+5. **The bake's own sizing is now a refusal, and its band is 1e-4 rather than
+   1e-6.** `size_to_character` scaled every clip's translation by a
+   **total-height** ratio at bake time, which is the metric T5 replaced and a
+   second scaling on top of the femur one. Measured on the three committed
+   clips against the committed character: **1.2270508611411657e-06**, the
+   same on all three, which is the `f32` a GLB stores a joint position in and
+   not a real difference. So the bake refuses a clip that is not on this body
+   instead of quietly rescaling it, and the band is 1e-4: 81x over that noise
+   and 1,000x under the 12 percent a Mixamo femur differs by. A band of 1e-6
+   would reject all three committed clips.
+
+6. **The rest heights the bake compares are armature units, not meters.** They
+   come from `rest_points`, which reads `head_local` on purpose so an object
+   scale is not counted twice, so the committed pair reads 166.5169 against
+   166.5167 rather than 1.665. The refusal says "in armature units" rather
+   than "m".
+
+7. **What `clip.stride` proves, and what it cannot.** Its two sides are
+   algebraically identical up to float noise: `write_keys` copies the source's
+   own root world position, and `scale_translation` multiplies every location
+   key by `ratio`, so the fit's travel *is* the source's travel times `ratio`
+   by construction. That is why every reading in the Test Plan row is float
+   noise rather than anything a body would produce. The rule is still worth
+   its place, because it gates the **write path**: with `scale_translation`
+   removed the same fit reads 13.4409 percent, and the rule also catches a
+   key dropped, resampled or rescaled between `transfer.py` and the delivered
+   GLB.
+
+   It cannot catch a wrong choice of `stride_segment` roles. Both segments
+   are measured across the same two roles, so naming the tibia or the whole
+   leg changes `ratio` and moves both sides of the comparison together. What
+   guards that choice is `clip.stride_ratio` recording the number and a human
+   reading it, plus T9's `clip.foot_contact.skate`, which reads a planted
+   foot against the ground and does not go through `ratio` at all.
 
 ## Documentation Changes
 

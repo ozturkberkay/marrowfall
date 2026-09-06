@@ -28,6 +28,7 @@ SKELETON_TOML = """
 canonical = "meshy"
 optional_roles = []
 stride_segment = ["spine_lower", "spine_upper"]
+ground_roles = ["hips", "left_arm"]
 
 [conventions.meshy]
 hips = "Hips"
@@ -235,6 +236,37 @@ def test_a_stride_segment_of_one_joint_twice_is_refused() -> None:
         )
 
 
+def test_the_ground_roles_are_the_joints_the_floor_snap_reads() -> None:
+    assert a_skeleton().ground_roles == ("hips", "left_arm")
+
+
+def test_a_ground_role_that_is_not_a_role_is_refused() -> None:
+    with pytest.raises(ValidationError, match="ground_roles names"):
+        edited(
+            (
+                'ground_roles = ["hips", "left_arm"]',
+                'ground_roles = ["hips", "flipper"]',
+            )
+        )
+
+
+def test_the_same_ground_role_twice_is_refused() -> None:
+    """The lowest of one joint and itself is that joint, so the second row
+    would add nothing and hide a missing foot."""
+    with pytest.raises(ValidationError, match="names hips twice"):
+        edited(
+            (
+                'ground_roles = ["hips", "left_arm"]',
+                'ground_roles = ["hips", "hips"]',
+            )
+        )
+
+
+def test_a_skeleton_with_no_ground_role_is_refused() -> None:
+    with pytest.raises(ValidationError, match="no ground role"):
+        edited(('ground_roles = ["hips", "left_arm"]', "ground_roles = []"))
+
+
 # --- The retargeting chain ------------------------------------------------
 
 
@@ -408,6 +440,7 @@ def test_the_committed_skeleton_file_loads() -> None:
     assert len(roles.aim_table) == 22, "one aim per role, torso included"
     assert set(roles.roles) - set(roles.retarget_chain) == {"hips"}
     assert roles.stride_segment == ("left_upper_leg", "left_leg")
+    assert roles.ground_roles == ("left_toe", "right_toe")
     assert roles.optional_roles == (), "both conventions fill every role"
 
 

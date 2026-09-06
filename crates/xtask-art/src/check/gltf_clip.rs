@@ -24,7 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, Result, bail, ensure};
 use glam::{DMat4, DQuat, DVec3};
 
-use super::gltf_world::{gltf_to_blender_rotation, node_name, rotation_of, world_nodes};
+use super::gltf_world::{
+    gltf_to_blender, gltf_to_blender_rotation, node_name, rotation_of, world_nodes,
+};
 use super::motion::{Frame, Motion};
 
 /// How close two key times must be to count as the same frame, in seconds.
@@ -43,16 +45,7 @@ const SAME_FRAME_SECONDS: f64 = 1e-6;
 pub fn read(bytes: &[u8], bones: &BTreeMap<String, String>) -> Result<Motion> {
     let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
     let document = &gltf.document;
-    let joints: BTreeSet<usize> = document
-        .skins()
-        .flat_map(|skin| skin.joints())
-        .map(|joint| joint.index())
-        .collect();
-    ensure!(
-        !joints.is_empty(),
-        "the file declares no skin, so it holds no skeleton"
-    );
-
+    let joints = joint_nodes(document)?;
     let scene = world_nodes(document)?;
     // Node index rather than name, so a mesh node sharing a bone's name
     // cannot answer for it.
@@ -71,12 +64,7 @@ pub fn read(bytes: &[u8], bones: &BTreeMap<String, String>) -> Result<Motion> {
         .collect();
 
     let channels = Channels::read(document, gltf.blob.as_deref())?;
-    let times = channels.key_times(&joints);
-    ensure!(
-        !times.is_empty(),
-        "the file carries no animation, so it holds no clip"
-    );
-
+    let times = key_grid(&channels, &joints)?;
     let tree = Tree::of(&scene)?;
     let by_role = |world: &BTreeMap<usize, DMat4>| {
         role_nodes
@@ -122,21 +110,9 @@ pub struct Keys {
 pub fn keys(bytes: &[u8]) -> Result<Keys> {
     let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
     let document = &gltf.document;
-    let joints: BTreeSet<usize> = document
-        .skins()
-        .flat_map(|skin| skin.joints())
-        .map(|joint| joint.index())
-        .collect();
-    ensure!(
-        !joints.is_empty(),
-        "the file declares no skin, so it holds no skeleton"
-    );
+    let joints = joint_nodes(document)?;
     let channels = Channels::read(document, gltf.blob.as_deref())?;
-    let times = channels.key_times(&joints);
-    ensure!(
-        !times.is_empty(),
-        "the file carries no animation, so it holds no clip"
-    );
+    let times = key_grid(&channels, &joints)?;
     let (first, last) = (times[0], times[times.len() - 1]);
     let ends = world_nodes(document)?
         .iter()
@@ -155,6 +131,139 @@ pub fn keys(bytes: &[u8]) -> Result<Keys> {
         seconds: times.iter().map(|time| time - first).collect(),
         ends,
     })
+}
+
+/// The lowest one joint gets over a clip, and when it got there.
+#[derive(Debug, Clone)]
+pub struct Lowest {
+    pub joint: String,
+    /// Meters up, in Blender Z-up world space.
+    pub height: f64,
+    /// Seconds from the file's own first key.
+    pub seconds: f64,
+}
+
+/// How low a clip's ground joints get, and where the floor is for them.
+#[derive(Debug, Clone)]
+pub struct Ground {
+    /// The height the rig's own rest pose puts its lowest ground joint at.
+    /// **Not zero**: on this skeleton the toe joint is the ball of the foot
+    /// and rests 0.0307 m above the sole, so snapping it to zero would bury
+    /// the character.
+    pub floor: f64,
+    pub lowest: Vec<Lowest>,
+}
+
+/// How low each named joint gets over the clip, against the rest height its
+/// own graph puts it at, in Blender Z-up world space.
+///
+/// `clip.floor_snap`'s file-side half: between the pose the retarget
+/// evaluated and this GLB sit the interpolation pass and the exporter. The
+/// rest term is the graph as declared, so the export writes the armature at
+/// rest, which `clip.twist` already requires. A joint the file lacks is
+/// absent rather than reported as zero.
+pub fn ground(bytes: &[u8], joints: &BTreeSet<String>) -> Result<Ground> {
+    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
+    let document = &gltf.document;
+    let skinned = joint_nodes(document)?;
+    let scene = world_nodes(document)?;
+    let named: BTreeMap<usize, (String, f64)> = scene
+        .iter()
+        .filter(|entry| skinned.contains(&entry.node.index()))
+        .map(|entry| {
+            (
+                entry.node.index(),
+                (node_name(&entry.node), height_of(entry.world)),
+            )
+        })
+        .filter(|(_, (name, _))| joints.contains(name))
+        .collect();
+    let channels = Channels::read(document, gltf.blob.as_deref())?;
+    let times = key_grid(&channels, &skinned)?;
+    let tree = Tree::of(&scene)?;
+    let first = times[0];
+    let mut lowest: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
+    for seconds in &times {
+        let world = tree.world_at(&channels, *seconds);
+        for node in named.keys() {
+            let height = height_of(world[node]);
+            let at = lowest.entry(*node).or_insert((height, seconds - first));
+            if height < at.0 {
+                *at = (height, seconds - first);
+            }
+        }
+    }
+    Ok(Ground {
+        floor: named
+            .values()
+            .map(|(_, rest)| *rest)
+            .fold(f64::INFINITY, f64::min),
+        lowest: named
+            .into_iter()
+            .map(|(node, (joint, _))| Lowest {
+                joint,
+                height: lowest[&node].0,
+                seconds: lowest[&node].1,
+            })
+            .collect(),
+    })
+}
+
+/// One world transform's height. glTF is Y-up, so that is its Y.
+fn height_of(world: DMat4) -> f64 {
+    gltf_to_blender(world.w_axis.truncate()).z
+}
+
+/// How far one joint gets from where it started, horizontally, in meters.
+///
+/// The delivered file's own world positions at its first and last key, in
+/// Blender Z-up world space. `source.travel` takes the same reading on the
+/// vendor clip, so `clip.stride` holds two like things against each other.
+/// Where it ends up, not how far it wandered: a cycle that sways and returns
+/// has traveled nowhere.
+pub fn travel(bytes: &[u8], joint: &str) -> Result<f64> {
+    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
+    let document = &gltf.document;
+    let skinned = joint_nodes(document)?;
+    let scene = world_nodes(document)?;
+    let node = scene
+        .iter()
+        .find(|entry| skinned.contains(&entry.node.index()) && node_name(&entry.node) == joint)
+        .with_context(|| format!("the file carries no joint named {joint}"))?
+        .node
+        .index();
+    let channels = Channels::read(document, gltf.blob.as_deref())?;
+    let times = key_grid(&channels, &skinned)?;
+    let tree = Tree::of(&scene)?;
+    let at = |seconds: f64| {
+        gltf_to_blender(tree.world_at(&channels, seconds)[&node].w_axis.truncate()).truncate()
+    };
+    Ok((at(times[times.len() - 1]) - at(times[0])).length())
+}
+
+/// Every node the file's skins call a joint. A file with none holds no
+/// skeleton, and every reader here needs one.
+fn joint_nodes(document: &gltf::Document) -> Result<BTreeSet<usize>> {
+    let joints: BTreeSet<usize> = document
+        .skins()
+        .flat_map(|skin| skin.joints())
+        .map(|joint| joint.index())
+        .collect();
+    ensure!(
+        !joints.is_empty(),
+        "the file declares no skin, so it holds no skeleton"
+    );
+    Ok(joints)
+}
+
+/// The clip's own key times, in order. A file with none holds no clip.
+fn key_grid(channels: &Channels, joints: &BTreeSet<usize>) -> Result<Vec<f64>> {
+    let times = channels.key_times(joints);
+    ensure!(
+        !times.is_empty(),
+        "the file carries no animation, so it holds no clip"
+    );
+    Ok(times)
 }
 
 /// The node graph, parents first, with each node's own declared transform.

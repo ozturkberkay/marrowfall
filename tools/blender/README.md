@@ -21,11 +21,12 @@ under `crates/xtask-art/src/check/`.
 | Module | `bpy` | What it is |
 | --- | --- | --- |
 | `transfer.py` | no | the retarget maths: world matrices in, local poses out |
-| `clip.py` | no | what the retarget reports: the two counts, the frame grid, and the source motion sidecar |
+| `clip.py` | no | what the retarget reports: the two counts, the frame grid, where the fit ended up, and the source motion sidecar |
 | `source.py` | no | what a vendor clip is, measured before anything is fitted to it |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
 | `framing.py` | no | the bake's camera geometry, frame sampling, and the root strip |
 | `findings.py` | no | the Finding record, the rule, the report, and the success sentinel |
+| `actions.py` | yes | the F-curve edits the retarget and the bake both make |
 | `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
@@ -76,6 +77,33 @@ flattening it would leave a jump permanently on the ground. So it has a rule
 and a limit of its own, `clip.root_bob` at 0.15 m: the fitted clips read
 0.0089 to 0.0535 there, and the 0.2911 m the old strip sank a left strafe by
 is still refused.
+
+## Why the floor is not zero
+
+`clip.floor_snap` puts a clip's lowest toe frame where the rig's own rest pose
+puts it, which on this skeleton is **0.0307 m up**: the toe joint is the ball
+of the foot and there is no toe-tip joint, so zero is where the sole is.
+Measured, `model.glb`'s mesh spans exactly 0 to 1.700000 m in world space and
+`LeftToeBase` rests at 0.031081. Snapping the joint itself to zero would sink
+every clip three centimeters into the tile, and it would reject the committed
+`run.glb`, which already stands 1.7 mm under that floor.
+
+The lift is one constant per clip, taken over the whole clip rather than per
+frame: a walk that never lifts its right foot is still standing on the ground
+it plants its left one on. It is applied to the root's location keys in world
+space, for the same reason `strip_root_motion` pins in world space, and the
+pose is then evaluated again so the report is what the file carries rather
+than what the lift was asked for.
+
+## Why the bake scales nothing
+
+`retarget_animation.py` sizes every location key once, by the femur, and
+`clip.stride` measures that the fit travels what its source did. So a clip
+reaching `bake_sprites.py` is already on this body: measured, the three
+committed clips read **1.227e-6** away from the character's own rest height,
+which is the `f32` a GLB stores a joint position in. The bake therefore
+refuses a clip further out than `framing.SAME_BODY` instead of rescaling it,
+because scaling there would size the same lengths twice.
 
 ## Why one script writes a sidecar
 

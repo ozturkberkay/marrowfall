@@ -1,21 +1,27 @@
 //! The clip gates: what a fitted clip must be, measured against the file the
 //! motion was bought in.
 //!
-//! Ten rules, measured at three boundaries.
+//! Thirteen rules, measured at three boundaries.
 //!
-//! - [`INTERPOLATION`], [`REFERENCE_POSE_KEY`] and [`FPS_GRID_RANGE`] are
-//!   counted inside Blender at the retarget, because none of the three
-//!   survives the export: the glTF exporter resamples every channel and
-//!   writes its own interpolation, so a Bezier action exports as `LINEAR`,
-//!   and a render range is a scene property no file carries. `clip.py` does
-//!   the counting with no `bpy`, so those have a negative control in CI.
-//! - [`SWING`], [`TWIST`], [`OBJECT_TRANSFORM`], [`FPS_GRID`] and [`LOOP`]
-//!   are measured here, in Rust, on the delivered GLB. Between `transfer.py`
-//!   and that file sit `write_keys`, the travel scale, the interpolation pass
+//! - [`INTERPOLATION`] and [`REFERENCE_POSE_KEY`] are counted inside Blender
+//!   at the retarget, because neither survives the export: the glTF exporter
+//!   resamples every channel and writes its own interpolation. [`FPS_GRID`],
+//!   [`FPS_GRID_RANGE`], [`FLOOR_SNAP`], [`STRIDE`] and [`STRIDE_RATIO`] are
+//!   reported there too. `clip.py` does the arithmetic with no `bpy`, so all
+//!   seven have a negative control in CI.
+//! - [`SWING`], [`TWIST`], [`OBJECT_TRANSFORM`], [`FPS_GRID`], [`LOOP`],
+//!   [`FLOOR_SNAP`], [`STRIDE`] and [`STRIDE_RATIO`] are measured here, in
+//!   Rust, on the delivered GLB. Between `transfer.py` and that file sit
+//!   `write_keys`, the femur scale, the floor snap, the interpolation pass
 //!   and the exporter, and nothing else measures any of them.
 //! - [`ROOT_TRAVEL`] and [`ROOT_BOB`] are measured at the bake, in
 //!   `bake_sprites.py`, because they read the copy `strip_root_motion` has
 //!   just pinned and that copy is never written to disk.
+//!
+//! Four rules are in two of those lists on purpose. The retarget reads what
+//! only the action and the pose it evaluated carry, and this module reads the
+//! file that was written from them. [`FPS_GRID_RANGE`] stays Blender-only:
+//! a render range is a scene property no file carries.
 //!
 //! Rust owns every rule either way. The ids, units, limits and spaces live
 //! here so `cargo art check --list-rules` prints them, and
@@ -64,12 +70,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::Result;
-use glam::{DMat4, DQuat};
+use anyhow::{Context as _, Result};
+use glam::{DMat4, DQuat, DVec3};
 
 use super::aim::AimTable;
 use super::gltf_world::Skeleton;
-use super::motion::Motion;
+use super::motion::{Motion, SourceLengths};
 use super::profile::Profile;
 use super::{Comparison, Finding, Rule, gltf_clip, relative_to};
 
@@ -84,6 +90,22 @@ const RELATIVE: &str = "Blender Z-up world space, the output bone against the so
 const NODES: &str = "every node of the clip that is not a joint, the armature and the skin \
                      carrier alike: its own transform against the committed rig, and whether \
                      any channel drives it";
+
+const GROUND: &str = "every ground joint at every frame of the clip, in Blender Z-up world \
+                      space, after the floor snap";
+
+const SIZED: &str = "the root joint's horizontal travel, first frame to last, against the \
+                     source's own travel sized by the femur ratio, in Blender Z-up world space";
+
+const SEGMENT: &str = "the two stride_segment joints of each rig at rest, in Blender Z-up \
+                       world space";
+
+/// Further apart than two rigs of one skeleton can be.
+///
+/// [`STRIDE_RATIO`] records rather than gates, and every finding is still
+/// read against a limit, so this is the ceiling that cannot be crossed. The
+/// readings are in the Test Plan row.
+const A_HUNDREDFOLD: f64 = 100.0;
 
 /// How far two frames may sit apart and still be the same instant, in
 /// seconds. A tenth of a millisecond, which is 0.3 percent of a frame at 30
@@ -257,6 +279,49 @@ pub const ROOT_BOB: Rule = Rule {
     limit: |profile| profile.clip.root_bob_meters,
 };
 
+/// A clip's lowest ground joint returns to the height its rig rests at.
+///
+/// The retarget lifts the whole clip until it does, and this is what is left
+/// under that joint. A clip fitted an inch into the tile or an inch above it
+/// looks the same alone and wrong beside every other clip on it. Measured at
+/// two sites, like [`FPS_GRID`]: the retarget sees the snap itself, and this
+/// module sees an export that resampled the root.
+pub const FLOOR_SNAP: Rule = Rule {
+    id: "clip.floor_snap",
+    comparison: Comparison::Le,
+    unit: "meters",
+    space: GROUND,
+    limit: |profile| profile.clip.floor_snap_meters,
+};
+
+/// The clip travels as far as its source did, sized by the femur.
+///
+/// A longer thigh takes a longer step, so a clip bought on a taller rig is
+/// sized before its travel means anything on this body, and total height
+/// cannot say by how much: it carries the head and the feet, and neither
+/// takes a step. Relative, so 2 percent means the same on a 0.4 m shuffle
+/// and a 2.3 m strafe. See the Test Plan row.
+pub const STRIDE: Rule = Rule {
+    id: "clip.stride",
+    comparison: Comparison::Le,
+    unit: "percent",
+    space: SIZED,
+    limit: |profile| profile.clip.stride_percent,
+};
+
+/// And what that femur ratio was, on record rather than printed.
+///
+/// Records, never gates: a Mixamo rig and a refit of our own clip are both
+/// correct and no threshold reads both. The number is the point, and
+/// [`STRIDE`] is meaningless without it. See the Test Plan row.
+pub const STRIDE_RATIO: Rule = Rule {
+    id: "clip.stride_ratio",
+    comparison: Comparison::Le,
+    unit: "ratio",
+    space: SEGMENT,
+    limit: |_| A_HUNDREDFOLD,
+};
+
 /// A looping clip ends in the pose it started in.
 ///
 /// Playback jumps from the last key back to the first, so a pose that has not
@@ -271,11 +336,14 @@ pub const LOOP: Rule = Rule {
 };
 
 /// Every rule this module owns, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 10] = [
+pub const RULES: [&Rule; 13] = [
     &INTERPOLATION,
     &REFERENCE_POSE_KEY,
     &FPS_GRID,
     &FPS_GRID_RANGE,
+    &FLOOR_SNAP,
+    &STRIDE,
+    &STRIDE_RATIO,
     &SWING,
     &TWIST,
     &OBJECT_TRANSFORM,
@@ -298,26 +366,44 @@ pub struct Fitted<'a> {
     pub repo_root: &'a Path,
     pub source_fps: u32,
     pub loops: bool,
+    pub travels: bool,
 }
 
 /// The rules `retarget_animation.py` reports, whose limits the runner
-/// publishes to it on argv. [`FPS_GRID`] is in both lists on purpose: the
-/// retarget reads the action and this module reads the delivered file.
-pub const RETARGET_RULES: [&Rule; 4] = [
+/// publishes to it on argv. [`FPS_GRID`] and [`FLOOR_SNAP`] are in both lists
+/// on purpose: the retarget reads the pose it evaluated and this module reads
+/// the delivered file.
+pub const RETARGET_RULES: [&Rule; 7] = [
     &INTERPOLATION,
     &REFERENCE_POSE_KEY,
     &FPS_GRID,
     &FPS_GRID_RANGE,
+    &FLOOR_SNAP,
+    &STRIDE,
+    &STRIDE_RATIO,
 ];
 
 /// And the two `bake_sprites.py` reports.
 pub const BAKE_RULES: [&Rule; 2] = [&ROOT_TRAVEL, &ROOT_BOB];
 
+/// The rules [`check_files`] reads off the delivered GLB, which is also the
+/// list it reports as undefined when that file is not there.
+pub const FILE_RULES: [&Rule; 8] = [
+    &SWING,
+    &TWIST,
+    &OBJECT_TRANSFORM,
+    &FPS_GRID,
+    &LOOP,
+    &FLOOR_SNAP,
+    &STRIDE,
+    &STRIDE_RATIO,
+];
+
 /// What a per-axis bake subject names itself, after the clip's own name.
 /// `framing.AXES` spells the same three.
 pub const AXES: [&str; 3] = ["x", "y", "z"];
 
-/// Runs the five file-side clip rules on one fitted clip.
+/// Runs every file-side clip rule on one fitted clip, which is [`FILE_RULES`].
 ///
 /// A missing or unreadable input is one error finding per rule, never a skip:
 /// a gate that goes quiet on absent input proves nothing.
@@ -334,13 +420,22 @@ pub fn check_files(
         repo_root,
         source_fps,
         loops,
+        // `stride_of` reads this one off `fitted` itself.
+        travels: _,
     } = fitted;
     let bones = table.bones(table.canonical())?.clone();
+    // The roles that stand on the floor are skeleton data, so the toes are
+    // named by the table rather than by anything spelling "toe".
+    let toes: BTreeSet<String> = table
+        .ground_roles()
+        .iter()
+        .map(|role| filled_by(&bones, role))
+        .collect::<Result<_>>()?;
     let clip = relative_to(output, repo_root);
     let bytes = match std::fs::read(output) {
         Ok(bytes) => bytes,
         Err(error) => {
-            return Ok([&SWING, &TWIST, &OBJECT_TRANSFORM, &FPS_GRID, &LOOP]
+            return Ok(FILE_RULES
                 .map(|rule| {
                     rule.undefined(&clip, attempt, format!("{clip} cannot be read: {error}"))
                 })
@@ -395,7 +490,203 @@ pub fn check_files(
             })
             .to_vec(),
     };
-    Ok([compared, objects, grid].concat())
+    let floor = match gltf_clip::ground(&bytes, &toes) {
+        Ok(ground) => floor_snap(&ground, &clip, profile, attempt),
+        Err(error) => FLOOR_SNAP.undefined(
+            &clip,
+            attempt,
+            format!("{clip} carries no readable ground joint: {error:#}"),
+        ),
+    };
+    let sized = match stride_of(&bytes, fitted, &bones, table.stride_segment(), profile) {
+        Ok(reading) => vec![
+            stride(&reading, &clip, profile, attempt),
+            stride_ratio(&reading, &clip, profile, attempt),
+        ],
+        Err(error) => [&STRIDE, &STRIDE_RATIO]
+            .map(|rule| {
+                rule.undefined(
+                    &clip,
+                    attempt,
+                    format!(
+                        "{clip} cannot be measured against the travel its source \
+                         had: {error:#}"
+                    ),
+                )
+            })
+            .to_vec(),
+    };
+    Ok([compared, objects, grid, vec![floor], sized].concat())
+}
+
+/// The bone filling one role, on the canonical convention.
+///
+/// [`AimTable`] refuses a `ground_roles` or `stride_segment` row naming
+/// something no convention maps, so this cannot fail on a committed table.
+/// It still says which role went missing rather than dropping it.
+fn filled_by(bones: &BTreeMap<String, String>, role: &str) -> Result<String> {
+    bones
+        .get(role)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the canonical convention maps no bone to {role}"))
+}
+
+/// The two lengths and the two travels [`STRIDE`] reads, out of three files:
+/// the delivered clip, the rig it was fitted to, and the sidecar the retarget
+/// wrote for the vendor file.
+///
+/// Our own segment comes off the rig GLB and not the sidecar, so the two
+/// sides of the ratio have two readers.
+fn stride_of(
+    bytes: &[u8],
+    fitted: &Fitted<'_>,
+    bones: &BTreeMap<String, String>,
+    roles: &[String; 2],
+    profile: &Profile,
+) -> Result<Stride> {
+    let rig = Skeleton::read(fitted.rig)?;
+    let joint = |role: &String| -> Result<DVec3> {
+        let bone = filled_by(bones, role)?;
+        Ok(rig
+            .get(&bone)
+            .with_context(|| format!("{bone} fills {role} and the rig has no such joint"))?
+            .position())
+    };
+    let (upper, lower) = (joint(&roles[0])?, joint(&roles[1])?);
+    let source = SourceLengths::read(fitted.source_motion)?;
+    Ok(Stride {
+        travel: gltf_clip::travel(bytes, &profile.single_root)?,
+        segment: ((lower - upper).length(), source.stride_segment),
+        source_travel: source.travel,
+        travels: fitted.travels,
+    })
+}
+
+/// What [`STRIDE`] and [`STRIDE_RATIO`] are read from, once per clip.
+#[derive(Debug, Clone, Copy)]
+pub struct Stride {
+    /// How far the delivered clip's root got, horizontally, in meters.
+    pub travel: f64,
+    /// Our stride segment at rest and the source's, in meters.
+    pub segment: (f64, f64),
+    /// How far the source's own root got, in meters.
+    pub source_travel: f64,
+    /// What the library declares about the source's root motion.
+    pub travels: bool,
+}
+
+impl Stride {
+    /// How much longer our own stride segment is than the source's, which is
+    /// what every location key was sized by. `None` when either rig has no
+    /// segment to measure, where there is no ratio at all.
+    fn ratio(&self) -> Option<f64> {
+        let (ours, theirs) = self.segment;
+        (ours > 0.0 && theirs > 0.0).then(|| ours / theirs)
+    }
+
+    /// The travel this fit has to reproduce: the source's, sized.
+    fn wanted(&self) -> Option<f64> {
+        self.ratio()
+            .map(|ratio| self.source_travel * ratio)
+            .filter(|wanted| *wanted > 0.0)
+    }
+}
+
+/// `clip.stride`, on the delivered file's own root positions.
+pub fn stride(reading: &Stride, clip: &str, profile: &Profile, attempt: u32) -> Finding {
+    if !reading.travels {
+        return STRIDE.skipped(
+            profile,
+            clip,
+            attempt,
+            format!(
+                "the library declares travels: false, so {clip} has no \
+                 source travel to be sized against"
+            ),
+        );
+    }
+    let (Some(ratio), Some(wanted)) = (reading.ratio(), reading.wanted()) else {
+        return STRIDE.undefined(
+            clip,
+            attempt,
+            format!(
+                "the source of {clip} travels {:.4} m on a stride segment of \
+                 {:.4} m against our {:.4} m, so there is no sized travel to \
+                 read it against",
+                reading.source_travel, reading.segment.1, reading.segment.0
+            ),
+        );
+    };
+    STRIDE.measured(
+        profile,
+        clip,
+        (reading.travel - wanted).abs() / wanted * 100.0,
+        attempt,
+        format!(
+            "{clip} travels {:.4} m against the {wanted:.4} m its source's \
+             {:.4} m comes to at a femur ratio of {ratio:.4}",
+            reading.travel, reading.source_travel
+        ),
+    )
+}
+
+/// `clip.stride_ratio`, with our own length read off the rig rather than
+/// taken from the retarget.
+pub fn stride_ratio(reading: &Stride, clip: &str, profile: &Profile, attempt: u32) -> Finding {
+    let (ours, theirs) = reading.segment;
+    let Some(ratio) = reading.ratio() else {
+        return STRIDE_RATIO.undefined(
+            clip,
+            attempt,
+            format!("a stride segment of {ours:.4} m against {theirs:.4} m is no ratio"),
+        );
+    };
+    STRIDE_RATIO.measured(
+        profile,
+        clip,
+        ratio,
+        attempt,
+        format!(
+            "our stride segment is {ours:.4} m against the source's \
+             {theirs:.4} m, so every length of {clip} is sized by {ratio:.4}"
+        ),
+    )
+}
+
+/// `clip.floor_snap`, on the lowest ground joint the delivered file carries.
+///
+/// One finding, not one per toe: what the retarget lifted is the whole clip,
+/// so the reading is the lowest any of them gets and the subject says which
+/// one that was.
+pub fn floor_snap(
+    ground: &gltf_clip::Ground,
+    clip: &str,
+    profile: &Profile,
+    attempt: u32,
+) -> Finding {
+    let Some(low) = ground
+        .lowest
+        .iter()
+        .min_by(|a, b| a.height.total_cmp(&b.height))
+    else {
+        return FLOOR_SNAP.undefined(
+            clip,
+            attempt,
+            format!("{clip} carries no ground joint, so it has no rest height to be read against"),
+        );
+    };
+    let off = low.height - ground.floor;
+    FLOOR_SNAP.measured(
+        profile,
+        &format!("{} at {:.6} s", low.joint, low.seconds),
+        off.abs(),
+        attempt,
+        format!(
+            "{} at {:.6} s is the lowest any ground joint of the clip gets, \
+             {off:.4} m from the rest height the snap aims at",
+            low.joint, low.seconds
+        ),
+    )
 }
 
 /// `clip.fps_grid`, one finding per key of the delivered file.
