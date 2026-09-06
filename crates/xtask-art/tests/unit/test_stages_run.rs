@@ -19,7 +19,8 @@ use xtask_art::spec::{CharacterType, Paths};
 use xtask_art::stages;
 
 use crate::support::{
-    EnvGuard, a_bare_mesh, a_cleaned_mesh, a_library, a_png, a_spec, install_skeleton,
+    EnvGuard, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png, a_spec,
+    install_skeleton,
 };
 
 fn b64(bytes: &[u8]) -> String {
@@ -49,19 +50,20 @@ async fn concept_generates_every_view_and_writes_a_preview() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
 
-    let record = stages::concept(&a_spec("survivor"), &paths, false)
-        .await
-        .unwrap();
+    let record = stages::concept(&a_spec("survivor"), &paths).await.unwrap();
 
     for view in View::ALL {
         assert!(paths.concept(view).exists(), "{view} was not written");
     }
-    assert!(record.note.unwrap().contains("4 views"));
+    assert_eq!(record.note.unwrap(), "4 views generated");
     assert!(paths.preview().join("concept.png").exists());
 }
 
+/// The stage reuses nothing. A set already on disk is either one a previous
+/// run left failing or one this run was asked to replace, so both attempt one
+/// and every retry pay for four fresh views.
 #[tokio::test]
-async fn concept_reuses_views_already_on_disk() {
+async fn concept_regenerates_views_already_on_disk_rather_than_reusing_them() {
     let server = MockServer::start().await;
     serve_images(&server).await;
     let dir = tempfile::tempdir().unwrap();
@@ -69,30 +71,21 @@ async fn concept_reuses_views_already_on_disk() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
     let spec = a_spec("survivor");
+    stages::concept(&spec, &paths).await.unwrap();
+    // A different image, so a reused file is one this assertion can name. The
+    // server serves `a_png` for every view.
+    for view in View::ALL {
+        std::fs::write(paths.concept(view), a_concept_view()).unwrap();
+    }
 
-    stages::concept(&spec, &paths, false).await.unwrap();
-    let record = stages::concept(&spec, &paths, false).await.unwrap();
+    stages::concept(&spec, &paths).await.unwrap();
 
-    assert!(
-        record.note.unwrap().contains("0 newly generated"),
-        "an existing view must not be paid for twice"
-    );
-}
-
-#[tokio::test]
-async fn retry_regenerates_views_that_already_exist() {
-    let server = MockServer::start().await;
-    serve_images(&server).await;
-    let dir = tempfile::tempdir().unwrap();
-    let paths = Paths::new(dir.path(), "survivor");
-    let mut env = EnvGuard::new();
-    env.with_api(&server.uri());
-    let spec = a_spec("survivor");
-
-    stages::concept(&spec, &paths, false).await.unwrap();
-    let record = stages::concept(&spec, &paths, true).await.unwrap();
-
-    assert!(record.note.unwrap().contains("3 newly generated"));
+    for view in View::ALL {
+        assert!(
+            std::fs::read(paths.concept(view)).unwrap() == a_png(),
+            "{view} was reused instead of regenerated"
+        );
+    }
 }
 
 // --- model ----------------------------------------------------------------
@@ -132,7 +125,7 @@ async fn model_uploads_every_concept_view_and_records_the_task() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
     let spec = a_spec("survivor");
-    stages::concept(&spec, &paths, false).await.unwrap();
+    stages::concept(&spec, &paths).await.unwrap();
 
     let record = stages::model(&spec, &paths).await.unwrap();
 
@@ -177,7 +170,7 @@ async fn model_refuses_a_finished_task_that_exposes_no_mesh() {
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
     let spec = a_spec("survivor");
-    stages::concept(&spec, &paths, false).await.unwrap();
+    stages::concept(&spec, &paths).await.unwrap();
 
     let error = stages::model(&spec, &paths).await.unwrap_err().to_string();
 

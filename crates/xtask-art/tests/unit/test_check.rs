@@ -5,17 +5,18 @@
 //! half.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use xtask_art::check::aim::{self, AimTable};
 use xtask_art::check::gltf_world::Skeleton;
 use xtask_art::check::motion::Motion;
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{
-    Artifacts, Comparison, Finding, Report, Severity, Symmetry, clip, every_rule, gltf_clip, mesh,
-    rig, source,
+    Artifacts, Comparison, Finding, Report, Severity, Symmetry, clip, concept, every_rule,
+    gltf_clip, mesh, rig, source,
 };
 use xtask_art::library::HUMANOID;
+use xtask_art::spec::View;
 
 use crate::rigs::HEIGHT_METERS;
 use crate::support::{committed_glb, repo_root};
@@ -54,9 +55,9 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        51,
-        "13 rig rules, the aim table, 15 mesh rules, 6 source rules, 13 clip \
-         rules and the 3 foot contact ones"
+        56,
+        "5 concept rules, 13 rig rules, the aim table, 15 mesh rules, 6 source \
+         rules, 13 clip rules and the 3 foot contact ones"
     );
     assert_eq!(
         ids.iter()
@@ -66,6 +67,11 @@ fn every_family_reaches_the_printed_rule_list() {
         "a rule id is listed twice"
     );
     for expected in [
+        "concept.background_flat",
+        "concept.single_figure",
+        "concept.arm_gap",
+        "concept.mirror",
+        "concept.cross_view",
         "rig.child_axis",
         "rig.aim_table",
         "mesh.holes",
@@ -337,11 +343,33 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
     // bought in, and that one may not be redistributed, so their subject here
     // is the synthetic cross-rig pair. `clip.object_transform` runs on the
     // committed clip against the committed rig.
+    let concept_views: Vec<(View, PathBuf)> = View::ALL
+        .into_iter()
+        .map(|view| {
+            (
+                view,
+                root.join(format!("art/characters/survivor/concept/{view}.png")),
+            )
+        })
+        .collect();
     let bones = table.bones(table.canonical()).unwrap().clone();
     let pair = crate::clips::CrossRig::new(bones.clone());
     let clip_glb = committed_glb("art/animations/run.glb");
     let run_keys = gltf_clip::keys(&std::fs::read(&clip_glb).unwrap()).unwrap();
     let findings = [
+        concept::check_files(
+            &concept_views
+                .iter()
+                .map(|(view, file)| concept::Rendered {
+                    name: view.as_str(),
+                    file,
+                    torso_faces_the_camera: view.shows_the_torso(),
+                })
+                .collect::<Vec<concept::Rendered<'_>>>(),
+            &profile,
+            Symmetry::Enforced,
+            1,
+        ),
         rig::check_file(
             &rig_glb,
             &root,

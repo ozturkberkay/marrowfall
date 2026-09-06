@@ -27,6 +27,12 @@ mirror_tolerance_degrees = 1.0
 max_bind_deviation_degrees = 75.0
 humerus_below_horizontal = { target = 40.0, tolerance = 15.0 }
 
+[profile.concept]
+background_spread_levels = 12
+arm_gap_rows_percent = 75.0
+mirror_percent = 2.4
+cross_view_percent = 6.0
+
 [profile.mesh]
 holes = 200
 non_manifold_edges = 10
@@ -108,6 +114,12 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.max_bind_deviation_degrees, 75.0);
     assert_eq!(profile.humerus_below_horizontal.target, 40.0);
     assert_eq!(profile.humerus_below_horizontal.tolerance, 15.0);
+    // Calibrated on the four committed concept views, with the headroom
+    // beside each in the profile and the readings in `test_concept.rs`.
+    assert_eq!(profile.concept.background_spread_levels, 12.0);
+    assert_eq!(profile.concept.arm_gap_rows_percent, 75.0);
+    assert_eq!(profile.concept.mirror_percent, 2.4);
+    assert_eq!(profile.concept.cross_view_percent, 6.0);
     // Provisional, calibrated on the rigged `model.glb`, because `bare.glb`
     // has never been downloaded. The measurement beside each is in the
     // design's limits table and in `test_mesh.rs`.
@@ -507,6 +519,37 @@ fn a_mesh_ceiling_that_is_not_a_positive_number_is_refused() {
             assert!(error.contains(field), "mesh.{field} = {value}: {error}");
         }
     }
+}
+
+/// The four concept limits: three ceilings and one floor. A spread of zero
+/// describes an image no generator returns, a mirror band of zero refuses two
+/// halves that agree to the pixel but one, and a floor of zero is reached by
+/// every image, which is a gate that gates nothing.
+#[test]
+fn a_concept_limit_that_is_not_a_positive_number_is_refused() {
+    for (field, declared) in [
+        ("background_spread_levels", "12"),
+        ("arm_gap_rows_percent", "75.0"),
+        ("mirror_percent", "2.4"),
+        ("cross_view_percent", "6.0"),
+    ] {
+        for value in ["0.0", "-1.0", "nan"] {
+            let error = refused(&[(
+                &format!("{field} = {declared}"),
+                &format!("{field} = {value}"),
+            )]);
+            assert!(error.contains(field), "concept.{field} = {value}: {error}");
+        }
+    }
+}
+
+/// And a profile with no concept table: the gate that runs before any money
+/// is spent reads every number it holds from here.
+#[test]
+fn a_profile_with_no_concept_table_is_refused() {
+    let error = refused(&[("[profile.concept]", "[profile.unread]")]);
+
+    assert!(error.contains("concept"), "got: {error}");
 }
 
 /// The mesh gates run on the character while the profile is per skeleton, so

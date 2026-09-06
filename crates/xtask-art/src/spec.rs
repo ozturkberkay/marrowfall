@@ -40,6 +40,14 @@ impl View {
             View::Right => "right",
         }
     }
+
+    /// Whether the torso faces the camera. Only a view that it does can show
+    /// a gap between an arm and the ribcage, or a left half to read against a
+    /// right, so `concept.arm_gap` and `concept.mirror` own these two views
+    /// and no others.
+    pub const fn shows_the_torso(self) -> bool {
+        matches!(self, View::Front | View::Back)
+    }
 }
 
 impl std::fmt::Display for View {

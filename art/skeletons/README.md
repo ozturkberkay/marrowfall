@@ -18,11 +18,17 @@ hierarchy, which child each bone's own axis must point at, the mirror
 tolerances, the height band, and the angle the upper arm hangs at. It is data,
 so a second skeleton is a second file rather than more code.
 
-`crates/xtask-art/src/check/rig.rs` is the only reader. `cargo art check
---list-rules` prints the whole table as rules, and `cargo art check` measures
-a character's rigged GLB against it and prints one line per defect. Bone names
-are the Mixamo and HumanIK standard, with the spine numbered from the bottom,
-so `Spine` is the lowest of the three.
+`crates/xtask-art/src/check/rig.rs` is the only reader of the rig rows.
+`cargo art check --list-rules` prints the whole table as rules, and `cargo art
+check` measures a character's rigged GLB against it and prints one line per
+defect. Bone names are the Mixamo and HumanIK standard, with the spine
+numbered from the bottom, so `Spine` is the lowest of the three.
+
+Five sub-tables belong to gates that are not about a rig at all, and each
+names its own reader: `[profile.concept]` for the generated views,
+`[profile.mesh]` for the geometry, `[profile.cleanup]` for the fixer's own
+sizes and `[profile.clip]` plus `[profile.source]` for motion. They live here
+because a limit is per skeleton and this is where a skeleton is declared.
 
 Two rows describe the same hierarchy for two different reasons, the way
 Godot's `SkeletonProfile` carries both. `[profile.parents]` is where each bone

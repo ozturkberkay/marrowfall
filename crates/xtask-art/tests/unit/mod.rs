@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used)]
 
 mod clips;
+mod concepts;
 mod gltf_bytes;
 mod meshes;
 mod rigs;
@@ -14,10 +15,12 @@ mod test_blender;
 mod test_check;
 mod test_cli;
 mod test_cli_commands;
+mod test_cli_concept;
 mod test_cli_fetch;
 mod test_cli_prompts;
 mod test_cli_run;
 mod test_clip;
+mod test_concept;
 mod test_foot;
 mod test_gltf_mesh;
 mod test_gltf_world;
