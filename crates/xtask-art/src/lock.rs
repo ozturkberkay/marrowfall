@@ -2,19 +2,22 @@
 //! re-run skips completed work instead of re-spending credits. A sidecar, to
 //! keep the hand-authored spec diffable.
 //!
-//! Stages are fingerprinted: changing a spec field a stage depends on
-//! invalidates it and everything downstream, so a stale mesh is never paired
-//! with new settings.
+//! Stages are fingerprinted over the inputs they actually read: the spec
+//! fields, and the *content* of the art files. Changing one invalidates that
+//! stage and everything downstream, so a stale mesh is never paired with new
+//! settings and a replaced rig cannot report `cached`.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::blender::{BLENDER_SRC, Build};
+use crate::check::profile::Profile;
 use crate::library::{AnimationLibrary, MotionSource};
 use crate::providers::meshy::Endpoint;
-use crate::spec::CharacterSpec;
+use crate::spec::{Bake, CharacterSpec, Paths, Subject, View};
 
 /// One step of the pipeline. Ordering is the execution order, and
 /// [`Stage::all`] is the canonical sequence.
@@ -40,6 +43,17 @@ pub enum Stage {
 pub enum Provider {
     OpenAI,
     Meshy,
+}
+
+impl Provider {
+    /// What this provider charges for, so nothing recommends a re-run
+    /// without naming whose bill it is.
+    pub const fn bills(self) -> &'static str {
+        match self {
+            Provider::OpenAI => "OpenAI images",
+            Provider::Meshy => "Meshy credits",
+        }
+    }
 }
 
 impl Stage {
@@ -79,6 +93,16 @@ impl Stage {
     /// before re-running.
     pub const fn costs_credits(self) -> bool {
         self.provider().is_some()
+    }
+
+    /// Whether [`LOCAL_PIPELINE_VERSION`] rides in this stage's fingerprint.
+    ///
+    /// The three that run code of ours: the model stage downloads the bare
+    /// mesh every gate and the fixer read, and the bake and the pack produce
+    /// every frame and every atlas. Bumping the version re-runs all three,
+    /// and the model stage spends Meshy credits when it does.
+    pub const fn is_versioned(self) -> bool {
+        matches!(self, Stage::Model | Stage::Bake | Stage::Pack)
     }
 
     /// Stages that run after this one, in order.
@@ -144,8 +168,9 @@ impl TaskRef {
 /// Record of one completed stage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StageRecord {
-    /// Fingerprint of the spec fields this stage consumed. A mismatch means
-    /// the inputs changed and the stage must run again.
+    /// Fingerprint of what this stage read: its spec fields, and the content
+    /// of the art files. A mismatch means an input changed and the stage must
+    /// run again.
     pub fingerprint: String,
     /// Remote tasks this stage created, for provenance and for downstream
     /// stages to fetch results from.
@@ -188,38 +213,51 @@ impl Lock {
         std::fs::write(path, text).with_context(|| format!("writing lock {}", path.display()))
     }
 
-    /// Whether `stage` has completed with inputs matching the current spec.
-    pub fn is_current(
-        &self,
-        stage: Stage,
-        spec: &CharacterSpec,
-        library: &AnimationLibrary,
-    ) -> bool {
-        self.stages
-            .get(&stage)
-            .is_some_and(|record| record.fingerprint == fingerprint(stage, spec, library))
+    /// Whether `stage` has completed with inputs matching what is on disk now.
+    pub fn is_current(&self, stage: Stage, inputs: &Inputs<'_>) -> Result<bool> {
+        let Some(record) = self.stages.get(&stage) else {
+            return Ok(false);
+        };
+        Ok(record.fingerprint == fingerprint(stage, inputs)?)
+    }
+
+    /// What every stage reads as, in pipeline order.
+    ///
+    /// Never fails: an input that cannot be read leaves one stage
+    /// [`State::Unknown`] and the rest answerable, because the command that
+    /// prints this has to print something on any machine.
+    pub fn states(&self, inputs: &Inputs<'_>) -> BTreeMap<Stage, State> {
+        Stage::all()
+            .into_iter()
+            .map(|stage| {
+                let state = match self.stages.get(&stage) {
+                    None => State::Todo,
+                    Some(record) => match fingerprint(stage, inputs) {
+                        Ok(current) if current == record.fingerprint => State::Done,
+                        Ok(_) => State::Stale,
+                        Err(error) => State::Unknown(format!("{error}")),
+                    },
+                };
+                (stage, state)
+            })
+            .collect()
     }
 
     /// Marks a stage complete and invalidates every stage after it. A new
     /// mesh makes old sprites wrong even when their fingerprints still match,
-    /// since a fingerprint covers spec fields, not upstream artifacts.
-    pub fn record(
-        &mut self,
-        stage: Stage,
-        spec: &CharacterSpec,
-        library: &AnimationLibrary,
-        record: StageRecord,
-    ) {
+    /// since no downstream stage reads every upstream file.
+    pub fn record(&mut self, stage: Stage, inputs: &Inputs<'_>, record: StageRecord) -> Result<()> {
         self.stages.insert(
             stage,
             StageRecord {
-                fingerprint: fingerprint(stage, spec, library),
+                fingerprint: fingerprint(stage, inputs)?,
                 ..record
             },
         );
         for downstream in stage.downstream() {
             self.stages.remove(&downstream);
         }
+        Ok(())
     }
 
     /// Tasks recorded by any stage, newest stage last. Used to resume a
@@ -232,39 +270,135 @@ impl Lock {
     }
 }
 
-/// Fingerprints exactly the spec fields a stage consumes. Narrow on purpose:
-/// editing a sprite setting must not invalidate a paid stage.
-pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrary) -> String {
-    let mut parts = vec![format!("{:?}", spec.subject.kind)];
-    // Bump when the bake or packing algorithm changes in a way that makes
-    // existing output wrong. A fingerprint over spec fields alone cannot
-    // express "the code that produced this has been fixed", so without this
-    // a corrected packer would report `cached` forever.
-    if matches!(stage, Stage::Bake | Stage::Pack) {
+/// What the lock says about one stage, against the inputs on disk now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum State {
+    /// Nothing recorded it.
+    Todo,
+    /// Recorded, and every input still matches.
+    Done,
+    /// Recorded under inputs that have since moved.
+    Stale,
+    /// Recorded, and an input could not be read: this is what stopped it.
+    Unknown(String),
+}
+
+impl State {
+    /// The one word a table prints.
+    pub const fn word(&self) -> &'static str {
+        match self {
+            State::Todo => "todo",
+            State::Done => "done",
+            State::Stale => "stale",
+            State::Unknown(_) => "unknown",
+        }
+    }
+
+    /// What stopped it, when that is the answer.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            State::Unknown(why) => Some(why),
+            _ => None,
+        }
+    }
+}
+
+/// The stale entries of [`Lock::states`], in pipeline order. An
+/// [`State::Unknown`] stage is not among them: nothing can say it moved.
+pub fn stale(states: &BTreeMap<Stage, State>) -> Vec<Stage> {
+    states
+        .iter()
+        .filter(|(_, state)| **state == State::Stale)
+        .map(|(stage, _)| *stage)
+        .collect()
+}
+
+/// Everything a fingerprint reads, gathered once per command.
+#[derive(Debug, Clone, Copy)]
+pub struct Inputs<'a> {
+    pub root: &'a Path,
+    pub spec: &'a CharacterSpec,
+    pub library: &'a AnimationLibrary,
+    /// Asked for its build only by the stage that renders, so a command that
+    /// touches no other stage needs no Blender.
+    pub blender: &'a Build,
+}
+
+/// Fingerprints exactly the inputs a stage consumes: its spec fields, and the
+/// content of the art files it reads. Narrow on purpose: editing a sprite
+/// setting must not invalidate a paid stage, and renaming a clip locally must
+/// not either. `Pack` is the one stage whose files are not hashed, and its
+/// arm says why.
+pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
+    let Inputs {
+        root,
+        spec,
+        library,
+        blender,
+    } = inputs;
+    // The spec is destructured all the way down rather than read field by
+    // field: adding a field is then `E0027` here, and claiming it in no arm
+    // below is an unused binding, which `-D warnings` turns into a decision.
+    // Digesting a struct whole needs no code change and would put the
+    // description into the paid rig and `sprite_height` into the bake.
+    let CharacterSpec {
+        name,
+        subject,
+        animations,
+        remesh,
+        texture,
+        bake,
+    } = *spec;
+    let Subject {
+        kind,
+        description,
+        height_meters,
+        skeleton,
+        cleanup,
+        symmetry,
+    } = subject;
+    let Bake {
+        directions,
+        render_size,
+        sprite_height,
+        forearm_roll,
+        trim_start,
+    } = bake;
+    let paths = Paths::new(root, name);
+    let mut parts = vec![format!("{kind:?}")];
+    // Bump when a stage's own code changes in a way that makes existing
+    // output wrong. A fingerprint over inputs alone cannot express "the code
+    // that produced this has been fixed", so without this a corrected packer
+    // would report `cached` forever.
+    if stage.is_versioned() {
         parts.push(format!("algo{LOCAL_PIPELINE_VERSION}"));
     }
     match stage {
         Stage::Concept => {
-            parts.push(spec.subject.description.clone());
+            parts.push(description.clone());
             // The pose is prompt text, not a spec field, so editing it in code
             // has to invalidate the concept the same way editing the
             // description does.
-            parts.push(spec.subject.kind.pose_instruction().to_owned());
+            parts.push(kind.pose_instruction().to_owned());
         }
         Stage::Model => {
-            parts.push(format!("{:?}", spec.remesh));
-            parts.push(format!("{:?}", spec.texture));
+            // Whole-struct, because only this stage reads either one, so a new
+            // remesh or texture setting needs no code change here.
+            parts.push(format!("{remesh:?}"));
+            parts.push(format!("{texture:?}"));
+            // The mesh is reconstructed from the four views, so a regenerated
+            // view is a different mesh.
+            for view in View::ALL {
+                parts.push(derived_file(&paths.concept(view))?);
+            }
         }
         Stage::Rig | Stage::Download => {
-            // Only the animations requested, not what we call them: renaming a animation
-            // locally must not trigger a re-rig, which is several charges.
-            parts.push(format!("{}", spec.subject.height_meters));
+            parts.push(format!("{height_meters}/{skeleton}/{cleanup}/{symmetry}"));
             // The action ids, not the names: renaming an animation in the
             // library must not trigger a re-rig, which is several charges.
             // A name that no longer resolves contributes nothing here, the
             // stage itself reports that far more clearly.
-            let mut ids: Vec<u32> = spec
-                .animations
+            let mut ids: Vec<u32> = animations
                 .iter()
                 .filter_map(|name| library.animations.get(name))
                 .filter_map(|animation| match animation.source {
@@ -276,42 +410,115 @@ pub fn fingerprint(stage: Stage, spec: &CharacterSpec, library: &AnimationLibrar
                 .collect();
             ids.sort_unstable();
             parts.push(format!("{ids:?}"));
+            // The mesh sent to rigging, and the download the fixer made it
+            // from. Both are derived and gitignored, so on a machine that
+            // does not hold them this reads absent and the stage reports
+            // stale; the checkpoint GLB is what stops that spending anything.
+            parts.push(derived_file(&paths.bare_glb())?);
+            parts.push(derived_file(&paths.clean_glb())?);
         }
         Stage::Bake => {
             // `sprite_height` is deliberately excluded, it is Pack's input,
             // and re-rendering hundreds of frames to change a downscale
             // target would be pure waste.
             parts.push(format!(
-                "{}/{}/{}/{}",
-                spec.bake.directions,
-                spec.bake.render_size,
-                spec.bake.forearm_roll,
-                spec.bake.trim_start
+                "{directions}/{render_size}/{forearm_roll}/{trim_start}"
             ));
+            parts.push(blender_inputs(root, skeleton, blender.read()?)?);
+            // The character it renders. The download stage writes it, so a
+            // character that has not reached that stage reads absent.
+            parts.push(derived_file(&paths.character_glb())?);
             // The bake reads one file per animation, keyed on the library's
             // name, not the action id, which only the paid stages use. The
-            // rate rides along because it decides the frame count.
-            parts.extend(spec.animations.iter().map(|name| {
-                library
-                    .get(name)
-                    .map_or_else(|_| name.clone(), |a| format!("{name}@{}", a.fps))
-            }));
+            // rate rides along because it decides the frame count, and the
+            // file itself because a refetched clip is different motion under
+            // the same name.
+            for clip in animations {
+                parts.push(
+                    library
+                        .get(clip)
+                        .map_or_else(|_| clip.clone(), |a| format!("{clip}@{}", a.fps)),
+                );
+                parts.push(derived_file(&library.glb(root, clip))?);
+            }
         }
         Stage::Pack => {
-            parts.push(spec.name.clone());
-            parts.push(format!(
-                "{}/{}",
-                spec.bake.sprite_height, spec.bake.directions
-            ));
-            for name in &spec.animations {
-                let loops = library.animations.get(name).is_some_and(|a| a.loops);
-                parts.push(format!("{name}:{loops}"));
+            // Hashes no file, alone among the six. It reads the staging PNGs,
+            // and every one of them was written by the bake this record
+            // already sits downstream of.
+            parts.push(name.clone());
+            parts.push(format!("{sprite_height}/{directions}"));
+            for clip in animations {
+                let loops = library.animations.get(clip).is_some_and(|a| a.loops);
+                parts.push(format!("{clip}:{loops}"));
             }
         }
     }
-    // A digest would be shorter, but a readable fingerprint makes lock diffs
-    // explain themselves when a stage unexpectedly re-runs.
-    digest(parts.join("|").as_bytes())
+    Ok(digest(parts.join("|").as_bytes()))
+}
+
+/// What every Blender stage reads and no spec field names: the skeleton's
+/// canonical rig and its profile, the Blender build, and every script.
+///
+/// One function, so an `[aim_table]` row invalidates the retarget and the bake
+/// together. The rig, the profile and the scripts are committed, so a missing
+/// one is an error here rather than a hash of nothing.
+pub fn blender_inputs(root: &Path, skeleton: &str, blender: &str) -> Result<String> {
+    let parts = [
+        committed_file(&AnimationLibrary::reference_rig(root, skeleton))?,
+        committed_file(&Profile::path(root, skeleton))?,
+        blender.to_owned(),
+        scripts(root)?,
+    ];
+    Ok(digest(parts.join("|").as_bytes()))
+}
+
+/// One digest over every Blender script, so a fix to any of them re-runs the
+/// stages that shell out to Blender. Named, so moving code between two of
+/// them still reads as a change.
+fn scripts(root: &Path) -> Result<String> {
+    let dir = root.join(BLENDER_SRC);
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading the Blender scripts in {}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "py"))
+        .collect();
+    files.sort();
+    anyhow::ensure!(!files.is_empty(), "no Blender scripts in {}", dir.display());
+    let mut parts = Vec::new();
+    for path in files {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        parts.push(format!("{name}:{}", committed_file(&path)?));
+    }
+    Ok(digest(parts.join("|").as_bytes()))
+}
+
+/// The content of a file a stage cannot run without.
+///
+/// Missing is an error rather than an empty hash, which every later run would
+/// read as "nothing changed".
+fn committed_file(path: &Path) -> Result<String> {
+    let bytes = std::fs::read(path).with_context(|| {
+        format!(
+            "fingerprinting {}: this file is committed, so a checkout has it",
+            path.display()
+        )
+    })?;
+    Ok(digest(&bytes))
+}
+
+/// The content of a file the pipeline itself produces, or an explicit
+/// absence when the stage that writes it has not run yet.
+///
+/// Content, never a date: a fresh checkout has new timestamps and the same
+/// art.
+fn derived_file(path: &Path) -> Result<String> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(digest(&bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("absent".to_owned()),
+        Err(error) => Err(error).with_context(|| format!("fingerprinting {}", path.display())),
+    }
 }
 
 /// The hex fingerprint every lock file in this crate records. Shared so the
@@ -320,8 +527,10 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a(bytes))
 }
 
-/// Version of the free half of the pipeline (bake and pack). Bump whenever
-/// its output changes for identical inputs.
+/// Version of the code the model, bake and pack stages run. Bump whenever
+/// their output changes for identical inputs, and know that re-running the
+/// model stage spends Meshy credits.
+///
 /// 2: shared camera framing and ground line, root-motion travel stripped.
 /// 3: clip translation sized to the character playing it.
 pub const LOCAL_PIPELINE_VERSION: u32 = 3;

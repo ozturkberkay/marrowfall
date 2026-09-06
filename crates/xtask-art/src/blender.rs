@@ -15,6 +15,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, bail, ensure};
 
@@ -130,6 +131,59 @@ pub fn run(
         named.display()
     );
     Ok(Some(report))
+}
+
+/// What `blender --version` prints, first line only.
+///
+/// A real input: 4.5 and 5.2 do not render the same frames, so every
+/// fingerprint of a stage that shells out to Blender carries this.
+pub fn version() -> Result<String> {
+    let program = blender_binary();
+    let output = Command::new(&program)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("running `{program} --version`, is blender on PATH?"))?;
+    ensure!(
+        output.status.success(),
+        "`{program} --version` failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().next().unwrap_or_default().trim();
+    ensure!(!line.is_empty(), "`{program} --version` printed nothing");
+    Ok(line.to_owned())
+}
+
+/// The build a fingerprint reads, asked for at most once per command and
+/// only by a stage that renders.
+///
+/// Lazy on purpose: `cargo art status` is the one command that says whether a
+/// bake is current, and it has to answer on a machine with no Blender.
+#[derive(Debug)]
+pub struct Build(OnceLock<String>);
+
+impl Build {
+    /// A build nobody has read yet: whatever needs it asks first.
+    pub fn detected() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// A build stated outright, so a test can fingerprint against a named
+    /// one without Blender installed.
+    pub fn stated(build: &str) -> Self {
+        let cell = OnceLock::new();
+        let _ = cell.set(build.to_owned());
+        Self(cell)
+    }
+
+    /// What [`version`] printed, running it the first time only.
+    pub fn read(&self) -> Result<&str> {
+        if let Some(build) = self.0.get() {
+            return Ok(build);
+        }
+        let build = version()?;
+        Ok(self.0.get_or_init(|| build))
+    }
 }
 
 /// Locates the Blender executable. Overridable for a test stub, or an

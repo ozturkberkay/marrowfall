@@ -11,11 +11,14 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask_art::check::profile::Profile;
 use xtask_art::check::{Finding, Report, Rule, Severity, clip, foot, source};
-use xtask_art::cli::{FetchStep, fetch, fetch_plan};
-use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
+use xtask_art::cli::{FetchStep, OnDisk, fetch, fetch_plan};
+use xtask_art::library::{
+    Animation, AnimationLibrary, ClipFiles, HUMANOID, LibraryLock, MotionSource, Verdict,
+};
+use xtask_art::lock::blender_inputs;
 use xtask_art::providers::mixamo::client::CHARACTER_ID;
 
-use crate::support::EnvGuard;
+use crate::support::{BLENDER, EnvGuard, a_tree, edit_an_aim_row};
 
 const PRODUCT: &str = "c9ccc468-b96c-11e4-a802-0aaa78deedf9";
 
@@ -48,17 +51,63 @@ fn an_fbx() -> Vec<u8> {
     fbx
 }
 
+/// Why the plan wants one clip fetched, which is what its step has to say.
+fn why(steps: &[FetchStep], name: &str) -> String {
+    steps
+        .iter()
+        .find_map(|step| match step {
+            FetchStep::Fetch { name: got, why, .. } if got == name => Some((*why).to_owned()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{name} is not fetched: {steps:?}"))
+}
+
 fn wants(steps: &[FetchStep], name: &str) -> bool {
     steps
         .iter()
         .any(|step| matches!(step, FetchStep::Fetch { name: fetched, .. } if fetched == name))
 }
 
-fn on_disk(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
-    entries
-        .iter()
-        .map(|(name, digest)| ((*name).to_owned(), (*digest).to_owned()))
-        .collect()
+/// What the plan reads off disk: the clips that are there, and the rig every
+/// one of them would be fitted by.
+fn on_disk(entries: &[(&str, &str)]) -> OnDisk {
+    OnDisk {
+        glb: entries
+            .iter()
+            .map(|(name, digest)| ((*name).to_owned(), (*digest).to_owned()))
+            .collect(),
+        retarget: BTreeMap::from([(HUMANOID.to_owned(), FITTED_BY.to_owned())]),
+    }
+}
+
+/// The rig and tooling fingerprint a recorded fit was made with.
+const FITTED_BY: &str = "fedcba9876543210";
+
+/// What a passing retarget records.
+fn a_verdict() -> Verdict {
+    Verdict {
+        report: "retarget.walk_back.1".to_owned(),
+        worst: Severity::Info,
+        rules: vec![clip::INTERPOLATION.id.to_owned()],
+    }
+}
+
+/// One recorded fetch, as a passing retarget leaves it.
+fn a_record(glb: &[u8]) -> LibraryLock {
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "walk_back",
+        MotionSource::Mixamo {
+            product_id: PRODUCT.to_owned(),
+        },
+        ClipFiles {
+            download: b"the download",
+            glb,
+        },
+        FITTED_BY,
+        a_verdict(),
+    );
+    lock
 }
 
 // --- Planning -------------------------------------------------------------
@@ -69,7 +118,7 @@ fn with_no_names_everything_missing_is_fetched() {
         &a_library(),
         &LibraryLock::default(),
         &[],
-        &BTreeMap::new(),
+        &on_disk(&[]),
         false,
     )
     .unwrap();
@@ -93,14 +142,7 @@ fn motion_that_arrives_another_way_is_skipped_with_the_reason() {
         },
     );
 
-    let steps = fetch_plan(
-        &library,
-        &LibraryLock::default(),
-        &[],
-        &BTreeMap::new(),
-        false,
-    )
-    .unwrap();
+    let steps = fetch_plan(&library, &LibraryLock::default(), &[], &on_disk(&[]), false).unwrap();
     let reason = |name: &str| {
         steps
             .iter()
@@ -117,15 +159,7 @@ fn motion_that_arrives_another_way_is_skipped_with_the_reason() {
 
 #[test]
 fn a_clip_already_fetched_is_left_alone() {
-    let mut lock = LibraryLock::default();
-    lock.record(
-        "walk_back",
-        MotionSource::Mixamo {
-            product_id: PRODUCT.to_owned(),
-        },
-        b"the download",
-        b"the glb",
-    );
+    let lock = a_record(b"the glb");
     let digest = lock.fetched["walk_back"].glb.clone();
 
     let steps = fetch_plan(
@@ -138,6 +172,136 @@ fn a_clip_already_fetched_is_left_alone() {
     .unwrap();
 
     assert_eq!(steps, vec![FetchStep::Cached("walk_back".to_owned())]);
+}
+
+/// A record with no verdict never passed a gate anyone kept, so the file on
+/// disk is not evidence of anything.
+#[test]
+fn a_clip_recorded_without_a_verdict_is_fetched_again() {
+    let mut lock = a_record(b"the glb");
+    let digest = lock.fetched["walk_back"].glb.clone();
+    lock.fetched.get_mut("walk_back").unwrap().verdict = None;
+
+    let steps = fetch_plan(
+        &a_library(),
+        &lock,
+        &["walk_back".to_owned()],
+        &on_disk(&[("walk_back", &digest)]),
+        false,
+    )
+    .unwrap();
+
+    assert!(why(&steps, "walk_back").contains("verdict"), "{steps:?}");
+}
+
+#[test]
+fn a_clip_whose_recorded_verdict_failed_is_fetched_again() {
+    let mut lock = a_record(b"the glb");
+    let digest = lock.fetched["walk_back"].glb.clone();
+    if let Some(verdict) = &mut lock.fetched.get_mut("walk_back").unwrap().verdict {
+        verdict.worst = Severity::Error;
+    }
+
+    let steps = fetch_plan(
+        &a_library(),
+        &lock,
+        &["walk_back".to_owned()],
+        &on_disk(&[("walk_back", &digest)]),
+        false,
+    )
+    .unwrap();
+
+    assert!(why(&steps, "walk_back").contains("failed"), "{steps:?}");
+}
+
+/// Replacing the canonical rig, its profile, a script or Blender itself means
+/// every fit on disk was made by something else.
+#[test]
+fn a_clip_fitted_by_another_rig_is_fetched_again() {
+    let mut lock = a_record(b"the glb");
+    let digest = lock.fetched["walk_back"].glb.clone();
+    lock.fetched.get_mut("walk_back").unwrap().fingerprint = "0000000000000000".to_owned();
+
+    let steps = fetch_plan(
+        &a_library(),
+        &lock,
+        &["walk_back".to_owned()],
+        &on_disk(&[("walk_back", &digest)]),
+        false,
+    )
+    .unwrap();
+
+    assert!(why(&steps, "walk_back").contains("fitted"), "{steps:?}");
+}
+
+/// The design's criterion, end to end: an `[aim_table]` row is what the
+/// transfer reads, so editing one sends every recorded clip back to be
+/// fitted again.
+#[test]
+fn an_aim_table_row_sends_every_recorded_clip_back_to_be_fitted() {
+    let tree = a_tree();
+    let root = tree.path();
+    let library = a_library();
+    let before = blender_inputs(root, HUMANOID, BLENDER).unwrap();
+
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "walk_back",
+        MotionSource::Mixamo {
+            product_id: PRODUCT.to_owned(),
+        },
+        ClipFiles {
+            download: b"the download",
+            glb: b"the glb",
+        },
+        &before,
+        a_verdict(),
+    );
+    let digest = lock.fetched["walk_back"].glb.clone();
+    let disk = |fitted_by: &str| OnDisk {
+        glb: BTreeMap::from([("walk_back".to_owned(), digest.clone())]),
+        retarget: BTreeMap::from([(HUMANOID.to_owned(), fitted_by.to_owned())]),
+    };
+    let plan = |fitted_by: &str| {
+        fetch_plan(
+            &library,
+            &lock,
+            &["walk_back".to_owned()],
+            &disk(fitted_by),
+            false,
+        )
+        .unwrap()
+    };
+
+    assert_eq!(
+        plan(&before),
+        vec![FetchStep::Cached("walk_back".to_owned())],
+        "nothing moved yet"
+    );
+
+    edit_an_aim_row(root);
+
+    let after = blender_inputs(root, HUMANOID, BLENDER).unwrap();
+    assert_ne!(after, before, "one [aim_table] row moved what fits a clip");
+    let steps = plan(&after);
+    assert!(why(&steps, "walk_back").contains("fitted"), "{steps:?}");
+}
+
+/// Nothing measured the rig, so nothing can tell a finished fetch from one
+/// made by a different one. Refused rather than guessed at.
+#[test]
+fn a_skeleton_nobody_fingerprinted_is_an_error() {
+    let error = fetch_plan(
+        &a_library(),
+        &a_record(b"the glb"),
+        &["walk_back".to_owned()],
+        &OnDisk::default(),
+        false,
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("humanoid"), "got: {error}");
 }
 
 #[test]
@@ -174,7 +338,7 @@ fn a_name_the_library_does_not_declare_lists_what_it_does() {
         &a_library(),
         &LibraryLock::default(),
         &["moonwalk".to_owned()],
-        &BTreeMap::new(),
+        &on_disk(&[]),
         false,
     )
     .unwrap_err()
@@ -267,9 +431,16 @@ esac
 }
 
 /// One executable stub, named after what it does wrong.
+///
+/// Every one answers `--version` first, because a fetch reads the Blender
+/// build before it fits anything.
 fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     let stub = dir.join(name);
-    std::fs::write(&stub, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::write(
+        &stub,
+        format!("#!/bin/sh\n{}{body}", crate::support::answers_its_version()),
+    )
+    .unwrap();
     std::fs::set_permissions(
         &stub,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
@@ -523,6 +694,36 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
         }
     );
     assert_ne!(fetched.download, fetched.glb);
+    // The vendor FBX is not committed, so this record is the only thing that
+    // says the clip on disk was ever measured.
+    let verdict = fetched.verdict.clone().expect("a recorded verdict");
+    assert_eq!(verdict.report, "retarget.walk_back.1");
+    assert_eq!(verdict.worst, Severity::Info);
+    let mut owed: Vec<String> = clip::RETARGET_RULES
+        .iter()
+        .chain(clip::FILE_RULES.iter())
+        .map(|rule| rule.id.to_owned())
+        .collect();
+    owed.sort_unstable();
+    owed.dedup();
+    assert_eq!(
+        verdict.rules, owed,
+        "every rule the retarget owns, both the ones Blender counts and the \
+         ones Rust reads off the file it wrote"
+    );
+    assert_eq!(
+        fetched.fingerprint,
+        xtask_art::lock::blender_inputs(dir.path(), HUMANOID, crate::support::BLENDER).unwrap(),
+        "the rig and the tooling that fitted it"
+    );
+
+    // And it is a small, readable record rather than a copy of the report.
+    let text = std::fs::read_to_string(LibraryLock::path(dir.path())).unwrap();
+    assert!(text.contains("worst: info"), "got: {text}");
+    assert!(
+        text.contains("report: \"retarget.walk_back.1\""),
+        "got: {text}"
+    );
 }
 
 #[tokio::test]

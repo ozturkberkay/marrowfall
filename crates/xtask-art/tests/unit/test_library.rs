@@ -1,6 +1,12 @@
 //! The shared animation library.
 
-use xtask_art::library::{Animation, AnimationLibrary, HUMANOID, LibraryLock, MotionSource};
+use xtask_art::check::profile::Profile;
+use xtask_art::check::{Artifacts, Report, Severity, clip};
+use xtask_art::library::{
+    Animation, AnimationLibrary, ClipFiles, HUMANOID, LibraryLock, MotionSource, Verdict,
+};
+
+use crate::support::repo_root;
 
 #[test]
 fn a_project_with_no_library_yet_reads_as_empty() {
@@ -243,6 +249,20 @@ fn a_download_is_staged_where_derived_art_goes() {
 
 // --- The library lock -----------------------------------------------------
 
+/// Where one retarget attempt's files belong, which is what names a verdict.
+fn an_artifact_set(clip: &str, attempt: u32) -> Artifacts {
+    Artifacts::new(std::path::Path::new("/repo"), "retarget", clip, attempt).unwrap()
+}
+
+/// One stored verdict, as a passing retarget writes it.
+fn a_verdict() -> Verdict {
+    Verdict {
+        report: "retarget.strafe_left.1".to_owned(),
+        worst: Severity::Info,
+        rules: vec!["clip.interpolation".to_owned()],
+    }
+}
+
 #[test]
 fn nothing_fetched_yet_reads_as_an_empty_record() {
     let dir = tempfile::tempdir().unwrap();
@@ -256,8 +276,12 @@ fn a_fetch_record_round_trips_and_ends_with_a_newline() {
     lock.record(
         "strafe_left",
         a_mixamo_source(),
-        b"the download",
-        b"the glb",
+        ClipFiles {
+            download: b"the download",
+            glb: b"the glb",
+        },
+        "0123456789abcdef",
+        a_verdict(),
     );
     lock.save(dir.path()).unwrap();
 
@@ -276,8 +300,12 @@ fn a_fetch_records_both_what_arrived_and_what_was_kept() {
     lock.record(
         "strafe_left",
         a_mixamo_source(),
-        b"the download",
-        b"the glb",
+        ClipFiles {
+            download: b"the download",
+            glb: b"the glb",
+        },
+        "0123456789abcdef",
+        a_verdict(),
     );
     let fetched = &lock.fetched["strafe_left"];
 
@@ -303,6 +331,94 @@ fn a_corrupt_fetch_record_says_how_to_start_over() {
     let error = LibraryLock::load(dir.path()).unwrap_err().to_string();
     assert!(error.contains("library.lock"), "got: {error}");
     assert!(error.contains("re-fetch"), "got: {error}");
+}
+
+/// The vendor file is not committed, so the record in `library.lock` is the
+/// only proof an uncommitted input passed its gates.
+#[test]
+fn a_fetch_records_the_verdict_the_retarget_reached() {
+    let profile = Profile::of(&repo_root(), HUMANOID).unwrap();
+    let mut report = Report::new("retarget", "strafe_left", 1);
+    report
+        .add(clip::INTERPOLATION.measured(&profile, "Hips", 0.0, 1, "clean".to_owned()))
+        .unwrap();
+    report
+        .add(clip::LOOP.skipped(&profile, "Hips", 1, "not a loop".to_owned()))
+        .unwrap();
+    let verdict = Verdict::of(&report, &an_artifact_set("strafe_left", 1));
+
+    assert_eq!(verdict.worst, Severity::Info);
+    assert_eq!(
+        verdict.report, "retarget.strafe_left.1",
+        "which names the attempt too"
+    );
+    assert_eq!(
+        verdict.rules,
+        vec![clip::INTERPOLATION.id.to_owned(), clip::LOOP.id.to_owned()],
+        "every rule that reported, so one that went quiet is visible here too"
+    );
+    assert!(!verdict.failed());
+}
+
+/// A verdict is what a re-fetch decision reads, so failing has to be a
+/// question anything can ask it.
+#[test]
+fn a_verdict_that_failed_its_gates_says_so() {
+    let mut report = Report::new("retarget", "strafe_left", 2);
+    report
+        .add(clip::INTERPOLATION.measured(
+            &Profile::of(&repo_root(), HUMANOID).unwrap(),
+            "Hips",
+            99.0,
+            2,
+            "four channels left on Bezier".to_owned(),
+        ))
+        .unwrap();
+    let verdict = Verdict::of(&report, &an_artifact_set("strafe_left", 2));
+
+    assert_eq!(verdict.worst, Severity::Error);
+    assert!(verdict.failed());
+}
+
+#[test]
+fn a_fetch_record_carries_the_rig_it_was_fitted_to() {
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "strafe_left",
+        a_mixamo_source(),
+        ClipFiles {
+            download: b"the download",
+            glb: b"the glb",
+        },
+        "0123456789abcdef",
+        a_verdict(),
+    );
+
+    assert_eq!(lock.fetched["strafe_left"].fingerprint, "0123456789abcdef");
+    assert_eq!(lock.fetched["strafe_left"].verdict, Some(a_verdict()));
+}
+
+/// A record written before either field existed loads, and reads as having
+/// no verdict, which is what sends it back to be fetched again.
+#[test]
+fn a_record_from_before_the_verdict_loads_without_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = LibraryLock::path(dir.path());
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"LibraryLock(fetched: {"strafe_left": Fetched(
+            source: Mixamo(product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9"),
+            download: "aaaaaaaaaaaaaaaa",
+            glb: "bbbbbbbbbbbbbbbb",
+        )})
+"#,
+    )
+    .unwrap();
+
+    let loaded = LibraryLock::load(dir.path()).unwrap();
+    assert_eq!(loaded.fetched["strafe_left"].verdict, None);
+    assert!(loaded.fetched["strafe_left"].fingerprint.is_empty());
 }
 
 #[test]

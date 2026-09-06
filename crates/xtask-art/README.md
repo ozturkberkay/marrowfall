@@ -14,9 +14,10 @@ cargo art check --list-rules              # every gate: limit, comparison, unit,
 
 A run asks nothing except before it re-spends: the one prompt left is
 `ConfirmSpend`, on a paid stage that is already recorded as complete.
-`--retry` is what re-runs those stages, and `--yes` answers the prompt for an
-unattended run. Nothing pauses for a human to look at a stage's output;
-the gates below decide, and a pull request is where a human signs off.
+`--retry`, `--from` and `--only` are what re-run those stages, and `--yes`
+answers the prompt for an unattended run. Nothing pauses for a human to look
+at a stage's output; the gates below decide, and a pull request is where a
+human signs off.
 
 `check` reads the art on disk and prints one line per defect, one report per
 rule set. It measures the four concept views against the five `concept.*`
@@ -134,7 +135,8 @@ set already there is either one a previous run left failing or one this run
 was asked to replace. The cost of that is the only case it loses on, a run
 that died after three of the four views arrived, which pays for all four
 again. Whether the stage runs at all is the plan's decision, which reads the
-lock, so a completed concept stage is not re-run without `--retry`.
+lock, so a completed concept stage is not re-run without `--retry`,
+`--from concept` or `--only concept`.
 
 A Meshy stage is never wrapped. Its gates run inside the stage, before the
 credits, and a failure stops the run: a mesh generation is expensive and a
@@ -246,7 +248,7 @@ not fifty.
 ## Stages
 
 Six stages, fixed in code (`Stage::all`), not declared per character. They are
-what `art/characters/<name>.lock` records:
+what `art/characters/<name>/spec.lock` records:
 
 | Stage | Cost | Runs in | Does |
 |---|---|---|---|
@@ -271,7 +273,60 @@ any other way: `bake_sprites.py`, `check_source.py`, `mesh_clean.py`,
 `cargo art` shells out to `blender --background --python …` for those five,
 and does everything else itself. Every published limit those scripts report
 against is passed to them as `--limit RULE=NUMBER`, read off the same rule
-list `--list-rules` prints, so no script holds a second copy of a number.
+list `--list-rules` prints, so no script holds a second copy of a number. It
+finds `blender` on `PATH`, or at the path `MARROWFALL_BLENDER_BIN` names when
+it is set.
+
+## What the lock covers, and how to force a stage
+
+Every stage's fingerprint covers the spec fields it reads and the content of
+the files it opens, so a replaced input cannot report `cached`:
+
+| Stage | Reads |
+|---|---|
+| `concept` | the description, and the pose its body plan injects |
+| `model` | the remesh and texture settings, and all four concept views |
+| `rig` | the height, the skeleton, `cleanup`, `symmetry`, the Meshy action ids, `bare.glb` and `clean.glb` |
+| `download` | the same as `rig` |
+| `bake` | the sprite settings, `model.glb`, `humanoid.glb`, `humanoid.toml`, every animation GLB it plays, the Blender build and every script |
+| `pack` | the name, `sprite_height`, the directions, and which clips loop |
+
+`pack` is the exception: it reads hundreds of staging PNGs and hashes none of
+them. That is safe because those PNGs have exactly one author. Recording a
+bake clears every stage after it, so a re-bake always re-packs, and
+`stages::bake` deletes the `*.png` it is about to rewrite, so no frame of an
+older shape survives to be packed.
+
+`model`, `bake` and `pack` also carry `LOCAL_PIPELINE_VERSION`, because a
+fingerprint over inputs cannot say "the code that produced this was fixed".
+`concept` and `rig` do not: a local fix must never re-spend on OpenAI or on
+rigging. Bumping it does re-run the model stage, which costs Meshy credits.
+
+Content, never a date, so a fresh checkout is not a rebuild. A **committed**
+input that is missing is an error rather than a hash of nothing:
+`humanoid.glb`, `humanoid.toml` and the scripts have to be there. Everything
+the pipeline **produces** reads the word `absent` until it exists, which is
+why a character with no concept art yet can still be planned.
+
+`bare.glb` and `clean.glb` are derived and gitignored, so on a machine that
+does not hold them the `rig` record reads stale. Nothing spends on that: while
+the committed `model.glb` is on disk a plan skips every stage up to
+`download`.
+
+Four paths spend money, and each of them is typed by hand: `--from concept`,
+`--from model` and `--from rig`, the same three with `--only`, and `--retry`.
+A paid stage the lock still calls **current** asks before it bills. A paid
+stage the lock calls **stale** does not ask, because forcing it was already
+the answer, so `cargo art status <name>` never recommends one: it lists every
+stale stage, says what each paid one would bill, and offers the earliest free
+stage as the one command that rebuilds for nothing. Every paid stage runs
+before every free one, so `--from` a free stage cannot reach a bill.
+
+The Blender build is an input too, and only the `bake` row reads it. On a
+machine with no Blender that row reads `unknown` with the reason, the other
+five still report, and `bake` drops out of the recommendation. A `run` whose
+plan reaches the bake says the same thing before the first paid stage instead,
+and `run --only concept` and `run --only model` need no Blender at all.
 
 ## Shared animations
 
@@ -291,6 +346,14 @@ the motion and the femur ratio can size the step to our own body, and at the
 rate `source_fps` declares. `source_fps` is the clip's own rate and `fps` is
 the sprite sampling rate: `idle` is sampled 8 times a second out of a clip
 authored at 24.
+
+Each fetch is recorded in `art/animations/library.lock`: what arrived, what
+was kept, the rig and tooling that fitted it, and the **verdict** its gates
+reached, which is every rule that reported, the worst severity, and the report
+to open. The vendor FBX is not committed, so that record is the only evidence
+an uncommitted input was ever measured. A clip with no verdict, with a failing
+one, or fitted by a rig or a Blender that has since changed is fetched again,
+and the step says which of those it was.
 
 The first run opens Chrome at Mixamo and waits while you log in, because
 exporting needs a session credential that lasts about a day. Nothing is stored:

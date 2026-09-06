@@ -682,7 +682,7 @@ fn the_fixer_is_handed_every_number_it_runs_on() {
     assert_eq!(
         fed,
         paths.clean_glb(),
-        "rigging is fed what the fixer wrote"
+        "the mesh sent to rigging is what the fixer wrote"
     );
     let argv = std::fs::read_to_string(argv_dump(dir.path())).unwrap();
     for published in [
@@ -698,7 +698,7 @@ fn the_fixer_is_handed_every_number_it_runs_on() {
 
 /// And every mesh rule reports there, so the step cannot go quiet on one.
 /// The file rules read **both** meshes, the cleaned one less the two it
-/// cannot answer: the file rigging is sent has to have passed them too.
+/// cannot answer: the file sent to rigging has to have passed them too.
 #[test]
 fn the_fixer_step_reports_every_file_rule_on_both_meshes() {
     let dir = tempfile::tempdir().unwrap();
@@ -813,8 +813,8 @@ fn a_spec_that_declines_symmetry_asks_the_fixer_not_to_mirror() {
     }
 }
 
-/// `cleanup: false` runs no Blender at all, and rigging is fed the mesh as
-/// it arrived.
+/// `cleanup: false` runs no Blender at all, and the mesh sent to rigging is
+/// the one that arrived.
 #[test]
 fn a_spec_that_declines_the_cleanup_runs_no_fixer() {
     let dir = tempfile::tempdir().unwrap();

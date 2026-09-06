@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::check::{Artifacts, Report, Severity};
+
 /// This project's standard biped: 24 bones, no fingers, named by Meshy's
 /// auto-rigger. A hand-rigged one must match `art/skeletons/humanoid.toml` to
 /// be the same skeleton.
@@ -255,6 +257,57 @@ impl AnimationLibrary {
     }
 }
 
+/// What the retarget's gates said about one clip.
+///
+/// The vendor file is not committed, so this is the only record that an
+/// uncommitted input passed them. Small on purpose: the findings themselves
+/// are in the report this names, and a lock has to stay diffable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Verdict {
+    /// `<stage>.<item>.<attempt>` under `art/staging/reports/`, which is
+    /// where the attempt number is too.
+    pub report: String,
+    /// The worst thing any rule filed.
+    pub worst: Severity,
+    /// Every rule that reported, so a rule that went quiet is visible here
+    /// too rather than only in a report nobody kept.
+    pub rules: Vec<String>,
+}
+
+impl Verdict {
+    /// Reads one off the report the retarget wrote, named by the same
+    /// [`Artifacts`] the runner asked that script for.
+    pub fn of(report: &Report, artifacts: &Artifacts) -> Self {
+        let mut rules: Vec<String> = report
+            .findings()
+            .iter()
+            .map(|finding| finding.rule.clone())
+            .collect();
+        rules.sort_unstable();
+        rules.dedup();
+        Self {
+            report: artifacts.stem().to_owned(),
+            worst: report.worst(),
+            rules,
+        }
+    }
+
+    /// Whether the gates refused this clip.
+    pub fn failed(&self) -> bool {
+        self.worst == Severity::Error
+    }
+}
+
+/// The two files one fetch produced. Named, because both are bytes and
+/// transposing them would record each under the other's fingerprint.
+#[derive(Debug, Clone, Copy)]
+pub struct ClipFiles<'a> {
+    /// What the vendor sent.
+    pub download: &'a [u8],
+    /// What the retarget wrote from it.
+    pub glb: &'a [u8],
+}
+
 /// What one fetch produced. Recorded so a re-run skips finished work, and so
 /// a reviewer can tell which upstream motion made the file on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,6 +318,15 @@ pub struct Fetched {
     pub download: String,
     /// Fingerprint of the GLB the retarget wrote from it.
     pub glb: String,
+    /// What fitted it: the canonical rig, its profile, the Blender build and
+    /// the scripts, from [`crate::lock::blender_inputs`]. A record written
+    /// before this existed carries none and is fetched again.
+    #[serde(default)]
+    pub fingerprint: String,
+    /// What the gates said. A record with none is fetched again, because
+    /// nothing says the file on disk was ever measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<Verdict>,
 }
 
 /// Machine-owned record of every fetched clip: a sidecar to `library.ron`,
@@ -306,13 +368,22 @@ impl LibraryLock {
     }
 
     /// Records one fetch, replacing whatever was there.
-    pub fn record(&mut self, name: &str, source: MotionSource, download: &[u8], glb: &[u8]) {
+    pub fn record(
+        &mut self,
+        name: &str,
+        source: MotionSource,
+        files: ClipFiles<'_>,
+        fingerprint: &str,
+        verdict: Verdict,
+    ) {
         self.fetched.insert(
             name.to_owned(),
             Fetched {
                 source,
-                download: crate::lock::digest(download),
-                glb: crate::lock::digest(glb),
+                download: crate::lock::digest(files.download),
+                glb: crate::lock::digest(files.glb),
+                fingerprint: fingerprint.to_owned(),
+                verdict: Some(verdict),
             },
         );
     }

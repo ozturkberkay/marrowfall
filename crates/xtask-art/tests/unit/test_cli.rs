@@ -1,4 +1,6 @@
-use crate::support::a_library;
+use std::path::Path;
+
+use crate::support::{a_library, a_tree, inputs};
 use xtask_art::cli::{RunOptions, Step, plan};
 use xtask_art::library::AnimationLibrary;
 use xtask_art::lock::{Lock, Stage, StageRecord, fingerprint};
@@ -10,7 +12,12 @@ fn spec() -> CharacterSpec {
     spec
 }
 
-fn completed(spec: &CharacterSpec, stages: &[Stage], library: &AnimationLibrary) -> Lock {
+fn completed(
+    root: &Path,
+    spec: &CharacterSpec,
+    stages: &[Stage],
+    library: &AnimationLibrary,
+) -> Lock {
     let mut lock = Lock::default();
     for stage in stages {
         // Insert directly: `record` deliberately clears downstream stages,
@@ -18,7 +25,7 @@ fn completed(spec: &CharacterSpec, stages: &[Stage], library: &AnimationLibrary)
         lock.stages.insert(
             *stage,
             StageRecord {
-                fingerprint: fingerprint(*stage, spec, library),
+                fingerprint: fingerprint(*stage, &inputs(root, spec, library)).unwrap(),
                 ..StageRecord::default()
             },
         );
@@ -30,13 +37,15 @@ fn completed(spec: &CharacterSpec, stages: &[Stage], library: &AnimationLibrary)
 fn a_fresh_character_runs_every_stage() {
     let library = a_library();
     let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions::default(),
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(steps.len(), Stage::all().len());
     assert!(steps.iter().all(|step| matches!(step, Step::Run(_))));
 }
@@ -45,8 +54,16 @@ fn a_fresh_character_runs_every_stage() {
 fn completed_stages_are_reported_as_cached() {
     let library = a_library();
     let spec = spec();
-    let lock = completed(&spec, &[Stage::Concept, Stage::Model], &library);
-    let steps = plan(&lock, &spec, &library, RunOptions::default(), false);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &[Stage::Concept, Stage::Model], &library);
+    let steps = plan(
+        &lock,
+        &inputs(root, &spec, &library),
+        RunOptions::default(),
+        false,
+    )
+    .unwrap();
     assert_eq!(steps[0], Step::Cached(Stage::Concept));
     assert_eq!(steps[1], Step::Cached(Stage::Model));
     assert_eq!(steps[2], Step::Run(Stage::Rig));
@@ -57,17 +74,19 @@ fn completed_stages_are_reported_as_cached() {
 fn rerunning_local_stages_never_reaches_a_paid_stage() {
     let library = a_library();
     let spec = spec();
-    let lock = completed(&spec, &Stage::all(), &library);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &Stage::all(), &library);
     let steps = plan(
         &lock,
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             from: Some(Stage::Bake),
             ..RunOptions::default()
         },
         false,
-    );
+    )
+    .unwrap();
     assert!(
         steps.iter().all(|step| !matches!(
             step,
@@ -84,17 +103,19 @@ fn rerunning_local_stages_never_reaches_a_paid_stage() {
 fn from_a_paid_stage_asks_before_spending() {
     let library = a_library();
     let spec = spec();
-    let lock = completed(&spec, &Stage::all(), &library);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &Stage::all(), &library);
     let steps = plan(
         &lock,
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             from: Some(Stage::Concept),
             ..RunOptions::default()
         },
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(steps[0], Step::ConfirmSpend(Stage::Concept));
     assert_eq!(steps[1], Step::ConfirmSpend(Stage::Model));
     assert_eq!(
@@ -110,17 +131,19 @@ fn from_a_paid_stage_asks_before_spending() {
 fn only_a_paid_stage_asks_before_spending() {
     let library = a_library();
     let spec = spec();
-    let lock = completed(&spec, &Stage::all(), &library);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &Stage::all(), &library);
     let steps = plan(
         &lock,
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             only: Some(Stage::Model),
             ..RunOptions::default()
         },
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(steps, vec![Step::ConfirmSpend(Stage::Model)]);
 }
 
@@ -128,16 +151,18 @@ fn only_a_paid_stage_asks_before_spending() {
 fn only_runs_exactly_one_stage() {
     let library = a_library();
     let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             only: Some(Stage::Bake),
             ..RunOptions::default()
         },
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(steps, vec![Step::Run(Stage::Bake)]);
 }
 
@@ -145,17 +170,19 @@ fn only_runs_exactly_one_stage() {
 fn retry_forces_completed_stages_to_run_again() {
     let library = a_library();
     let spec = spec();
-    let lock = completed(&spec, &Stage::all(), &library);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &Stage::all(), &library);
     let steps = plan(
         &lock,
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             retry: true,
             ..RunOptions::default()
         },
         false,
-    );
+    )
+    .unwrap();
     assert_eq!(steps[0], Step::ConfirmSpend(Stage::Concept), "paid: asks");
     assert_eq!(steps[4], Step::Run(Stage::Bake), "free: just runs");
 }
@@ -167,13 +194,15 @@ fn retry_forces_completed_stages_to_run_again() {
 fn an_existing_checkpoint_prevents_regenerating_it() {
     let library = a_library();
     let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions::default(),
         true,
-    );
+    )
+    .unwrap();
 
     for stage in [Stage::Concept, Stage::Model, Stage::Rig, Stage::Download] {
         let step = steps
@@ -190,16 +219,18 @@ fn an_existing_checkpoint_prevents_regenerating_it() {
 fn an_existing_checkpoint_can_be_overridden_explicitly() {
     let library = a_library();
     let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             only: Some(Stage::Model),
             ..RunOptions::default()
         },
         true,
-    );
+    )
+    .unwrap();
     assert_eq!(steps, vec![Step::Run(Stage::Model)]);
 }
 
@@ -210,16 +241,18 @@ fn an_existing_checkpoint_can_be_overridden_explicitly() {
 fn from_overrides_an_existing_checkpoint() {
     let library = a_library();
     let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions {
             from: Some(Stage::Model),
             ..RunOptions::default()
         },
         true,
-    );
+    )
+    .unwrap();
     assert_eq!(steps[0], Step::Run(Stage::Model));
 }
 
@@ -227,16 +260,18 @@ fn from_overrides_an_existing_checkpoint() {
 fn unriggable_characters_skip_the_rig_stage() {
     let library = a_library();
     let mut spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
     spec.subject.kind = CharacterType::Quadruped;
     spec.animations.clear();
 
     let steps = plan(
         &Lock::default(),
-        &spec,
-        &library,
+        &inputs(root, &spec, &library),
         RunOptions::default(),
         false,
-    );
+    )
+    .unwrap();
     assert!(matches!(steps[2], Step::Skipped(Stage::Rig, _)));
     assert_eq!(steps[3], Step::Run(Stage::Download));
 }
@@ -245,10 +280,18 @@ fn unriggable_characters_skip_the_rig_stage() {
 fn stale_fingerprints_cause_a_rerun() {
     let library = a_library();
     let mut spec = spec();
-    let lock = completed(&spec, &Stage::all(), &library);
+    let tree = a_tree();
+    let root = tree.path();
+    let lock = completed(root, &spec, &Stage::all(), &library);
     spec.bake.sprite_height = 200;
 
-    let steps = plan(&lock, &spec, &library, RunOptions::default(), false);
+    let steps = plan(
+        &lock,
+        &inputs(root, &spec, &library),
+        RunOptions::default(),
+        false,
+    )
+    .unwrap();
     assert_eq!(
         steps[0],
         Step::Cached(Stage::Concept),

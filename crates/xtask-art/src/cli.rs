@@ -6,7 +6,7 @@
 //! free to re-run. That boundary is why tweaking a sprite setting never
 //! re-spends credits.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
@@ -15,11 +15,12 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
+use crate::blender::Build;
 use crate::check::aim::{self, AimTable};
 use crate::check::profile::Profile;
 use crate::check::{self, Finding, Report, Severity, Symmetry, mesh, rig};
-use crate::library::{AnimationLibrary, LibraryLock, MotionSource};
-use crate::lock::{Lock, Provider, Stage, StageRecord, TaskRef};
+use crate::library::{AnimationLibrary, ClipFiles, LibraryLock, MotionSource};
+use crate::lock::{self, Inputs, Lock, Provider, Stage, StageRecord, TaskRef};
 use crate::providers::mixamo::{self, session};
 use crate::spec::{CharacterSpec, CharacterType, Paths, View};
 
@@ -116,8 +117,15 @@ pub enum Step {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchStep {
     /// Download it, fit it to the canonical rig, and record it.
-    Fetch { name: String, product_id: String },
-    /// The file on disk is the one the lock recorded.
+    Fetch {
+        name: String,
+        product_id: String,
+        /// What made this necessary, printed so a re-fetch is never a
+        /// surprise.
+        why: &'static str,
+    },
+    /// The file on disk is the one the lock recorded, fitted by the rig and
+    /// the tooling that are still here, and its gates passed.
     Cached(String),
     /// Not this command's business: bought with a rig, or hand-authored.
     Skipped(String, &'static str),
@@ -126,15 +134,24 @@ pub enum FetchStep {
     Changed(String),
 }
 
+/// What [`fetch_plan`] reads off disk, gathered before it so the plan itself
+/// does no IO.
+#[derive(Debug, Clone, Default)]
+pub struct OnDisk {
+    /// Fingerprint of every animation GLB that exists, by library name. What
+    /// tells a finished fetch apart from a file edited by hand.
+    pub glb: BTreeMap<String, String>,
+    /// What would fit a clip today, by skeleton: the canonical rig, its
+    /// profile, the Blender build and the scripts.
+    pub retarget: BTreeMap<String, String>,
+}
+
 /// Decides what to do with every requested animation. Pure: no IO.
-///
-/// `on_disk` is the fingerprint of each animation GLB that exists, which is
-/// what tells a finished fetch apart from a file edited by hand.
 pub fn fetch_plan(
     library: &AnimationLibrary,
     lock: &LibraryLock,
     names: &[String],
-    on_disk: &BTreeMap<String, String>,
+    on_disk: &OnDisk,
     force: bool,
 ) -> Result<Vec<FetchStep>> {
     let requested: Vec<&str> = if names.is_empty() {
@@ -146,7 +163,8 @@ pub fn fetch_plan(
     requested
         .into_iter()
         .map(|name| {
-            let product_id = match &library.get(name)?.source {
+            let animation = library.get(name)?;
+            let product_id = match &animation.source {
                 MotionSource::Meshy { .. } => {
                     return Ok(FetchStep::Skipped(
                         name.to_owned(),
@@ -161,21 +179,47 @@ pub fn fetch_plan(
                 }
                 MotionSource::Mixamo { product_id } => product_id.clone(),
             };
-            let fetch = FetchStep::Fetch {
+            let fetch = |why| FetchStep::Fetch {
                 name: name.to_owned(),
-                product_id,
+                product_id: product_id.clone(),
+                why,
             };
             if force {
-                return Ok(fetch);
+                return Ok(fetch("--force"));
             }
-            let recorded = lock.fetched.get(name).map(|fetched| fetched.glb.as_str());
-            Ok(match on_disk.get(name) {
-                None => fetch,
-                Some(hash) if recorded == Some(hash.as_str()) => FetchStep::Cached(name.to_owned()),
-                Some(_) => FetchStep::Changed(name.to_owned()),
+            let fitted_by = fitted_by(on_disk, &animation.skeleton)?;
+            let Some(hash) = on_disk.glb.get(name) else {
+                return Ok(fetch("nothing on disk"));
+            };
+            let Some(record) = lock.fetched.get(name) else {
+                // On disk with nothing recorded: someone put it there.
+                return Ok(FetchStep::Changed(name.to_owned()));
+            };
+            if record.glb != *hash {
+                // Recorded, but not these bytes: someone edited it.
+                return Ok(FetchStep::Changed(name.to_owned()));
+            }
+            Ok(match &record.verdict {
+                None => fetch("nothing recorded a verdict for the file on disk"),
+                Some(verdict) if verdict.failed() => fetch("the recorded verdict failed its gates"),
+                Some(_) if record.fingerprint != fitted_by => {
+                    fetch("the rig or the tooling it was fitted with has changed")
+                }
+                Some(_) => FetchStep::Cached(name.to_owned()),
             })
         })
         .collect()
+}
+
+/// What would fit a clip on this skeleton today. Refused rather than guessed
+/// at: without it nothing can tell a finished fetch from one fitted by a rig
+/// that has since been replaced.
+fn fitted_by<'a>(on_disk: &'a OnDisk, skeleton: &str) -> Result<&'a str> {
+    on_disk
+        .retarget
+        .get(skeleton)
+        .map(String::as_str)
+        .with_context(|| format!("nothing fingerprinted the {skeleton:?} skeleton's rig"))
 }
 
 /// Options affecting which stages run.
@@ -186,52 +230,46 @@ pub struct RunOptions {
     pub retry: bool,
 }
 
-/// Decides what to do with every stage. Pure: no IO, no side effects. A GLB
-/// present without a lock record came from outside this tool and wins, since
-/// AI generation is not reproducible.
+/// Decides what to do with every stage. A GLB present without a lock record
+/// came from outside this tool and wins, since AI generation is not
+/// reproducible.
 pub fn plan(
     lock: &Lock,
-    spec: &CharacterSpec,
-    library: &AnimationLibrary,
+    inputs: &Inputs<'_>,
     options: RunOptions,
     checkpoint_on_disk: bool,
-) -> Vec<Step> {
-    // Completion is judged *before* `--from` invalidates anything, so an
-    // explicit `--from concept` still warns before re-spending on a stage that
-    // had already succeeded.
-    let complete: BTreeSet<Stage> = Stage::all()
-        .into_iter()
-        .filter(|stage| lock.is_current(*stage, spec, library))
-        .collect();
-
+) -> Result<Vec<Step>> {
     let selected: Vec<Stage> = match (options.only, options.from) {
         (Some(only), _) => vec![only],
         (None, Some(from)) => Stage::all().into_iter().filter(|s| *s >= from).collect(),
         (None, None) => Stage::all().to_vec(),
     };
 
-    selected
-        .into_iter()
-        .map(|stage| {
-            if !spec.subject.kind.can_be_rigged() && stage == Stage::Rig {
-                return Step::Skipped(stage, "body plan cannot be auto-rigged");
-            }
-            let done = complete.contains(&stage);
-            // `--from` and `--only` both mean "do this again", so they must
-            // not silently reuse the cache, but they must still confirm
-            // before spending.
-            let explicitly_forced =
-                options.retry || options.only == Some(stage) || options.from.is_some();
-            if checkpoint_on_disk && !done && !explicitly_forced && stage <= Stage::Download {
-                return Step::Skipped(stage, "checkpoint GLB already on disk");
-            }
-            match (done, explicitly_forced, stage.costs_credits()) {
-                (true, false, _) => Step::Cached(stage),
-                (true, true, true) => Step::ConfirmSpend(stage),
-                _ => Step::Run(stage),
-            }
-        })
-        .collect()
+    let mut steps = Vec::new();
+    for stage in selected {
+        if !inputs.spec.subject.kind.can_be_rigged() && stage == Stage::Rig {
+            steps.push(Step::Skipped(stage, "body plan cannot be auto-rigged"));
+            continue;
+        }
+        // Only the selected stages are fingerprinted, so `--only concept`
+        // never opens what the bake reads and never asks for Blender.
+        let done = lock.is_current(stage, inputs)?;
+        // `--from` and `--only` both mean "do this again", so they must not
+        // silently reuse the cache, but they must still confirm before
+        // spending.
+        let explicitly_forced =
+            options.retry || options.only == Some(stage) || options.from.is_some();
+        if checkpoint_on_disk && !done && !explicitly_forced && stage <= Stage::Download {
+            steps.push(Step::Skipped(stage, "checkpoint GLB already on disk"));
+            continue;
+        }
+        steps.push(match (done, explicitly_forced, stage.costs_credits()) {
+            (true, false, _) => Step::Cached(stage),
+            (true, true, true) => Step::ConfirmSpend(stage),
+            _ => Step::Run(stage),
+        });
+    }
+    Ok(steps)
 }
 
 /// Locates the workspace root. `CARGO_MANIFEST_DIR` covers the cargo alias;
@@ -283,22 +321,34 @@ pub async fn run(
     // declared; the library's error lists what is available.
     library.resolve(&spec.animations, &spec.subject.skeleton)?;
 
+    // Asked for its build only when a stage needs it, so `--only concept`
+    // runs on a machine with no Blender.
+    let blender = Build::detected();
+    let inputs = Inputs {
+        root,
+        spec: &spec,
+        library: &library,
+        blender: &blender,
+    };
+
     let mut lock = Lock::load(&paths.lock())?;
     // Note: the lock is deliberately NOT invalidated up front. `plan` already
     // forces every stage from `--from` onward, and `Lock::record` cascades once
     // a stage actually succeeds, so declining a spend prompt leaves the
     // recorded work, and its task ids, intact.
-    let steps = plan(
-        &lock,
-        &spec,
-        &library,
-        options,
-        paths.character_glb().exists(),
-    );
+    let steps = plan(&lock, &inputs, options, paths.character_glb().exists())?;
+    // A run that reaches the bake needs Blender, and finding that out after
+    // three paid stages is an expensive way to learn it.
+    if steps
+        .iter()
+        .any(|step| matches!(step, Step::Run(Stage::Bake) | Step::Cached(Stage::Bake)))
+    {
+        blender.read()?;
+    }
 
     for step in steps {
         let stage = match step {
-            Step::Cached(stage) if lock.is_current(stage, &spec, &library) => {
+            Step::Cached(stage) if lock.is_current(stage, &inputs)? => {
                 println!("{stage}: cached");
                 continue;
             }
@@ -364,7 +414,7 @@ pub async fn run(
         if let Some(note) = &record.note {
             println!("  {note}");
         }
-        lock.record(stage, &spec, &library, record);
+        lock.record(stage, &inputs, record)?;
         lock.save(&paths.lock())?;
     }
 
@@ -459,12 +509,22 @@ pub async fn report_balance(provider: Provider) {
 pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
     let library = AnimationLibrary::load(root)?;
     let mut lock = LibraryLock::load(root)?;
-    let steps = fetch_plan(&library, &lock, names, &glb_digests(&library, root)?, force)?;
+    // Read once, so every clip this run fits is recorded against one build.
+    let blender = Build::detected();
+    let on_disk = OnDisk {
+        glb: glb_digests(&library, root)?,
+        retarget: retarget_digests(&library, root, blender.read()?)?,
+    };
+    let steps = fetch_plan(&library, &lock, names, &on_disk, force)?;
 
     let mut wanted = Vec::new();
     for step in steps {
         match step {
-            FetchStep::Fetch { name, product_id } => wanted.push((name, product_id)),
+            FetchStep::Fetch {
+                name,
+                product_id,
+                why,
+            } => wanted.push((name, product_id, why)),
             FetchStep::Cached(name) => println!("{name}: already fetched"),
             FetchStep::Skipped(name, why) => println!("{name}: skipped ({why})"),
             FetchStep::Changed(name) => println!(
@@ -482,8 +542,8 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
     let token = mixamo_session()?;
     let client = mixamo::Client::new()?;
     // One at a time: Mixamo rate limits, and a clip takes seconds.
-    for (name, product_id) in wanted {
-        println!("{name}: fetching {product_id}…");
+    for (name, product_id, why) in wanted {
+        println!("{name}: fetching {product_id} ({why})…");
         let animation = library.get(&name)?;
         let fbx = client
             .motion_fbx(&product_id, animation.source_fps, &token)
@@ -498,7 +558,7 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
         // from here, and nothing downstream still carries it.
         crate::stages::check_source(&download, &name, animation, root)?;
         let glb = library.glb(root, &name);
-        crate::stages::retarget(&download, &glb, &name, animation, root)?;
+        let verdict = crate::stages::retarget(&download, &glb, &name, animation, root)?;
 
         let fitted = std::fs::read(&glb).with_context(|| {
             format!(
@@ -506,11 +566,42 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
                 glb.display()
             )
         })?;
-        lock.record(&name, animation.source.clone(), &fbx, &fitted);
+        lock.record(
+            &name,
+            animation.source.clone(),
+            ClipFiles {
+                download: &fbx,
+                glb: &fitted,
+            },
+            fitted_by(&on_disk, &animation.skeleton)?,
+            verdict,
+        );
         lock.save(root)?;
         println!("  → {}", glb.display());
     }
     Ok(())
+}
+
+/// What would fit a clip today, one entry per skeleton the library uses.
+fn retarget_digests(
+    library: &AnimationLibrary,
+    root: &Path,
+    blender: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut digests = BTreeMap::new();
+    for skeleton in library
+        .animations
+        .values()
+        .map(|animation| &animation.skeleton)
+    {
+        if !digests.contains_key(skeleton) {
+            digests.insert(
+                skeleton.clone(),
+                crate::lock::blender_inputs(root, skeleton, blender)?,
+            );
+        }
+    }
+    Ok(digests)
 }
 
 /// Fingerprints of the animation GLBs already on disk.
@@ -547,26 +638,27 @@ pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
     let spec = CharacterSpec::load(&paths.spec())?;
     let lock = Lock::load(&paths.lock())?;
     let library = AnimationLibrary::load(root)?;
-
-    let state = |stage: Stage| {
-        if lock.is_current(stage, &spec, &library) {
-            "done"
-        } else if lock.stages.contains_key(&stage) {
-            "stale"
-        } else {
-            "todo"
-        }
+    // Lazy, and this is the command that needs it to be: a machine with no
+    // Blender still gets told what every other stage reads as.
+    let blender = Build::detected();
+    let inputs = Inputs {
+        root,
+        spec: &spec,
+        library: &library,
+        blender: &blender,
     };
+    let states = lock.states(&inputs);
 
     if json {
-        let stages: serde_json::Map<String, serde_json::Value> = Stage::all()
-            .into_iter()
-            .map(|stage| {
+        let stages: serde_json::Map<String, serde_json::Value> = states
+            .iter()
+            .map(|(stage, state)| {
                 (
                     stage.as_str().to_owned(),
                     serde_json::json!({
-                        "state": state(stage),
-                        "note": lock.stages.get(&stage).and_then(|r| r.note.clone()),
+                        "state": state.word(),
+                        "reason": state.reason(),
+                        "note": lock.stages.get(stage).and_then(|r| r.note.clone()),
                     }),
                 )
             })
@@ -583,15 +675,56 @@ pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
     }
 
     println!("{name} ({:?})", spec.subject.kind);
-    for stage in Stage::all() {
-        let note = lock
-            .stages
-            .get(&stage)
-            .and_then(|record| record.note.clone())
-            .unwrap_or_default();
-        println!("  {:<9} {:<5} {note}", stage.as_str(), state(stage));
+    for (stage, state) in &states {
+        // A stage nobody can judge says why instead of what it last noted.
+        let note = match state.reason() {
+            Some(reason) => format!("({reason})"),
+            None => lock
+                .stages
+                .get(stage)
+                .and_then(|record| record.note.clone())
+                .unwrap_or_default(),
+        };
+        println!("  {:<9} {:<7} {note}", stage.as_str(), state.word());
+    }
+    if let Some(hint) = stale_hint(name, &lock::stale(&states)) {
+        println!("\n{hint}");
     }
     Ok(())
+}
+
+/// What `status` says when a record's inputs have moved: what moved, what
+/// each paid stage would bill, and the one command that rebuilds for free.
+///
+/// A paid stage is never the recommendation. `cargo art run --from` does not
+/// ask before re-running a stage the lock already calls stale, so printing
+/// one would be printing a command that spends unprompted.
+pub fn stale_hint(name: &str, stale: &[Stage]) -> Option<String> {
+    if stale.is_empty() {
+        return None;
+    }
+    let named: Vec<&str> = stale.iter().map(|stage| stage.as_str()).collect();
+    let mut lines = vec![format!(
+        "stale, the inputs moved under: {}",
+        named.join(", ")
+    )];
+    for stage in stale {
+        if let Some(provider) = stage.provider() {
+            lines.push(format!(
+                "  {stage} is paid: re-running it bills {}",
+                provider.bills()
+            ));
+        }
+    }
+    // Every paid stage runs before every free one, so `--from` a free stage
+    // cannot reach one that bills.
+    lines.push(match stale.iter().find(|stage| !stage.costs_credits()) {
+        Some(first) => format!("  free to rebuild: `cargo art run {name} --from {first}`"),
+        None => "  every stale stage is paid, so there is nothing to recommend: \
+                 forcing one of the above spends money"
+            .to_owned(),
+    });
+    Some(lines.join("\n"))
 }
 
 /// Validates every spec, then measures the concept views, the rig and the
@@ -743,7 +876,7 @@ fn check_mesh(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
 }
 
 /// Measures the mesh the fixer wrote against the same rules, because that is
-/// the file rigging is sent. `None` when no fixer was asked for, or when one
+/// the file sent to rigging. `None` when no fixer was asked for, or when one
 /// was and has not run yet: the rig stage is what runs it.
 fn check_cleaned(root: &Path, spec: &CharacterSpec) -> Result<Option<usize>> {
     let paths = Paths::new(root, &spec.name);
