@@ -11,6 +11,7 @@ use xtask_art::cli::{
 };
 use xtask_art::lock::{self, Inputs, Lock, Provider, Stage, StageRecord};
 use xtask_art::spec::{CharacterSpec, CharacterType, Paths};
+use xtask_art::spike;
 
 use crate::support::{
     EnvGuard, a_concept_view, a_library, a_spec, a_version_only_blender, inputs, install_library,
@@ -18,7 +19,7 @@ use crate::support::{
 };
 
 use base64::Engine as _;
-use clap::Parser as _;
+use clap::{CommandFactory as _, Parser as _};
 
 /// A repo-shaped temp tree: `cargo art` locates the root by finding `crates/`.
 fn a_repo() -> tempfile::TempDir {
@@ -442,26 +443,34 @@ fn the_spend_prompt_quotes_what_the_stage_costs() {
         spend_prompt(Stage::Rig),
         "  rig already completed and costs credits. Re-run? [y/N] "
     );
+    // The spike is not a stage and buys nothing twice, so it quotes what it
+    // has left to buy rather than what it already has.
+    assert_eq!(
+        spike::spend_prompt(105),
+        "  spike-pose is about to spend 105 credits. Continue? [y/N] "
+    );
 }
 
 #[test]
 fn yes_confirms_a_spend_without_reading_the_terminal() {
     for stage in Stage::all() {
-        assert!(confirm_spend(stage, true, &mut std::io::empty()).unwrap());
+        assert!(confirm_spend(&spend_prompt(stage), true, &mut std::io::empty()).unwrap());
     }
+    assert!(confirm_spend(&spike::spend_prompt(105), true, &mut std::io::empty()).unwrap());
 }
 
 #[test]
 fn a_spend_is_only_confirmed_by_an_explicit_yes() {
+    let asked = spend_prompt(Stage::Model);
     for answer in ["y", "Y", "yes", "YES", " yes \n"] {
         assert!(
-            confirm_spend(Stage::Model, false, &mut answer.as_bytes()).unwrap(),
+            confirm_spend(&asked, false, &mut answer.as_bytes()).unwrap(),
             "{answer:?} should confirm"
         );
     }
     for answer in ["", "n", "no", "\n", "maybe", "yeah"] {
         assert!(
-            !confirm_spend(Stage::Model, false, &mut answer.as_bytes()).unwrap(),
+            !confirm_spend(&asked, false, &mut answer.as_bytes()).unwrap(),
             "{answer:?} must not spend credits"
         );
     }
@@ -538,6 +547,25 @@ fn every_subcommand_parses() {
             ..
         }
     ));
+    let cli = Cli::try_parse_from(["art", "spike-pose", "survivor", "--rig", "--yes"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::SpikePose {
+            ref name,
+            rig: true,
+            yes: true,
+        } if name == "survivor"
+    ));
+    let cli = Cli::try_parse_from(["art", "spike-pose", "survivor"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        Command::SpikePose {
+            rig: false,
+            yes: false,
+            ..
+        }
+    ));
+
     let cli = Cli::try_parse_from(["art", "check", "survivor", "--sheet"]).unwrap();
     assert!(matches!(cli.command, Command::Check { sheet: true, .. }));
     assert!(
@@ -547,6 +575,29 @@ fn every_subcommand_parses() {
     assert!(
         Cli::try_parse_from(["art", "check", "--list-rules", "--sheet"]).is_err(),
         "the rule list and the contact sheet are two questions"
+    );
+}
+
+/// `--rig` rigs every mode, whatever that mode's mesh gates read, so the help
+/// has to say that and not the opposite. A promise the code does not keep is
+/// how 10 credits get spent on art nobody meant to buy.
+#[test]
+fn the_rig_flag_promises_what_the_spike_actually_does() {
+    let command = Cli::command();
+    let spike = command
+        .get_subcommands()
+        .find(|sub| sub.get_name() == "spike-pose")
+        .expect("spike-pose is a subcommand");
+    let flag = spike
+        .get_arguments()
+        .find(|arg| arg.get_id() == "rig")
+        .expect("--rig is one of its arguments");
+
+    assert_eq!(
+        flag.get_help().expect("--rig is documented").to_string(),
+        "Rig each cleaned mesh, and measure every `rig.*` rule on it. 5 credits per mode, \
+         whatever that mesh's gates read, because the limits are what this command is \
+         calibrating"
     );
 }
 

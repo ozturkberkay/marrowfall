@@ -135,7 +135,7 @@ design.
 | 7 | `transform_apply(scale=True)` rescales rest geometry and leaves location keys byte identical, so their meaning changes 100x. Hips world head goes from 2.316 m to 231.599 m. | same report, section 3 |
 | 8 | Mesh topology, one file, three states: raw glTF 13,368 boundary edges, welded 171, welded and cleaned 27. Welded non-manifold 8, 27,508 vertices. Before welding: 34,490 vertices and 54,864 tris. Islands: 7 inside `char1`, plus the stray `Icosphere` as a separate object. Every figure is `model.glb`. **T3 re-measured all of these in Rust and reproduced every one exactly**, and it corrects two: `model.glb` at HEAD holds no `Icosphere`, so the island count is 7, and the self-intersection figure of 16 could not be reproduced by any threshold (T3 reads 861 faces meeting, 41 penetrating). The unwelded reading is 413 islands and **0** non-manifold edges, because a seam splits every edge that would have been shared. | `research_meshy_mesh_repair_options.md:22`, `research_concept_and_model_stage.md:37`, `check/mesh.rs` |
 | 9 | Mesh mirror asymmetry on `model.glb`: mean 0.50, p99 1.76, max 3.02 percent of width, by an independent kd-tree pass. **T3's own BVH pass reads mean 0.490, p99 1.659, max 3.021**, so the two implementations agree on the worst case to three decimals. `symmetrize` ran in 55 ms and drove it to 0.0. `symmetry_mode` is deprecated. | `research_concept_and_model_stage.md:72`, `check/mesh.rs` |
-| 10 | `art/characters/survivor/model.glb` is already the rigged, skinned file. Cleaning geometry there desyncs skin weights: a trial changed vertex count by minus 23. **`bare.glb` still has not been downloaded: the Meshy key in `~/.claude.json` answers 401 to `/v1/balance` and to the model task, so T3 calibrated on `model.glb` welded and marked every `mesh.*` limit provisional.** | `research_meshy_mesh_repair_options.md:59` |
+| 10 | `art/characters/survivor/model.glb` is already the rigged, skinned file. Cleaning geometry there desyncs skin weights: a trial changed vertex count by minus 23. T3 calibrated on `model.glb` welded and marked every `mesh.*` limit provisional, because no key here could download `bare.glb`. **T12 closed that**: the survivor's own paid task answers 404 under the key that works, so it regenerated the bare mesh from the same four views and read every row off it. The real bare mesh is **1.897 m tall, centered on the origin, and its one mesh node has no name**: `height_meters` and `char1` are both created by the rigging call. | `research_meshy_mesh_repair_options.md:59` |
 | 11 | `POST /print/analyze` costs **0 credits**. `POST /print/repair` is 10 credits and **strips textures**, and rigging refuses an untextured mesh. Meshy credits run about 0.013 USD each, from 20 to 30 credits at 0.25 to 0.40 USD. | Meshy API reference, `research_concept_and_model_stage.md:23` |
 | 12 | Rigging accepts `model_url` as a **URL or data URI** of a textured `.glb`, costs 5 credits, and `input_task_id` wins if both are sent. With `model_url` the character must face **+Z in glTF Y-up**. No body size limit is stated. The face limit of 300,000 is stated for `input_task_id`. | `reference.md:643,644,651` |
 | 13 | Meshy's extension returns `FINISHED` from `delete_small_pieces` having deleted nothing, because it measures piece volume in **local** space while its checker measures in **world** space. | `research_meshy_mesh_repair_options.md:54` |
@@ -519,14 +519,15 @@ it took islands 8 to 1, holes 171 to 27, non-manifold 8 to 13, mirror error
 measured every step of it: three of those four figures are different and one
 defect class goes the wrong way**, see correction 1 below.
 
-**Those numbers are provisional limits, not final ones.** They were measured
+**Those numbers were provisional, and T12 replaced them.** They were measured
 on `model.glb`, the rigged file, while the gate and the fixer run on
-`bare.glb`, which still has not been downloaded (fact 10). T3 published the
-`model.glb` figures into `[profile.mesh]` with their headroom and marked every
-one for recalibration. **T10 could not download `bare.glb` either**, so it
-built the fixer against a stand-in lifted out of `model.glb`, set
-`non_manifold_post` from that, and left every row provisional. The steps a
-working key unblocks are in `crates/xtask-art/README.md`.
+`bare.glb`. T3 published the `model.glb` figures into `[profile.mesh]` with
+their headroom and marked every one for recalibration; T10 could not download
+`bare.glb` either, so it built the fixer against a stand-in lifted out of
+`model.glb`. **T12 regenerated the bare mesh** with the same request the
+survivor was built with, because the paid task's own id answers 404 under the
+key that exists, and every row is now read off
+`art/staging/survivor/spike/unset/`. The readings are in correction 3 of T12.
 
 **The two flags are independent.** `cleanup` alone decides whether the Blender
 fixer runs at all, and therefore whether the two post-cleanup rules measure or
@@ -582,7 +583,7 @@ it makes no claim to fix self-intersections or merge islands.
 
 **Rationale:** Rejected, decision 5. It fails the "no worsening" test twice.
 
-#### ⏸ Spike, not a decision: which `pose_mode` to send
+#### ❌ Spike, measured: which `pose_mode` to send. None of them
 
 `image_to_3d_body` sends 8 fields and none is about pose. Empty lets Meshy
 freestyle, which is how we got arms 59 degrees below horizontal against a
@@ -596,7 +597,8 @@ Image to 3D" and `reference.md:382` lists it there. Send one request with the
 field set and a deliberately invalid `image_urls`, and read the 400. An
 unknown-parameter rejection costs no credits.
 
-**Named acceptance test, `spike_pose_mode`.** Regenerate the model stage three
+**Named acceptance test, `spike_pose_mode`, run in T12 as `cargo art
+spike-pose survivor --rig`.** Regenerate the model stage three
 times from the same four committed concept views: unset, `"a-pose"`,
 `"t-pose"`. Run every `mesh.*` and `rig.*` gate on each. `"a-pose"` is adopted
 only if all four hold.
@@ -610,6 +612,18 @@ only if all four hold.
 If `"a-pose"` fails and `"t-pose"` passes 1 to 3 but fails 4, the field stays
 unset and the measurement is recorded. Cost 0.5 days plus about 90 credits at
 0.013 USD each, so about 1.20 USD.
+
+**Rationale: the field stays unset**, and `Subject::pose_mode` exists so the
+measurement can be re-run rather than re-argued. T12 spent 105 credits on it.
+The API does know the field and validates it by name, so step 0 answered yes,
+and then both values it accepts made the mesh far worse: `a-pose` returns
+**1288** boundary edges and `t-pose` **999**, against the unset request's
+**31**. `a-pose` is the only mode whose humerus lands inside its band, and it
+also drops the sideways `Hips` of fact 1 from 95.7 degrees to 5.8, which is
+the best rig this project has measured. It is still not adopted, because
+adoption needs all four items and item 3 fails by 6x. No mode passes item 2:
+every rig Meshy sells bends at the elbow at rest, 18 to 28 degrees. Every
+reading, and what the three contact sheets show, is in the T12 corrections.
 
 ### Where do the gates run, and what happens when one fails?
 
@@ -1030,10 +1044,11 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `rig.child_axis` | 2.0 deg | le |
 | `rig.mirror_length`, `rig.mirror_direction` | 1.0 percent, 1.0 deg | le |
 | `rig.humerus_angle` | 15 deg from the target of 40 | le |
+| `rig.elbow_bend` | 180 deg, the largest angle two directions can be apart, so every reading is `info`. Records rather than gates: every rig Meshy has sold this project bends at rest, 24 degrees on the committed one, and a limit that failed it would fail on every run until that rig is regenerated | le |
 | `rig.world_height` | 5 percent of `spec.subject.height_meters` | le |
 | `rig.bind_deviation`, `rig.aim_table` | 75 deg | le |
 | `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
-| `mesh.non_manifold_post` | 20 edges, from the 12 T10 measured on the stand-in's `clean.glb`. Provisional until a real one exists | le |
+| `mesh.non_manifold_post` | 20 edges. T10 read 12 on a stand-in's `clean.glb` and T12 reads **17** on the real one | le |
 | `mesh.cleanup_effective` | the pre-fixer count, over holes and islands. Self-intersections left the set in T10, correction 1, because mirroring copies them | **lt** |
 | `bake.in_frame` | 1 px of alpha inset. The tightest of the 848 rendered frames is 58 px clear of a border, and a pose the camera cut off reads 0 | ge |
 | `bake.pivot` | 2 px between two opposite directions and their own reflection about the canvas center. **Not ground-line drift**, which reads 28 to 86 px on correct art: correction 1 | le |
@@ -1043,25 +1058,30 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `bake.sampled_frames_are_keys` | 0 rendered frames that are not authored keys | eq |
 | `bake.frame_count`, `atlas.frame_count`, `atlas.trim_boxes`, `atlas.manifest_schema` | 0 defects each: a frame absent from the rendered rectangle, a cell with no rect, a box outside the atlas or its cell, a manifest the game's own reader refuses. These join the `rig.*` family whose limit is not a `[profile]` number | eq |
 
-**The `mesh.*` limits, set by T3.** Every one is **provisional**: they are
-calibrated on `art/characters/survivor/model.glb` welded at 1e-5 m in world
-space, because `bare.glb` could not be downloaded (fact 10). `model.glb` is
-the file **after** rigging, so `bare.glb` may be worse on every row.
-**Recalibrate on `bare.glb` in T10, which is the first task that downloads
-it.**
+**The `mesh.*` limits, set by T3 and recalibrated by T12.** T3 read them off
+`art/characters/survivor/model.glb`, the file **after** rigging, because
+`bare.glb` could not be downloaded (fact 10), and marked every one
+provisional. T12 regenerated the bare mesh with the same request the survivor
+was built with and set them from it:
+`art/staging/survivor/spike/unset/{bare,clean}.glb`, welded at 1e-5 m in world
+space, reported in `art/staging/reports/{mesh,cleaned,cleanup}.survivor-unset.1.json`.
 
-| Rule | Measured on `model.glb` | Limit | Headroom | Comparison |
+| Rule | Measured on the real bare mesh | Limit | Headroom | Comparison |
 |---|---|---|---|---|
-| `mesh.holes` | 171 boundary edges | 200 | 29, 17 percent | le |
-| `mesh.non_manifold` | 8 edges | 10 | 2, 25 percent | le |
-| `mesh.islands` | 7 pieces | 8 | 1, 14 percent | le |
-| `mesh.self_intersect` | 861 faces, in 523 pairs | 1,000 | 139, 16 percent | le |
-| `mesh.mirror` | 3.021 percent of width | 3.5 | 0.479, 16 percent | le |
-| `mesh.world_size` | 1.6999997 m, 1.5e-5 percent off 1.700 | `height_tolerance_percent`, 5 percent | the whole band | le |
-| `mesh.budget` | 54,864 triangles | 300,000, Meshy's stated rigging limit | 245,136, 82 percent | le |
-| `mesh.printability` | not measurable, no key. The design records 179 | 200 | 21, 12 percent | le |
-| `mesh.non_manifold_post` | 12 edges, on the stand-in's `clean.glb` | 20 | 8, 40 percent | le |
+| `mesh.holes` | 31 boundary edges, 18 after the fixer. `model.glb` read 171 | 200 | 169, 84 percent | le |
+| `mesh.non_manifold` | 6 edges. `model.glb` read 8 | 10 | 4, 40 percent | le |
+| `mesh.islands` | 4 pieces, 1 after the fixer. `model.glb` read 7 | 8 | 4, 50 percent | le |
+| `mesh.self_intersect` | 1094 faces, and 1153 after the mirror copies half of them | 1,500 | 347, 23 percent | le |
+| `mesh.mirror` | 3.257 percent of width, 0.000 after the fixer. `model.glb` read 3.021 | 3.5 | 0.243, 7 percent | le |
+| `mesh.world_size` | 1.8970 m against a spec of 1.700, 11.588 percent | `mesh.height_percent`, 25 percent | 13.4 points, 2.1x | le |
+| `mesh.budget` | 54,909 triangles, 55,553 after the fixer | 300,000, Meshy's stated rigging limit | 244,447, 81 percent | le |
+| `mesh.printability` | not measurable on a file. The design records 179 | 200 | 21, 12 percent | le |
+| `mesh.non_manifold_post` | 17 edges on the real `clean.glb`. The stand-in read 12 | 20 | 3, 18 percent | le |
 | `mesh.facing`, `stray_object`, `uv`, `texture`, `quads` | 0 defects each | 0. A count of defects has no tunable limit, so these join the `rig.*` family whose limit is not a `[profile]` number | none, by design | eq |
+
+`mesh.world_size` no longer reads the rig's 5 percent band, and correction 3
+of T12 has why: `height_meters` is a parameter of the **rigging** call, so
+nothing before it scales the body.
 
 **The `[profile.cleanup]` table is not limits.** It is the two sizes the fixer
 acts at, published so no script holds a copy: `smallest_island_cubic_meters`
@@ -1451,14 +1471,14 @@ it can honestly measure does fail. See the correction below.
 | `concept.mirror` | `front.png` 1.167 percent and `back.png` 1.062, against 2.4 | `[synth]` `front.png` with the arm rows stretched outward 15 percent from the middle of the frame, 6.394 percent | the two views, at the 99th percentile of their rows. Correction 4 records the mean and the worst row of all three too |
 | `concept.cross_view` | the six pairs of the four committed views, 0.757 to 3.256 percent against 6.0 | `[synth]` `left.png` at 92 percent of its size, centered on its own backdrop: 10.549 percent against the front and 7.299 against the back | the six pairs, on silhouette height and vertical centroid, as a percent of the mean of two heights |
 | `mesh.printability` | a recorded response | `[synth]` a recorded response over the ceiling, `13368` edges and `is_watertight: false` | **not calibrated: the Meshy key answers 401, so no response could be recorded.** The ceiling of 200 comes from the design's own 179. `is_watertight` is Meshy's summary of the same count, so it goes in the message and is not measured twice |
-| `mesh.holes` | `model.glb`, world then welded, 171 | `[synth]` 67 boxes each missing a face, 201 edges against 200, **plus** 66 of them at 198, which passes. `[mut]` the same file unwelded, 13,368 | T3, on `model.glb`. Provisional |
-| `mesh.non_manifold` | `model.glb`, welded, 8 | `[synth]` 11 edges each carrying 3 faces, against a limit of 10 | T3, on `model.glb`. **This row was missing from the design**, see the correction below. A file the fixer wrote is not read against it: T10, correction 8 |
-| `mesh.non_manifold_post` | the stand-in's `clean.glb`, 12 edges against a ceiling of 20 | `[synth]` 21 boxes each with 3 faces on one edge, against that ceiling, **plus** 20 of them, which passes | **T10**, on the stand-in of correction 1. Provisional: the file it is set from is not `bare.glb` cleaned |
+| `mesh.holes` | `model.glb`, world then welded, 171 | `[synth]` 67 boxes each missing a face, 201 edges against 200, **plus** 66 of them at 198, which passes. `[mut]` the same file unwelded, 13,368 | T12, on the real bare mesh: 31 |
+| `mesh.non_manifold` | `model.glb`, welded, 8 | `[synth]` 11 edges each carrying 3 faces, against a limit of 10 | T12, on the real bare mesh: 6. **This row was missing from the design**, see the correction below. A file the fixer wrote is not read against it: T10, correction 8 |
+| `mesh.non_manifold_post` | the real `clean.glb`, 17 edges against a ceiling of 20 | `[synth]` 21 boxes each with 3 faces on one edge, against that ceiling, **plus** 20 of them, which passes | T12, on the file the fixer wrote from the real bare mesh. T10 read 12 on a stand-in |
 | `mesh.quads` | `model.glb`, every primitive is triangles | `[synth]` a primitive declared as lines, which every other rule then reports as undefined | glTF has no quad mode, so what this rule reads is whether the surface is readable at all. **It was specified as `info`, never `error`**, see the correction below |
-| `mesh.islands` | `model.glb`, welded, 7 | `[synth]` 9 separate boxes against a limit of 8. A 5 mm cube inside the mesh is the second piece and is asserted at 2 | T3, on `model.glb`. Provisional |
-| `mesh.self_intersect` | `model.glb`, welded, via `parry3d`, 861 | `[synth]` 80 interpenetrating box pairs, 1,120 faces against 1,000. One pair alone is asserted at 14, and a 5 mm cube **inside** the mesh at 0 | T3, on `model.glb`. **The design's 16 could not be reproduced**, see the correction below. **T10: the cleaned stand-in reads 1026 and fails this row**, correction 1 |
-| `mesh.mirror` | `model.glb`, 3.021 percent, inside its own pre-fixer limit | `[synth]` one side pushed out 2 cm on a 32 cm figure, 6.25 percent against 3.5 | T3, on `model.glb`. Agrees with fact 9's independent kd-tree pass to three decimals |
-| `mesh.world_size` | through the node chain, 1.6999997 m | `[mut]` the same vertex data with the node's scale taken out of the file, 170 m. `model.glb` cannot serve: its own vertex coordinates are already in meters, so a local read is right there by accident | 1.6999997 against a spec of 1.700, 1.5e-5 percent, against `height_tolerance_percent` |
+| `mesh.islands` | `model.glb`, welded, 7 | `[synth]` 9 separate boxes against a limit of 8. A 5 mm cube inside the mesh is the second piece and is asserted at 2 | T12, on the real bare mesh: 4, and 1 after the fixer |
+| `mesh.self_intersect` | `model.glb`, welded, via `parry3d`, 861 | `[synth]` 120 interpenetrating box pairs, 1,680 faces against 1,500. One pair alone is asserted at 14, and a 5 mm cube **inside** the mesh at 0 | T12, on the real pair: 1094 arrive and 1153 survive the mirror. **The design's 16 could not be reproduced**, see the correction below |
+| `mesh.mirror` | `model.glb`, 3.021 percent, inside its own pre-fixer limit | `[synth]` one side pushed out 2 cm on a 32 cm figure, 6.25 percent against 3.5 | T12, on the real bare mesh: 3.257. `model.glb`'s own 3.021 agrees with fact 9's independent kd-tree pass to three decimals |
+| `mesh.world_size` | `[synth]` the figure at the height a generator picks for itself, 1.8970 m against a spec of 1.700, 11.588 percent, accepted. `model.glb` reads 1.6999997, which only rigging made true | `[mut]` the same vertex data with the node's scale taken out of the file, 170 m and 9900 percent. `model.glb` cannot serve: its own vertex coordinates are already in meters, so a local read is right there by accident | `mesh.height_percent`, 25 percent, over the 11.588 of `mesh.survivor-unset.1.json`. The rig's 5 percent band rejects that reading, which is what the positive fixture pins |
 | `mesh.facing` | `model.glb`, +Z in glTF Y-up, 0.8 degrees off | `[synth]` the same mesh yawed **180**, which reads -Z, and yawed **90**, which reads X | the horizontal step from the whole body's center to the center of its lowest 5 percent, named by the closest of six axes. **Not the foot island**, see the correction below |
 | `mesh.stray_object` | `model.glb`, only `char1` | `[synth]` a second mesh node named `Icosphere`. **Corrected in T2:** the committed `model.glb` at HEAD holds 26 nodes, one mesh, `char1`, and one primitive, so it carries no `Icosphere` and cannot serve. `bare.glb` was not downloadable either, so the negative stays synthetic | the `meshes` allowlist |
 | `mesh.budget` | `model.glb`, 54,864 triangles under 300,000 | `[synth]` a strip of 300,001 triangles | `model.glb` reads 54,864 tris against the spec's 30,000 target, which is a remesh hint and not a gate |
@@ -1473,6 +1493,7 @@ it can honestly measure does fail. See the correction below.
 | `rig.mirror_length`, `rig.mirror_direction` | `[synth]` an exact mirror | `[art]` the current rig, worst 3.68 percent and 2.16 deg, both on the `Foot` segment. The 1.45 deg the audit gave is the `ForeArm` pair | measured now: length 0.95 to 3.68 percent over six segments a side, direction 0.08 to 2.16 deg |
 | `rig.world_height` | `humanoid.glb`, 2.05 percent out, confirmed at 2.049 | `[synth]` a rig scaled by 100 at the object node, which reads 9900 percent and trips nothing else | 5 percent tolerance, against `spec.subject.height_meters` |
 | `rig.humerus_angle` | a conformant rig at 40 | `[art]` the current rig at 59.1 left and 59.3 right, 19.1 and 19.4 out | target 40, tolerance 15 |
+| `rig.elbow_bend` | `[synth]` a conformant rig, whose arm is one straight line, reading under 1e-4 | none: it records rather than gates, so it has no verdict to get wrong. What is pinned instead is that a bent elbow stays `info`, on `[art]` the committed rig at 24.0 and 23.5 deg | 180 deg, the ceiling a recording rule reads against. T12 measured 18.5 to 28.0 across three rigs |
 | `rig.bind_deviation` | `humanoid.glb`, worst 4.1 deg up the root chain | `[synth]` a rig rolled 90 deg onto its side | the 75 deg band. Measured per step of the root chain, against the up axis, which is the only canonical direction that exists before the aim table |
 | `rig.facing` | the current rig already faces +Z in glTF, which is minus Y in Blender, 8.1 to 9.0 deg per foot | `[synth]` the rig yawed 180, and `[synth]` a foot pointing along the up axis, where the facing is undefined and reported as one | the bake camera's forward. Per foot, so one foot on backwards cannot average away |
 | `rig.up_axis` | `humanoid.glb`, 3.0 deg off Blender +Z | `[synth]` the same rig pitched 90 deg, which is the shape of an export with no axis conversion | `humanoid.glb`. The root chain end to end, named by the closest of six axes |
@@ -3262,6 +3283,153 @@ larger, one image, one UV layer.
     deleted-frame negative names **`w 01`**, index 2 of an eight direction
     ring, not `sw 01`.
 
+### Corrections T12 made to this document
+
+**`pose_mode` stays unset.** It is adopted only if all four acceptance items
+hold, and `a-pose` fails two of them while `t-pose` fails three. Every number
+below was measured in this task, on three meshes generated from the same four
+committed concept views, and every one names the report it came from.
+
+1. **Step 0: the field exists, and the API validates it by name.** Free, three
+   requests, each with an `image_urls` no fetcher can resolve so none could
+   become a task. Without `pose_mode` and with `pose_mode: "a-pose"` the
+   refusal is identical and mentions only `ImageURLs[0]`. With
+   `pose_mode: "banana"` the same refusal gains a second clause:
+
+   ```
+   PoseMode must be one of [a-pose t-pose]
+   ```
+
+   So Multi-Image to 3D does inherit the field, it is not ignored, and the two
+   legal spellings are exactly the two the design guessed. `Client::probe` is
+   what sends it: `submit` turns a 400 into an error and reads a task id out of
+   a success, and here the 400 **is** the measurement.
+
+2. **The four acceptance items, per mode.** `unset` is the request the
+   survivor was built with. Reports:
+   `art/staging/reports/{mesh,cleaned,cleanup,rig}.survivor-<mode>.1.json`.
+
+   | Item | unset | `a-pose` | `t-pose` |
+   |---|---|---|---|
+   | 1. `rig.humerus_angle` within 15 of 40 | **19.1 / 19.5**, fail | **5.1 / 5.6**, pass | **31.7 / 30.6**, fail |
+   | arms below horizontal | 59.1 / 59.5 | 45.1 / 45.6 | 8.3 / 9.4 |
+   | 2. elbow bend under 5 deg | **24.0 / 23.5**, fail | **28.0 / 27.7**, fail | **18.5 / 19.1**, fail |
+   | 3. welded `mesh.holes` on `bare.glb` le 200 | **31**, pass | **1288**, fail | **999**, fail |
+   | 4. no invented forearm surface | a human reads `sheet.png` | same | same |
+
+   **No mode passes item 2.** Meshy's auto-rigger puts the elbow joint off the
+   arm line whatever pose the mesh arrives in, and the committed rig's own 24
+   degrees (fact 1) turns out to be the middle of the range rather than a
+   defect of that one generation. That is why `rig.elbow_bend` records instead
+   of gating.
+
+3. **Every `mesh.*` reading, on the real bare mesh at last.** `bare` is as
+   downloaded, `clean` is what the fixer wrote:
+
+   | Rule | unset bare / clean | `a-pose` bare / clean | `t-pose` bare / clean | limit |
+   |---|---|---|---|---|
+   | `mesh.holes` | **31 / 18** | 1288 / 230 | 999 / 352 | 200 |
+   | `mesh.non_manifold` | **6** | 206 | 47 | 10 |
+   | `mesh.islands` | **4 / 1** | 49 / 4 | 16 / 3 | 8 |
+   | `mesh.self_intersect` | **1094 / 1153** | 4002 / 5382 | 4934 / 5653 | 1500 |
+   | `mesh.mirror` | **3.257 / 0.000** | 2.040 / 0.000 | 2.340 / 0.000 | 3.5 |
+   | `mesh.world_size` | **11.588 / 11.435** | 11.260 / 11.260 | 11.661 / 11.570 | 25 |
+   | `mesh.budget` | **54,909 / 55,553** | 58,546 / 60,279 | 57,691 / 58,149 | 300,000 |
+   | `mesh.non_manifold_post` | **17** | 74 | 71 | 20 |
+   | `mesh.cleanup_effective` | **19 lt 35** | 234 lt 1337 | 355 lt 1015 | before |
+   | `facing`, `stray_object`, `texture`, `uv`, `quads` | 0 | 0 | 0 | 0 |
+
+   Setting `pose_mode` at all costs topology, heavily. `a-pose` returns **41x**
+   the holes of the unset request and 8x the crossings; `t-pose` 32x the holes.
+   Neither is a limit that wants widening: the fixer cannot close 1288
+   boundary edges without leaving 74 non-manifold ones behind, and it does not.
+
+4. **`mesh.world_size` was gated on a number nothing before rigging sets.**
+   `height_meters` is a parameter of the **rigging** call, not of generation:
+   Meshy returns a bare mesh in its own frame, centered on the origin, and all
+   three read 1.8914 to 1.8982 m against the 1.700 the spec asks for, 11.26 to
+   11.66 percent out. Read against `rig.world_height`'s 5 percent band, which
+   is what the rule used, **every real bare mesh fails it**, and the committed
+   `model.glb` reads 1.6999997 only because rigging scaled it. So the rule has
+   a band of its own now, `[profile.mesh] height_percent = 25`, which leaves
+   2.1x over the worst reading and still rejects the 100x node scale of fact 7
+   at 9900 percent. `rig.world_height` keeps the 5 percent, and it holds: the
+   three rigs read 1.835, 1.570 and 2.502.
+
+5. **The bare mesh has no object name, and `[profile] meshes` was calibrated
+   on the name rigging invents.** Meshy's `multi-image-to-3d` GLB carries one
+   mesh node with **no `name` at all**. `char1` is created by the rigging
+   endpoint, and the row named only that, so the fixer refused every real bare
+   mesh with "the profile allows ['char1'], which is none of the 1 objects in
+   this file". One object under three names, all measured: `node 0`, which is
+   what `check/gltf_world.rs::node_name` calls an unnamed node; `Mesh_0`,
+   which Blender names it on import and the fixer exports; and `char1` after
+   rigging. All three are in the row.
+
+6. **`rig.elbow_bend`, a fourteenth rig rule, records and never gates.**
+   Acceptance item 2 needed a number no rule reported. It reads the angle
+   between the shoulder-to-elbow direction and the elbow-to-wrist one, in
+   world space, and files `info` against a ceiling of 180 degrees, the same
+   shape `source.wander` and `source.posture` already use. A published limit
+   would fail the committed rig at 24 degrees on every run, and nothing here
+   can regenerate that rig. The rule list is **67**.
+
+7. **The spike is the one command that measures past a failing mesh gate.**
+   The rig stage refuses, and that is untouched and still tested: rigging a
+   mesh that failed a gate wastes credits on art nobody will ship. Inside
+   `cargo art spike-pose` the limits are what is being calibrated, so a mode
+   is measured whichever way its gates went, the verdict is printed beside it,
+   and the command exits non-zero carrying it. Free to re-run: a mode whose
+   `bare.glb` or `rigged.glb` is on disk is measured again and bought again
+   never, which is what makes 105 credits a one-time cost. It asks before it
+   bills, the way every paid verb does, quoting the credits it has left to
+   buy, and `--yes` answers that.
+
+8. **`a-pose` fixes the worst rig defect this project has, and it is still not
+   adopted.** Fact 1's sideways `Hips`, 97.8 degrees off the direction to its
+   own child, is not an artifact of one bad generation: the unset regeneration
+   reproduces it at **95.7**. With `pose_mode: "a-pose"` the same rig reads
+   **5.8**, `rig.child_axis Hips` falls from 95.7 to 6.1, and the humerus
+   lands inside its band for the first time. That is a real finding and it is
+   recorded here rather than acted on, because the mesh it is built from
+   carries 1288 boundary edges and 4002 crossing faces. If a later task finds
+   a way to hold the topology, this is the row that says where to look.
+
+9. **What the contact sheets show, reported and not decided.** Five views of
+   each `bare.glb`, at `art/staging/survivor/spike/<mode>/sheet.png`: front,
+   back, left, right, and the arms alone from 45 degrees above the front,
+   framed on the tenth of the vertices furthest from X = 0, which in any
+   arms-out pose are the hands and forearms. No mesh shows a flat invented
+   plate where a forearm's top should be; all three carry rounded, textured
+   forearms. `unset` hangs the arms nearly vertically and close to the body,
+   `a-pose` holds them about 35 degrees down and out, and `t-pose` holds them
+   horizontal with visibly thinner, flatter hands. Item 4 is the
+   orchestrator's call on those images.
+
+10. **The recorded Model and Rig task ids answer 404 under this key.** T10
+    left a recipe in `crates/xtask-art/README.md` for fetching the survivor's
+    own paid `bare.glb` for 0 credits. It cannot work: the tasks belong to
+    another account, and every measurement here comes from the three
+    generations this task paid for. That section is replaced by the spike's.
+
+11. **Balance: 1161 before, 1056 after, 105 spent**, which is the estimate
+    exactly: three generations at 30 and three rigs at 5. Step 0 and every
+    balance read cost nothing. One generation was paid for twice over in
+    wall-clock terms and not in credits: the first run died to a `SIGPIPE`
+    after submitting, and the task was recovered from the API by hand.
+
+    **That recovery is now the pipeline's, not a person's.** Every paid call
+    goes through `Client::run`, which writes the task id to
+    `art/staging/reports/<stage>.<item>.<attempt>.task` the moment `submit`
+    returns and before the first poll, resumes that id instead of submitting
+    when it is on disk, and removes it once the task reports success. So a
+    death anywhere in the window that `SIGPIPE` landed in costs one poll
+    rather than 30 credits. It is cleared on success rather than later,
+    because `--retry` has to be able to buy a genuinely new task, and on a
+    task the provider gave up on, because that one would read the same way
+    forever. A poll that never landed clears nothing: resuming is what it is
+    for.
+
 ## Documentation Changes
 
 - `art/skeletons/README.md`: `[profile]`, `[aim_table]`, the new bone names,
@@ -3274,14 +3442,19 @@ larger, one image, one UV layer.
   loop is documented, the stale `art/pipeline/` reference goes, the three
   stage boundaries the `source.*` and `clip.*` rules run at are named, one
   table says what each stage's fingerprint reads, and one section names every
-  command that can pay again and what needs Blender.
+  command that can pay again and what needs Blender. **T12 replaces "Still
+  waiting on a Meshy key" with "Which `pose_mode` to send"**, because the
+  recipe in it cannot work and the recalibration it was for is done, and says
+  where a submitted task id waits while that task is in flight.
 - `README.md`: `cargo art check`, the two new spec fields, one line saying
   gates run at stage boundaries, and the E2E tier row changes from "nothing
   yet" to `render`.
 - `tools/blender/README.md` (new, short): why `transfer.py` and `plant.py`
   never import `bpy`, why the fixer measures nothing, the rules each module
   reports, why a script never names a limit, and why the root strip works in
-  world space.
+  world space. **T12 adds `mesh_sheet.py`**, which measures nothing either:
+  it renders the five views of the model contact sheet and a human reads
+  them.
 - `docs/research/agent_reports/audit_the_current_art_pipeline.md`: a
   correction note. Its mesh numbers are the seam-split reading.
 
@@ -3296,11 +3469,12 @@ larger, one image, one UV layer.
   `gltf` gains its `utils` feature, which adds the accessor readers the mesh
   gates need and pulls in no new dependency. `parry3d` is pinned at 0.30.2
   with default features off.
-- `[profile.mesh]` marks itself provisional. Five of its seven rows are
-  calibrations measured on `model.glb` rather than on `bare.glb`, and T10
-  recalibrates those. The other two are not calibrations: `triangles` is
-  Meshy's stated rigging limit and `printability_edges` comes from the 179
-  this document records.
+- `[profile.mesh]` names the file each row was read on. Six of its nine rows
+  are calibrations, measured by T12 on the real bare mesh and the file the
+  fixer wrote from it. The other three are not calibrations: `triangles` is
+  Meshy's stated rigging limit, `printability_edges` comes from the 179 this
+  document records, and `height_percent` is a band wide enough to admit a
+  mesh nothing has scaled yet.
 - `pyproject.toml`: `--cov` over every `bpy`-free module with
   `--cov-fail-under=100`. T7 adds `source.py` to that list, making six:
   `clip`, `findings`, `framing`, `skeleton`, `source` and `transfer`. T14 adds
@@ -3360,9 +3534,9 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15 regenerate + gates required ─
 | T7  | `source_fps`, `travels`, traveling fetch, root travel | 1.5 d | Add `Animation::source_fps` and `Animation::travels`, filling `source_fps` from each vendor file and **declaring `travels` for every clip**: `false` for `idle`, measured for `run` because a Meshy library clip is likely in place, `true` for the three Mixamo clips. Scene fps equals `source_fps`, with the key grid and range asserted as Findings. Request traveling export from Mixamo and add `source.traveling`, **symmetric on 0.02 m of hip travel in both directions**. Add `source.child_axis`, `info` only, measuring each source bone's own axis against the direction to its mapped child, because a vendor skeleton is not ours to fix and correction 6 is the reason it has to be on record. Move `clip.root_travel` to the bake boundary as a per-axis maximum on the stripped copy, splitting the up axis off as `clip.root_bob` because the strip keeps it (correction 2), and record the excursion the strip removes as `source.wander` at the fetch (correction 1). Delete the `array_index == 2` branch, `loop_mismatch` and `report_loop`, and add `clip.loop`. | Requirement 3 holds and the 0.8 to 16.8 fixture is rejected. `source.traveling` rejects an in-place export declared `travels: true` **and** a traveling export declared `travels: false`, so a mistyped flag cannot skip the gate. `run`'s `travels` is a recorded measurement, not a default. Root travel after strip is under 2 cm on both horizontal axes and the bob under 15 cm on the up one. `source.child_axis` records Mixamo's `Neck` at 16.933 degrees and its `Hips` at 7.051. No sprite rate changes. | T5 |
 | T8  | Floor snap, and the femur band | 1.5 d | **T5 already moved the metric**: `stride_segment` in the skeleton file names the two roles, and every location key is scaled by that ratio in one operation. What is left here is the floor: snap the lowest foot frame to Z equals 0 and report `clip.floor_snap`, and hold travel to a band rather than to a printed line. | Requirement 4 holds. Travel matches the source within 2 percent, which T5 measures by hand at 2.3117 m times 0.8815 giving 2.0378 m and does not yet gate. `clip.floor_snap` is under 5 mm, and the fixture with the snap removed is rejected. | T7 |
 | T9  | Foot planting | 3 d | `plant.py`: contact detection at the published thresholds, scaled to character height and expressed as a rate, a majority vote whose width is odd and at least 3, foot XY lock, two bone analytic IK, ramps. | All three `foot_contact` sub-rules have a row and a rejected negative. Plants is an error at zero runs. Skate under 2.5 cm and penetration under 5 mm on every clip. The same toe path at 8 and 30 fps gives the same runs, and the vote width is odd and at least 3 at both rates. | T8 |
-| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **`bare.glb` could not be downloaded here either**, so the fixer is built and measured against a stand-in lifted out of `model.glb`, every `[profile.mesh]` row stays provisional, and the 5-credit call is left with its steps written down. | The fixer runs, and `cleanup_effective` shows the classes it counts strictly decreasing: holes 171 to 73 and pieces 7 to 2 on the stand-in. `non_manifold_post`'s ceiling is a measured 12 with 8 spare. The file rules run on both meshes, so texture and UVs are measured on the file that gets rigged, and **that file fails `mesh.self_intersect` at 1026 against 1000**: the honest signal correction 1 is about. The no-op stub is rejected. With `symmetry: false` the fixer skips the mirror, the three mirror rules report `skipped`, and their negative controls still run. **Blocked on a key: the recalibration on the real `bare.glb` and the real 5-credit rigging call by data URI**, whose exact steps are in `crates/xtask-art/README.md`. | T3 |
+| T10 | Cleanup, symmetrize, and the post-cleanup ceiling | 2 d | `Subject::cleanup` and `Subject::symmetry`, false by default, true for the survivor. `mesh_clean.py` in world space, measuring nothing. The `model` stage downloads `bare.glb`. Rigging sends `model_url` as a data URI with `input_task_id` omitted. **`bare.glb` could not be downloaded here either**, so the fixer is built and measured against a stand-in lifted out of `model.glb`, every `[profile.mesh]` row stays provisional, and the 5-credit call is left with its steps written down. | The fixer runs, and `cleanup_effective` shows the classes it counts strictly decreasing: holes 171 to 73 and pieces 7 to 2 on the stand-in. `non_manifold_post`'s ceiling is a measured 12 with 8 spare. The file rules run on both meshes, so texture and UVs are measured on the file that gets rigged, and **that file fails `mesh.self_intersect` at 1026 against 1000**: the honest signal correction 1 is about. The no-op stub is rejected. With `symmetry: false` the fixer skips the mirror, the three mirror rules report `skipped`, and their negative controls still run. **Blocked on a key: the recalibration on the real `bare.glb` and the real 5-credit rigging call by data URI**, both of which T12 did. | T3 |
 | T11 | Concept gates, calibration and the retry loop | 1.5 d | **First: measure the five `concept.*` rules on the four committed views and write the limits with their headroom into `[profile]`.** Then `concept_check.py`: background, one figure, arm gaps, mirrored silhouette when `symmetry` is on, and `cross_view` across the four views. Then the retry loop in `cli.rs`, three attempts total, a fresh set of views on each, numbered reports. Delete `pause_for_review` and `should_pause`. | No `concept.*` threshold is guessed. Each rule rejects its negative fixture. Three failures leave three numbered reports and bail with the images on disk. A pass on attempt two proceeds, and the test asserts attempt two generated again rather than reusing what failed (correction 13). `ConfirmSpend` quotes 2.40 USD once. No Meshy stage is wrapped. | T1, T10 |
-| T12 | `pose_mode` spike | 0.5 d, 90 credits | Step 0: a free unknown-parameter probe. Then regenerate the model stage three times, unset, `"a-pose"`, `"t-pose"`, running every `mesh.*` and `rig.*` gate on each. | The four acceptance items are each answered with a number and a committed contact sheet. One value is adopted into the request body, or the field stays unset with the measurement recorded. | T2, T3 |
+| T12 | `pose_mode` spike | 0.5 d, 105 credits spent of 90 estimated | **Done.** Step 0 read the API's own refusal: the field is inherited, validated by name, and takes `a-pose` or `t-pose`. `Subject::pose_mode` rides in the `Model` fingerprint, `cargo art spike-pose` runs all three end to end, and T10's blocked recalibration is done on a real bare mesh at last. `mesh.world_size` gained a band of its own and `[profile] meshes` three names, both for measured reasons. | **The field stays unset.** `a-pose` fails two acceptance items and `t-pose` three; no mode passes the elbow one. Every number, both balances and what the three contact sheets show are in the T12 corrections. `rig.elbow_bend` is the fourteenth rig rule, recording. | T2, T3 |
 | T13 | Lock fingerprints real inputs | 1 d | Hash `humanoid.glb`, `humanoid.toml`, the concept PNGs, `model.glb`, every animation GLB, the two staging meshes, the Blender build and every script into the right stages, and destructure `CharacterSpec`, `Subject` and `Bake` so a field added later cannot be forgotten. Add `Model` to the version guard. Add `verdict` and `fingerprint` to `Fetched`. | `humanoid.glb` invalidates retarget and bake but not `Rig` or `Model`, so a local rename spends nothing. A concept PNG invalidates `Model`. A replaced `model.glb` invalidates `Bake` and nothing paid. An `[aim_table]` row invalidates every `Fetched` record and the character lock's `Bake`. A Mixamo clip's verdict is readable in `library.lock`. `cargo art status` reports without Blender and never recommends a command that spends. | T1 |
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.<clip>.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |
 | T15 | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, refit `idle.glb` and `run.glb`, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14 |

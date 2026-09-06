@@ -1,4 +1,4 @@
-//! The thirteen rig gates.
+//! The fourteen rig gates.
 //!
 //! Every rule here has three columns, per the design's test plan: a positive
 //! fixture, a negative fixture it must reject, and a calibration that proves
@@ -193,7 +193,7 @@ fn a_conformant_rig_measures_zero_on_every_rule() {
 /// measuring one *passing* subject changes nothing any other test reads.
 /// Every bone the profile names is present after the rename, so every row of
 /// `parents` and `tails` resolves and the counts are the whole set.
-const SUBJECTS: [(&str, usize); 13] = [
+const SUBJECTS: [(&str, usize); 14] = [
     ("rig.names_standard", 24),
     ("rig.bone_set", 24),
     ("rig.single_root", 24),
@@ -202,6 +202,7 @@ const SUBJECTS: [(&str, usize); 13] = [
     ("rig.mirror_length", 6),
     ("rig.mirror_direction", 6),
     ("rig.humerus_angle", 2),
+    ("rig.elbow_bend", 2),
     ("rig.facing", 2),
     ("rig.up_axis", 1),
     ("rig.bind_deviation", 6),
@@ -220,7 +221,7 @@ fn every_rule_measures_every_subject_it_should() {
     assert_eq!(
         findings.len(),
         SUBJECTS.iter().map(|(_, count)| count).sum::<usize>(),
-        "138 measurements, and no rule reports outside the list"
+        "140 measurements, and no rule reports outside the list"
     );
 }
 
@@ -234,7 +235,7 @@ fn a_conformant_rig_and_the_renamed_rig_measure_the_same_subjects() {
         let measured = findings.iter().filter(|f| f.rule == rule).count();
         assert_eq!(measured, subjects, "{rule} measured {measured} subjects");
     }
-    assert_eq!(findings.len(), 138);
+    assert_eq!(findings.len(), 140);
 }
 
 /// And the fixture is the rig before the rename, three bones short.
@@ -250,7 +251,7 @@ fn the_rig_before_the_rename_left_eleven_measurements_unresolved() {
         let measured = findings.iter().filter(|f| f.rule == rule).count();
         assert_eq!(measured, subjects, "{rule} measured {measured} subjects");
     }
-    assert_eq!(findings.len(), 127);
+    assert_eq!(findings.len(), 129);
 }
 
 /// A rule that goes quiet when it passes is indistinguishable from a rule
@@ -856,6 +857,47 @@ fn a_missing_file_is_an_error_and_not_a_skip() {
     assert!(errors(&findings)[0].message.contains("nothing.glb"));
 }
 
+// --- rig.elbow_bend --------------------------------------------------------
+
+/// Acceptance item 2 of the `pose_mode` spike: an arm the generator left
+/// bent at rest. Straight on a straight arm, and 24 degrees on the art this
+/// pipeline shipped.
+#[test]
+fn the_elbow_bend_is_zero_on_a_straight_arm_and_reads_the_committed_bend() {
+    let straight = findings_of(&SyntheticRig::conformant());
+    let shipped = findings_for(&committed_glb(COMMITTED[1]));
+
+    for side in ["LeftForeArm", "RightForeArm"] {
+        // glTF stores f32, so this is the file's own precision, not a bend.
+        assert!(
+            measured(&straight, "rig.elbow_bend", side) < 1e-4,
+            "{side}: {}",
+            measured(&straight, "rig.elbow_bend", side)
+        );
+        let bent = measured(&shipped, "rig.elbow_bend", side);
+        assert!((23.0..25.0).contains(&bent), "{side}: {bent}");
+    }
+}
+
+/// It records, never gates: the committed rig bends 24 degrees and a limit
+/// that failed it would fail forever, since nothing here can regenerate that
+/// rig. The reading is the point.
+#[test]
+fn a_bent_elbow_is_information_and_never_a_defect() {
+    let findings = findings_for(&committed_glb(COMMITTED[1]));
+
+    let bends: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| finding.rule == "rig.elbow_bend")
+        .collect();
+    assert_eq!(bends.len(), 2, "{bends:#?}");
+    assert!(
+        bends.iter().all(|f| f.severity == Severity::Info),
+        "{bends:#?}"
+    );
+    assert!(!broken(&findings).contains(&"rig.elbow_bend".to_owned()));
+}
+
 // --- the rule list ---------------------------------------------------------
 
 #[test]
@@ -863,7 +905,7 @@ fn every_rule_is_listed_once_under_its_own_family() {
     let ids: BTreeSet<&str> = rig::RULES.iter().map(|rule| rule.id).collect();
 
     assert_eq!(ids.len(), rig::RULES.len(), "a rule id is listed twice");
-    assert_eq!(rig::RULES.len(), 13);
+    assert_eq!(rig::RULES.len(), 14);
     assert!(ids.iter().all(|id| id.starts_with("rig.")));
 }
 

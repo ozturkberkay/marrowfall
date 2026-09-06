@@ -45,6 +45,7 @@ mod test_profile;
 mod test_providers;
 mod test_rig;
 mod test_spec;
+mod test_spike;
 mod test_stages;
 mod test_stages_run;
 mod test_validator;

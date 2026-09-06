@@ -109,6 +109,7 @@ pub fn a_spec(name: &str) -> CharacterSpec {
             skeleton: xtask_art::library::HUMANOID.to_owned(),
             cleanup: true,
             symmetry: true,
+            pose_mode: None,
         },
         animations: vec!["idle".to_owned()],
         remesh: Remesh {

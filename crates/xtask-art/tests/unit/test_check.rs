@@ -55,8 +55,8 @@ fn every_family_reaches_the_printed_rule_list() {
 
     assert_eq!(
         ids.len(),
-        66,
-        "5 concept rules, 13 rig rules, the aim table, 15 mesh rules, 6 source \
+        67,
+        "5 concept rules, 14 rig rules, the aim table, 15 mesh rules, 6 source \
          rules, 13 clip rules, the 3 foot contact ones, 7 bake rules and 3 \
          atlas rules"
     );
@@ -529,6 +529,9 @@ fn an_artifact_set_names_its_own_stem() {
     let artifacts = Artifacts::new(Path::new("/repo"), "retarget", "strafe_left", 2).unwrap();
     assert_eq!(artifacts.stem(), "retarget.strafe_left.2");
     assert!(artifacts.report().ends_with("retarget.strafe_left.2.json"));
+    // The id of a task in flight shares it, so two paid calls never read
+    // each other's.
+    assert!(artifacts.task().ends_with("retarget.strafe_left.2.task"));
 }
 
 // --- the record -----------------------------------------------------------

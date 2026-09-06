@@ -197,7 +197,15 @@ bones = [
 single_root = "Hips"
 # Mesh objects a character file may hold. Read by the mesh gates, which run on
 # the character rather than on this skeleton.
-meshes = ["char1"]
+#
+# One object, three names, one per file the gates read. Meshy's
+# `multi-image-to-3d` GLB leaves its mesh node **unnamed**, so `node 0` is what
+# `check/gltf_world.rs::node_name` calls it; Blender names it `Mesh_0` on
+# import and the fixer exports that; and the rigger renames it `char1`.
+#
+# `node 0` is a position, and safe as one because a bare mesh holds exactly one
+# object: a second lands on another index and is a `mesh.stray_object` finding.
+meshes = ["node 0", "Mesh_0", "char1"]
 # In Blender, after the glTF Y-up import.
 up_axis = "z"
 # In glTF Y-up, which is the space Meshy's rigger states its facing in. The
@@ -257,39 +265,48 @@ cross_view_percent = 6.0
 
 # Every published mesh limit. Read by `crates/xtask-art/src/check/mesh.rs`.
 #
-# PROVISIONAL: the five calibrated values here are measured on the committed
-# `art/characters/survivor/model.glb`, which is the file after rigging. The
-# gates run on `art/staging/<char>/bare.glb`, the mesh before rigging, and no
-# Meshy key on this machine could download it. **T10 downloads `bare.glb` and
-# recalibrates these rows.**
+# Calibrated on a real bare mesh, `art/staging/survivor/spike/unset/`, which
+# T12 generated from the survivor's own concept views with the same request
+# that built him. Every reading is beside its limit below, and they come from
+# `art/staging/reports/{mesh,cleaned,cleanup}.survivor-unset.1.json`.
 #
-# The one row measured after the fixer, `non_manifold_post`, is calibrated on a
-# stand-in: the same mesh lifted out of `model.glb` unskinned, cleaned locally.
+# The `unset` mesh is the calibration subject because it is the one the
+# pipeline ships. Setting `pose_mode` makes the topology far worse, measured:
+# `a-pose` reads 1288 holes and `t-pose` 999, against this mesh's 31. Those
+# readings are the spike's answer, not a reason to widen a limit.
 #
 # Measured welded at 1e-5 m in world space, with the headroom each limit
-# leaves. The plateau that chose 1e-5 is in the design document. The last two
-# rows are not calibrations at all: one is Meshy's stated rigging limit and
-# one is the edge count the design records for `print/analyze`.
+# leaves. The plateau that chose 1e-5 is in the design document. Six of the
+# nine rows are calibrations. The other three are not: `triangles` is Meshy's
+# stated rigging limit, `printability_edges` is the edge count the design
+# records for `print/analyze`, and `height_percent` is a band wide enough for
+# a body nothing has scaled yet.
 [profile.mesh]
-holes = 200                  # boundary edges. model.glb reads 171
-non_manifold_edges = 10      # edges shared by 3+ faces. model.glb reads 8
-islands = 8                  # connected pieces. model.glb reads 7
-# The one row the fixer moves the wrong way: mirroring a mesh copies the
-# crossings of the half it keeps, so the cleaned stand-in reads 1026 against
-# this 1000 and **fails today**. Recalibrate it on the real pair, not on the
-# bare mesh alone, or raise it with the headroom written down.
-self_intersections = 1000    # faces that meet. model.glb reads 861
-mirror_percent = 3.5         # of the width. model.glb reads 3.021
+holes = 200                  # boundary edges. bare.glb reads 31, clean.glb 18
+non_manifold_edges = 10      # edges shared by 3+ faces. bare.glb reads 6
+islands = 8                  # connected pieces. bare.glb reads 4, clean.glb 1
+# The row the fixer moves the wrong way: mirroring a mesh copies the crossings
+# of the half it keeps. Read on the pair and not on the bare mesh alone, so
+# this covers what the fixer leaves: 1094 arrives and 1153 survives the mirror,
+# and 1500 is 30 percent over the worse of the two.
+self_intersections = 1500    # faces that meet. bare.glb 1094, clean.glb 1153
+mirror_percent = 3.5         # of the width. bare.glb reads 3.257, model.glb 3.021
 # Meshy's stated limit for rigging, not a calibration.
-triangles = 300000           # model.glb reads 54,864
+triangles = 300000           # bare.glb reads 54,909 and clean.glb 55,553
 # Meshy's own count, which adds boundary and non-manifold edges together.
 printability_edges = 200     # model.glb is recorded at 179
 # After the fixer, which is its own ceiling: filling a hole closes it with a
 # face that can meet two others, so this rises where `non_manifold_edges` is
-# read before any of that. PROVISIONAL, on the stand-in described above, and
-# wider than the 25 percent the row above leaves because the count it is set
-# from was not read on `bare.glb` at all.
-non_manifold_post = 20       # the stand-in's clean.glb reads 12, so 8 spare
+# read before any of that.
+non_manifold_post = 20       # clean.glb reads 17, so 3 spare
+# How far the mesh's own height may sit from `spec.subject.height_meters`.
+# Its own band, not the rig's 5 percent: `height_meters` is a parameter of the
+# RIGGING call, so nothing before it scales the body. Meshy returns a bare
+# mesh in its own frame, centered on the origin, and the three T12 generations
+# read 1.8970, 1.8914 and 1.8982 m against the 1.7 asked for: 11.26 to 11.66
+# percent. 25 leaves 2.1x over the worst of them and still rejects the 100x
+# node scale of fact 7, which reads 9900 percent.
+height_percent = 25.0        # bare.glb reads 11.588 and clean.glb 11.435
 
 # What the fixer runs on. Read by `crates/xtask-art/src/stages.rs`, which puts
 # every one of them on Blender's argv, so no script holds a copy.

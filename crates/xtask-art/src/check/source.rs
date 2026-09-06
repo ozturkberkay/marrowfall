@@ -39,7 +39,7 @@
 use std::collections::BTreeMap;
 
 use super::profile::Profile;
-use super::{Comparison, Rule};
+use super::{Comparison, HALF_A_TURN, Rule};
 
 /// The stage these findings belong to, which names their report file.
 pub const STAGE: &str = "fetch";
@@ -55,13 +55,6 @@ const POSE: &str = "the vendor rig's joints over the clip, in Blender Z-up world
 
 const PATH: &str = "the vendor file's hips at every frame, against the first, horizontally, \
                     in Blender Z-up world space";
-
-/// The largest angle two directions can be apart.
-///
-/// A recording rule still needs a limit, because every finding is read
-/// against one. This is the ceiling that cannot be crossed, so the severity
-/// is always `info` and the number is always on record.
-const HALF_A_TURN: f64 = 180.0;
 
 /// Further than any clip in any library moves its hips.
 ///

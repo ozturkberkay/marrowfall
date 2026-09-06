@@ -127,6 +127,12 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
         data_uris.push(meshy::to_data_uri(&bytes));
     }
 
+    let submitted = Artifacts::new(
+        &paths.root,
+        Stage::Model.as_str(),
+        paths.item(),
+        FIRST_ATTEMPT,
+    )?;
     let task = client
         .run(
             Endpoint::MultiImageTo3d,
@@ -136,7 +142,9 @@ pub async fn model(spec: &CharacterSpec, paths: &Paths) -> Result<StageRecord> {
                 spec.remesh.quads,
                 spec.texture.pbr,
                 spec.texture.resolution,
+                spec.subject.pose_mode,
             ),
+            &submitted.task(),
             |progress| println!("  mesh {progress}%"),
         )
         .await?;
@@ -187,7 +195,7 @@ pub fn clean_mesh(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Resu
         paths.relative(&bare)
     );
     let profile = Profile::of(repo_root, &spec.subject.skeleton)?;
-    let artifacts = Artifacts::new(repo_root, mesh::CLEANUP_STAGE, &spec.name, FIRST_ATTEMPT)?;
+    let artifacts = Artifacts::new(repo_root, mesh::CLEANUP_STAGE, paths.item(), FIRST_ATTEMPT)?;
     let cleaned = spec
         .subject
         .cleanup
@@ -236,7 +244,7 @@ pub fn clean_mesh(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Resu
     // on a gate still leaves what it measured for a human to read.
     let mut filed = Vec::new();
     for (stage, what, rules, findings) in measured {
-        let mut report = Report::new(stage, &spec.name, FIRST_ATTEMPT);
+        let mut report = Report::new(stage, paths.item(), FIRST_ATTEMPT);
         report.extend(mesh::only(rules, findings))?;
         filed.push((report.write(repo_root)?, report, rules, what));
     }
@@ -338,10 +346,12 @@ pub async fn rig(
             let mesh = clean_mesh(spec, &Paths::new(root, &spec.name), root)?;
             let glb =
                 std::fs::read(&mesh).with_context(|| format!("reading {}", mesh.display()))?;
+            let submitted = Artifacts::new(root, Stage::Rig.as_str(), &spec.name, FIRST_ATTEMPT)?;
             let task = client
                 .run(
                     Endpoint::Rigging,
                     meshy::rigging_body(&meshy::to_model_uri(&glb), height),
+                    &submitted.task(),
                     |progress| println!("  rig {progress}%"),
                 )
                 .await?;
@@ -383,10 +393,12 @@ pub async fn rig(
             continue;
         }
         println!("  animating {name}…");
+        let submitted = Artifacts::new(root, Stage::Rig.as_str(), name, FIRST_ATTEMPT)?;
         let task = client
             .run(
                 Endpoint::Animation,
                 meshy::animation_body(&rig_task, action_id),
+                &submitted.task(),
                 |_| {},
             )
             .await

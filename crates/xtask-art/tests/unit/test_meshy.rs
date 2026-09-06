@@ -2,7 +2,7 @@ use serde_json::json;
 use xtask_art::providers::meshy::{
     Task, TaskStatus, animation_body, image_to_3d_body, rigging_body, to_model_uri,
 };
-use xtask_art::spec::TextureResolution;
+use xtask_art::spec::{PoseMode, TextureResolution};
 
 fn task(payload: serde_json::Value) -> Task {
     Task {
@@ -77,6 +77,7 @@ fn texture_resolution_is_sent_as_a_string() {
         true,
         true,
         TextureResolution::K2,
+        None,
     );
     assert_eq!(body["texture_resolution"], "2k");
 }
@@ -89,6 +90,7 @@ fn model_body_carries_remesh_and_texture_settings() {
         true,
         true,
         TextureResolution::K2,
+        None,
     );
     assert_eq!(body["target_polycount"], 30_000);
     assert_eq!(body["topology"], "quad");
@@ -99,7 +101,7 @@ fn model_body_carries_remesh_and_texture_settings() {
 
 #[test]
 fn triangle_topology_is_selectable() {
-    let body = image_to_3d_body(&[], 10_000, false, false, TextureResolution::K2);
+    let body = image_to_3d_body(&[], 10_000, false, false, TextureResolution::K2, None);
     assert_eq!(body["topology"], "triangle");
 }
 
@@ -151,7 +153,49 @@ fn every_texture_resolution_reaches_the_api_as_the_string_it_expects() {
         (TextureResolution::K4, "4k"),
         (TextureResolution::K8, "8k"),
     ] {
-        let body = image_to_3d_body(&["data:a".into()], 30_000, true, true, resolution);
+        let body = image_to_3d_body(&["data:a".into()], 30_000, true, true, resolution, None);
         assert_eq!(body["texture_resolution"], expected);
     }
+}
+
+// --- pose_mode -------------------------------------------------------------
+
+/// The three values the spike measures, on the wire. Unset sends no key at
+/// all: the field is documented for Multi-Image to 3D only by inheritance,
+/// so an explicit null is a value nobody documented.
+#[test]
+fn every_pose_mode_reaches_the_api_as_the_string_it_documents() {
+    let sent = |mode| {
+        image_to_3d_body(
+            &["data:a".into()],
+            30_000,
+            true,
+            true,
+            TextureResolution::K2,
+            mode,
+        )
+    };
+
+    assert!(sent(None).get("pose_mode").is_none(), "{}", sent(None));
+    assert_eq!(sent(Some(PoseMode::APose))["pose_mode"], "a-pose");
+    assert_eq!(sent(Some(PoseMode::TPose))["pose_mode"], "t-pose");
+}
+
+/// Setting it adds one key and moves nothing else, so a spike run differs
+/// from a plain one by the field under measurement and by nothing more.
+#[test]
+fn a_pose_mode_adds_one_key_and_changes_no_other() {
+    let unset = image_to_3d_body(&[], 30_000, true, true, TextureResolution::K2, None);
+    let posed = image_to_3d_body(
+        &[],
+        30_000,
+        true,
+        true,
+        TextureResolution::K2,
+        Some(PoseMode::TPose),
+    );
+
+    let mut without = posed.as_object().unwrap().clone();
+    without.remove("pose_mode");
+    assert_eq!(serde_json::Value::Object(without), unset);
 }

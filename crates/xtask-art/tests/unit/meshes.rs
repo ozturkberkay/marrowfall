@@ -216,6 +216,19 @@ impl SyntheticMesh {
         self
     }
 
+    /// Scales the whole figure to `meters` tall, the way a generator hands
+    /// back a body of the size it chose rather than the size that was asked
+    /// for: `height_meters` is a parameter of the rigging call.
+    ///
+    /// Uniform, so the mirror, the facing and every count read the same.
+    pub fn at_height(mut self, meters: f64) -> Self {
+        let factor = meters / HEIGHT_METERS;
+        for vertex in &mut self.parts[0].vertices {
+            *vertex *= factor;
+        }
+        self
+    }
+
     /// Flattens the figure onto X = 0, so it has no width and a percent of
     /// that width is a precise number about nothing.
     pub fn flat_in_x(mut self) -> Self {

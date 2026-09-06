@@ -158,6 +158,10 @@ pub struct MeshLimits {
     /// ceiling, because filling a hole closes it with a face that can meet
     /// two others.
     pub non_manifold_post: f64,
+    /// How far the mesh's own height may sit from `spec.subject.height_meters`,
+    /// as a percent of it. Its own band, because the height a generator
+    /// returns is not the height it was asked for: only rigging is told one.
+    pub height_percent: f64,
 }
 
 /// The `[profile.concept]` table: what the four generated views must be
@@ -533,6 +537,7 @@ impl Profile {
             ("mesh.triangles", self.mesh.triangles),
             ("mesh.printability_edges", self.mesh.printability_edges),
             ("mesh.non_manifold_post", self.mesh.non_manifold_post),
+            ("mesh.height_percent", self.mesh.height_percent),
             // The fixer's own sizes. A floor of zero drops nothing and a
             // mirror threshold of zero mirrors nothing, so the fixer would
             // report success having changed the mesh not at all.

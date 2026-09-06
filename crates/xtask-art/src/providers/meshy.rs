@@ -12,7 +12,7 @@ use anyhow::{Context as _, Result, bail};
 use serde::Deserialize;
 
 use crate::http::{base_url, millis_from, truncate};
-use crate::spec::TextureResolution;
+use crate::spec::{PoseMode, TextureResolution};
 use serde_json::{Value, json};
 
 const BASE: &str = "https://api.meshy.ai/openapi";
@@ -67,6 +67,20 @@ pub struct Task {
     pub credits: Option<u32>,
     pub payload: Value,
 }
+
+/// A task the provider has given up on, which is a different thing from a
+/// request that did not get through: this one will read the same way forever,
+/// so [`Client::run`] stops resuming it and buys a new one next time.
+#[derive(Debug)]
+pub struct TaskEnded(String);
+
+impl std::fmt::Display for TaskEnded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for TaskEnded {}
 
 /// The subset of every task response that is shaped the same way.
 #[derive(Debug, Deserialize)]
@@ -203,6 +217,31 @@ impl Client {
             .with_context(|| format!("no task id in response from {}", endpoint.path()))
     }
 
+    /// Sends one request and hands back what the server answered, whatever it
+    /// was: the status line and the body, verbatim.
+    ///
+    /// What an unknown-parameter probe needs. [`Client::submit`] turns a 400
+    /// into an error and reads a task id out of a success, and the answer here
+    /// is the 400 itself: whether the API knows a field is only readable from
+    /// the sentence it rejects a deliberately invalid body with. Free, because
+    /// a rejected task is never created and never billed.
+    pub async fn probe(&self, endpoint: Endpoint, body: Value) -> Result<(u16, String)> {
+        let response = self
+            .http
+            .post(format!("{}{}", self.base, endpoint.path()))
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("probing {}", endpoint.path()))?;
+        let status = response.status().as_u16();
+        let text = response
+            .text()
+            .await
+            .with_context(|| format!("reading the {} probe body", endpoint.path()))?;
+        Ok((status, text))
+    }
+
     /// Fetches a task's current state.
     pub async fn status(&self, endpoint: Endpoint, id: &str) -> Result<Task> {
         let response = self
@@ -223,7 +262,11 @@ impl Client {
                 .map(|error| error.message.as_str())
                 .filter(|message| !message.is_empty())
                 .unwrap_or("no reason given");
-            bail!("Meshy task {id} ended as {:?}: {reason}", envelope.status);
+            return Err(TaskEnded(format!(
+                "Meshy task {id} ended as {:?}: {reason}",
+                envelope.status
+            ))
+            .into());
         }
 
         Ok(Task {
@@ -240,26 +283,56 @@ impl Client {
     }
 
     /// Submits a task and polls until it finishes.
+    ///
+    /// `in_flight` holds the id from the moment the task exists until it
+    /// succeeds or [`TaskEnded`], so a run that dies in between resumes the
+    /// task it already paid for. [`crate::check::Artifacts::task`] names one
+    /// file per stage and attempt, so two calls never share one.
     pub async fn run(
         &self,
         endpoint: Endpoint,
         body: Value,
+        in_flight: &std::path::Path,
         mut on_progress: impl FnMut(u32),
     ) -> Result<Task> {
-        let id = self.submit(endpoint, body).await?;
+        let id = match submitted_already(in_flight) {
+            Some(id) => {
+                println!("  resuming task {id}, already paid for");
+                id
+            }
+            None => {
+                let id = self.submit(endpoint, body).await?;
+                remember(in_flight, &id)?;
+                id
+            }
+        };
         let interval = millis_from("MARROWFALL_MESHY_POLL_MS", POLL_INTERVAL);
         let timeout = millis_from("MARROWFALL_MESHY_TIMEOUT_MS", POLL_TIMEOUT);
         let deadline = tokio::time::Instant::now() + timeout;
         let mut last_progress = u32::MAX;
 
         loop {
-            let task = self.status(endpoint, &id).await?;
+            let task = match self.status(endpoint, &id).await {
+                Ok(task) => task,
+                // A dead task, so forget it: anything else, a refused
+                // connection most of all, is worth resuming.
+                Err(why) => {
+                    if why.is::<TaskEnded>() {
+                        let _ = std::fs::remove_file(in_flight);
+                    }
+                    return Err(why);
+                }
+            };
 
             if task.progress != last_progress {
                 last_progress = task.progress;
                 on_progress(task.progress);
             }
             if task.status == TaskStatus::Succeeded {
+                // Delivered, so the next call submits a fresh one: `--retry`
+                // has to be able to buy a genuinely new task. A removal that
+                // fails costs one wasted poll and no credits.
+                let _ = std::fs::remove_file(in_flight);
                 return Ok(task);
             }
             if task.status == TaskStatus::Unknown {
@@ -334,16 +407,39 @@ impl Client {
     }
 }
 
+/// The id of a task submitted and not yet seen to finish, if one is on disk.
+fn submitted_already(at: &std::path::Path) -> Option<String> {
+    let id = std::fs::read_to_string(at).ok()?;
+    let id = id.trim().to_owned();
+    (!id.is_empty()).then_some(id)
+}
+
+/// Records the id before the first poll, which is the whole point: a task
+/// nobody wrote down is a task paid for twice.
+fn remember(at: &std::path::Path, id: &str) -> Result<()> {
+    if let Some(parent) = at.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(at, format!("{id}\n")).with_context(|| format!("writing {}", at.display()))
+}
+
 /// Body for a multi-view image-to-3D task. Remesh and texture are parameters
 /// because the API performs both inline.
+///
+/// `pose_mode` is **absent** when the spec leaves it unset, rather than null:
+/// the reference documents the field for Image to 3D and gives Multi-Image to
+/// 3D the same optional parameters by inheritance, so an explicit null is a
+/// value nobody documented.
 pub fn image_to_3d_body(
     image_data_uris: &[String],
     target_polycount: u32,
     quads: bool,
     pbr: bool,
     resolution: TextureResolution,
+    pose_mode: Option<PoseMode>,
 ) -> Value {
-    json!({
+    let mut body = json!({
         "image_urls": image_data_uris,
         "should_remesh": true,
         "target_polycount": target_polycount,
@@ -352,7 +448,11 @@ pub fn image_to_3d_body(
         "enable_pbr": pbr,
         "texture_resolution": texture_resolution(resolution),
         "ai_model": "meshy-7",
-    })
+    });
+    if let Some(pose) = pose_mode {
+        body["pose_mode"] = Value::String(pose.as_str().to_owned());
+    }
+    body
 }
 
 /// Body for auto-rigging a mesh. No body-plan parameter: the endpoint only
