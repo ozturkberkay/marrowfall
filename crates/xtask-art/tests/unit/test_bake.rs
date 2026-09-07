@@ -1,10 +1,10 @@
-//! The five `bake.*` rules Rust reads off the rendered frames and the spec.
+//! The four `bake.*` rules Rust reads off the rendered frames.
 //!
-//! The 848 real frames of the survivor are gitignored derived output, so what
-//! is calibrated here is the measurement and every way it must fail. The real
-//! readings are in `[profile.bake]` beside each limit, and the recorded run in
-//! `crates/xtask-art/tests/fixtures/bake.survivor.1.json` is the report those
-//! numbers came out of.
+//! The 1,472 real frames of the survivor are gitignored derived output, so
+//! what is calibrated here is the measurement and every way it must fail. The
+//! real readings are in `[profile.bake]` beside each limit, and the recorded
+//! run in `crates/xtask-art/tests/fixtures/bake.survivor.1.json` is the report
+//! those numbers came out of.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -25,23 +25,20 @@ fn profile() -> Profile {
     Profile::of(&repo_root(), xtask_art::library::HUMANOID).expect("the committed profile")
 }
 
-/// One clip's rendered set, whole, plus the character the spec field belongs
-/// to.
+/// One clip's rendered set, whole.
 fn a_baked_clip() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     a_rendered_set(dir.path(), CLIP, a_ring(), FRAMES);
     dir
 }
 
-fn measured(dir: &Path, roll: f64) -> Vec<Finding> {
+fn measured(dir: &Path) -> Vec<Finding> {
     bake::check_files(
         &[bake::Rendered {
             name: CLIP,
             dir,
             directions: a_ring(),
         }],
-        "survivor",
-        roll,
         &profile(),
         1,
     )
@@ -57,7 +54,7 @@ fn one(findings: &[Finding], rule: &str) -> Finding {
 /// to hold. Deleting one measurement leaves its rule unread, which is what
 /// the bake stage then refuses.
 #[test]
-fn every_file_rule_reports_once_per_clip_and_the_patch_once_per_character() {
+fn every_file_rule_reports_once_per_clip() {
     let dir = a_baked_clip();
     a_rendered_set(dir.path(), "run", a_ring(), FRAMES);
     let findings = bake::check_files(
@@ -73,8 +70,6 @@ fn every_file_rule_reports_once_per_clip_and_the_patch_once_per_character() {
                 directions: a_ring(),
             },
         ],
-        "survivor",
-        0.0,
         &profile(),
         1,
     );
@@ -94,8 +89,6 @@ fn every_file_rule_reports_once_per_clip_and_the_patch_once_per_character() {
             owed.insert((rule.to_owned(), clip.to_owned()));
         }
     }
-    owed.insert(("bake.forearm_roll".to_owned(), "survivor".to_owned()));
-
     assert_eq!(seen, owed);
 }
 
@@ -104,7 +97,7 @@ fn every_file_rule_reports_once_per_clip_and_the_patch_once_per_character() {
 #[test]
 fn a_whole_rendered_set_holds_every_rule() {
     let dir = a_baked_clip();
-    let findings = measured(dir.path(), 0.0);
+    let findings = measured(dir.path());
 
     for finding in &findings {
         assert_eq!(finding.severity, Severity::Info, "{finding:?}");
@@ -149,7 +142,7 @@ fn a_deleted_frame_is_counted_and_named() {
     let gone = frame_path(dir.path(), CLIP, a_ring()[2], 1);
     std::fs::remove_file(&gone).unwrap();
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.frame_count");
+    let finding = one(&measured(dir.path()), "bake.frame_count");
 
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.measured, 1.0);
@@ -169,7 +162,7 @@ fn a_frame_that_rendered_nothing_fails_the_coverage_floor() {
     let dir = a_baked_clip();
     write_frame(dir.path(), CLIP, a_ring()[1], 2, &an_empty_frame());
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.non_empty");
+    let finding = one(&measured(dir.path()), "bake.non_empty");
 
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.measured, 0.0);
@@ -190,7 +183,7 @@ fn a_pose_against_the_border_fails_in_frame() {
     let dir = a_baked_clip();
     write_frame(dir.path(), CLIP, a_ring()[0], 0, &a_clipped_frame());
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.in_frame");
+    let finding = one(&measured(dir.path()), "bake.in_frame");
 
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.measured, 0.0);
@@ -212,7 +205,7 @@ fn a_frame_offset_twenty_pixels_breaks_the_reflection() {
     let dir = a_baked_clip();
     write_frame(dir.path(), CLIP, a_ring()[0], 1, &a_frame_offset_by(20));
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.pivot");
+    let finding = one(&measured(dir.path()), "bake.pivot");
 
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(finding.measured, 20.0);
@@ -235,31 +228,10 @@ fn a_pixel_of_reflection_error_still_holds() {
     let dir = a_baked_clip();
     write_frame(dir.path(), CLIP, a_ring()[0], 1, &a_frame_offset_by(1));
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.pivot");
+    let finding = one(&measured(dir.path()), "bake.pivot");
 
     assert_eq!(finding.severity, Severity::Info);
     assert_eq!(finding.measured, 1.0);
-}
-
-/// `[synth]` the spec field set to 30. An error rather than a warning, per
-/// the deletions table: the roll runs after `clip.swing` has measured the
-/// clip, where nothing else can see it.
-#[test]
-fn the_forearm_roll_patch_is_refused_at_thirty_degrees() {
-    let dir = a_baked_clip();
-
-    let asked = one(&measured(dir.path(), 30.0), "bake.forearm_roll");
-    assert_eq!(asked.severity, Severity::Error);
-    assert_eq!(asked.measured, 30.0);
-    assert_eq!(
-        asked.message,
-        "spec.bake.forearm_roll asks for 30 degrees, and the transfer aims both rigs at one \
-         table of world directions instead"
-    );
-
-    let off = one(&measured(dir.path(), 0.0), "bake.forearm_roll");
-    assert_eq!(off.severity, Severity::Info);
-    assert_eq!(off.limit, 0.0);
 }
 
 /// A clip that rendered nothing at all has no set to count, and no coverage,
@@ -268,7 +240,7 @@ fn the_forearm_roll_patch_is_refused_at_thirty_degrees() {
 #[test]
 fn a_clip_with_no_frames_is_undefined_under_every_rule() {
     let dir = tempfile::tempdir().unwrap();
-    let findings = measured(dir.path(), 0.0);
+    let findings = measured(dir.path());
 
     for rule in [
         "bake.frame_count",
@@ -295,7 +267,7 @@ fn an_unreadable_frame_is_undefined_and_names_the_file() {
     let broken = frame_path(dir.path(), CLIP, a_ring()[3], 0);
     std::fs::write(&broken, b"not a png").unwrap();
 
-    let finding = one(&measured(dir.path(), 0.0), "bake.non_empty");
+    let finding = one(&measured(dir.path()), "bake.non_empty");
 
     assert_eq!(finding.severity, Severity::Error);
     assert!(
@@ -326,8 +298,6 @@ fn a_ring_with_no_opposite_facing_cannot_be_reflected() {
             dir: dir.path(),
             directions: &odd,
         }],
-        "survivor",
-        0.0,
         &profile(),
         1,
     );

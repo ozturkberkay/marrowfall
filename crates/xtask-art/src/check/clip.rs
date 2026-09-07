@@ -102,6 +102,10 @@ const SIZED: &str = "the root joint's horizontal travel, first frame to last, ag
 const SEGMENT: &str = "the two stride_segment joints of each rig at rest, in Blender Z-up \
                        world space";
 
+const BODY: &str = "every joint of the clip against the source's, each against its own root \
+                    joint and the source's sized by the femur ratio, in Blender Z-up world \
+                    space, worst frame of the clip";
+
 /// Further apart than two rigs of one skeleton can be.
 ///
 /// [`STRIDE_RATIO`] records rather than gates, and every finding is still
@@ -208,7 +212,7 @@ pub const TWIST: Rule = Rule {
 /// armature object moves the whole clip while every node's own transform
 /// still matches the rig's.
 ///
-/// `strip_animation.py` weights a tiny triangle to the root bone so the
+/// `armature.py` weights a tiny triangle to the root bone so the
 /// armature exports at all, so `skin_carrier` is a subject too. It is a node
 /// the file really carries, and applying a transform to it is the same defect
 /// on a different object.
@@ -324,10 +328,36 @@ pub const STRIDE_RATIO: Rule = Rule {
     limit: |_| A_HUNDREDFOLD,
 };
 
+/// Where the fit's joints ended up, against the source's own.
+///
+/// ```text
+/// body(m, role, t)   = joint(m, role, t) - joint(m, root, t)
+/// clip.posture(role) = max over t of
+///                      |body(out, role, t) - ratio * body(src, role, t)|
+/// ```
+///
+/// Against the root joint, so a clip's travel and the floor snap cancel and
+/// what is left is the shape of the body. Sized by the femur ratio
+/// [`STRIDE_RATIO`] records, because our limbs are not the source's length.
+///
+/// **This is the rule no other clip gate could be.** [`SWING`] and [`TWIST`]
+/// read each bone's own frame, and nothing else reads a joint chain: a fit
+/// that pointed every bone correctly out of a hips frame 97.612 degrees off
+/// the direction to its own spine passed all thirteen and shipped a hunch in
+/// every frame of every direction of two clips. Per role and not per clip, so
+/// the subject says which joint moved.
+pub const POSTURE: Rule = Rule {
+    id: "clip.posture",
+    comparison: Comparison::Le,
+    unit: "meters",
+    space: BODY,
+    limit: |profile| profile.clip.posture_meters,
+};
+
 /// A looping clip ends in the pose it started in.
 ///
 /// Playback jumps from the last key back to the first, so a pose that has not
-/// come back round is a visible hitch once a loop. `skipped` for a clip that
+/// come back around is a visible hitch once a loop. `skipped` for a clip that
 /// does not loop, where the two ends have no reason to agree at all.
 pub const LOOP: Rule = Rule {
     id: "clip.loop",
@@ -338,7 +368,7 @@ pub const LOOP: Rule = Rule {
 };
 
 /// Every rule this module owns, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 13] = [
+pub const RULES: [&Rule; 14] = [
     &INTERPOLATION,
     &REFERENCE_POSE_KEY,
     &FPS_GRID,
@@ -348,6 +378,7 @@ pub const RULES: [&Rule; 13] = [
     &STRIDE_RATIO,
     &SWING,
     &TWIST,
+    &POSTURE,
     &OBJECT_TRANSFORM,
     &ROOT_TRAVEL,
     &ROOT_BOB,
@@ -393,9 +424,10 @@ pub const BAKE_RULES: [&Rule; 2] = [&ROOT_TRAVEL, &ROOT_BOB];
 
 /// The rules [`check_files`] reads off the delivered GLB, which is also the
 /// list it reports as undefined when that file is not there.
-pub const FILE_RULES: [&Rule; 11] = [
+pub const FILE_RULES: [&Rule; 12] = [
     &SWING,
     &TWIST,
+    &POSTURE,
     &OBJECT_TRANSFORM,
     &FPS_GRID,
     &LOOP,
@@ -438,6 +470,9 @@ pub fn check_files(
         .iter()
         .map(|role| filled_by(&bones, role))
         .collect::<Result<_>>()?;
+    // The role every joint is read against. `[profile] single_root` names the
+    // bone, and a role is the only key the source's own record also carries.
+    let root = role_of(&bones, &profile.single_root)?;
     let clip = relative_to(output, repo_root);
     let bytes = match std::fs::read(output) {
         Ok(bytes) => bytes,
@@ -449,14 +484,29 @@ pub fn check_files(
                 .to_vec());
         }
     };
+    // Before the pair, because `clip.posture` is sized by the same ratio: our
+    // limbs are not the source's length, so an unsized comparison would hold
+    // our own body to a taller one.
+    let sized = stride_of(&bytes, fitted, &bones, table.stride_segment(), profile);
+    let ratio = sized.as_ref().ok().and_then(Stride::ratio);
     let compared = match (gltf_clip::read(&bytes, &bones), Motion::read(source_motion)) {
-        (Ok(output), Ok(source)) => compare(&output, &source, &bones, profile, attempt),
+        (Ok(output), Ok(source)) => compare(
+            &Compared {
+                output: &output,
+                source: &source,
+                bones: &bones,
+                root: &root,
+                ratio,
+            },
+            profile,
+            attempt,
+        ),
         (output, source) => {
             let error = output
                 .err()
                 .or(source.err())
                 .expect("one of the two failed");
-            [&SWING, &TWIST]
+            [&SWING, &TWIST, &POSTURE]
                 .map(|rule| {
                     rule.undefined(
                         &clip,
@@ -497,15 +547,15 @@ pub fn check_files(
             })
             .to_vec(),
     };
-    let floor = match gltf_clip::ground(&bytes, &toes) {
-        Ok(ground) => floor_snap(&ground, &clip, profile, attempt),
+    let floor = match gltf_clip::soles(&bytes, &toes) {
+        Ok(soles) => floor_snap(&soles, &clip, profile, attempt),
         Err(error) => FLOOR_SNAP.undefined(
             &clip,
             attempt,
-            format!("{clip} carries no readable ground joint: {error:#}"),
+            format!("{clip} carries no readable sole point: {error:#}"),
         ),
     };
-    let sized = match stride_of(&bytes, fitted, &bones, table.stride_segment(), profile) {
+    let sized = match sized {
         Ok(reading) => vec![
             stride(&reading, &clip, profile, attempt),
             stride_ratio(&reading, &clip, profile, attempt),
@@ -563,6 +613,19 @@ fn filled_by(bones: &BTreeMap<String, String>, role: &str) -> Result<String> {
         .get(role)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("the canonical convention maps no bone to {role}"))
+}
+
+/// The role one bone fills, on the canonical convention.
+///
+/// The other way around from [`filled_by`]: `[profile] single_root` names a
+/// bone of our own rig, and every absolute rule is keyed by role because that
+/// is the only key the source's own record shares.
+fn role_of(bones: &BTreeMap<String, String>, bone: &str) -> Result<String> {
+    bones
+        .iter()
+        .find(|(_, filled)| filled.as_str() == bone)
+        .map(|(role, _)| role.clone())
+        .ok_or_else(|| anyhow::anyhow!("the canonical convention gives {bone} no role"))
 }
 
 /// The two lengths and the two travels [`STRIDE`] reads, out of three files:
@@ -687,38 +750,53 @@ pub fn stride_ratio(reading: &Stride, clip: &str, profile: &Profile, attempt: u3
     )
 }
 
-/// `clip.floor_snap`, on the lowest ground joint the delivered file carries.
+/// `clip.floor_snap`, on the lowest sole point the delivered file carries.
 ///
-/// One finding, not one per toe: what the retarget lifted is the whole clip,
-/// so the reading is the lowest any of them gets and the subject says which
-/// one that was.
+/// The sole and not the joint: a joint's rest height is only where the
+/// contact patch is while the foot keeps its rest pitch, and a cross-rig fit
+/// matches the source's pitch instead. One model, read here and by
+/// `clip.foot_contact.penetration`, so standing on the floor means one thing.
+///
+/// One finding, not one per foot: what the retarget lifted is the whole clip,
+/// so the reading is the lowest any sole point gets and the subject says
+/// which foot that was.
 pub fn floor_snap(
-    ground: &gltf_clip::Ground,
+    soles: &gltf_clip::Soles,
     clip: &str,
     profile: &Profile,
     attempt: u32,
 ) -> Finding {
-    let Some(low) = ground
-        .lowest
+    let low = soles
+        .feet
         .iter()
-        .min_by(|a, b| a.height.total_cmp(&b.height))
-    else {
+        .flat_map(|foot| {
+            soles
+                .seconds
+                .iter()
+                .zip(foot.ball.iter().zip(&foot.heel))
+                .flat_map(|(seconds, (ball, heel))| {
+                    [
+                        (foot.toe.as_str(), ball.z, *seconds),
+                        (foot.toe.as_str(), heel.z, *seconds),
+                    ]
+                })
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    let Some((toe, height, seconds)) = low else {
         return FLOOR_SNAP.undefined(
             clip,
             attempt,
-            format!("{clip} carries no ground joint, so it has no rest height to be read against"),
+            format!("{clip} carries no sole point, so it has no floor to be read against"),
         );
     };
-    let off = low.height - ground.floor;
     FLOOR_SNAP.measured(
         profile,
-        &format!("{} at {:.6} s", low.joint, low.seconds),
-        off.abs(),
+        &format!("{toe} at {seconds:.6} s"),
+        height.abs(),
         attempt,
         format!(
-            "{} at {:.6} s is the lowest any ground joint of the clip gets, \
-             {off:.4} m from the rest height the snap aims at",
-            low.joint, low.seconds
+            "{toe} at {seconds:.6} s is the lowest any sole point of the clip \
+             gets, {height:.4} m from the floor the snap aims at"
         ),
     )
 }
@@ -791,36 +869,47 @@ pub fn closes_the_loop(
         .collect()
 }
 
-/// `clip.swing` and `clip.twist`, one finding each per role. Pure: both
-/// motions are already read.
+/// The pair of clips the three absolute rules read, and what sizes them.
+pub struct Compared<'a> {
+    /// The delivered GLB, as [`gltf_clip::read`] read it.
+    pub output: &'a Motion,
+    /// The vendor file, as the retarget's sidecar recorded it.
+    pub source: &'a Motion,
+    /// Role to the bone that fills it on our own rig, for the messages.
+    pub bones: &'a BTreeMap<String, String>,
+    /// The role every joint is measured against, which is our rig's root.
+    pub root: &'a str,
+    /// Our stride segment over the source's, which every length was sized by.
+    /// `None` when either rig has no segment to measure, where
+    /// [`POSTURE`] has no scale to read and says so.
+    pub ratio: Option<f64>,
+}
+
+/// `clip.swing`, `clip.twist` and `clip.posture`, one finding each per role.
+/// Pure: both motions are already read.
 ///
 /// The subjects are every role the canonical convention maps together with
 /// every role the source drove, so a role one side is missing is reported
 /// rather than dropped. Nothing here is skipped for being absent.
-pub fn compare(
-    output: &Motion,
-    source: &Motion,
-    bones: &BTreeMap<String, String>,
-    profile: &Profile,
-    attempt: u32,
-) -> Vec<Finding> {
-    let roles: BTreeSet<&str> = bones
+pub fn compare(pair: &Compared<'_>, profile: &Profile, attempt: u32) -> Vec<Finding> {
+    let roles: BTreeSet<&str> = pair
+        .bones
         .keys()
         .map(String::as_str)
-        .chain(source.roles())
+        .chain(pair.source.roles())
         .collect();
-    if output.frames().len() != source.frames().len() {
+    if pair.output.frames().len() != pair.source.frames().len() {
         return misaligned(
             &roles,
             attempt,
             &format!(
                 "the clip carries {} frame(s) and the source has {}",
-                output.frames().len(),
-                source.frames().len()
+                pair.output.frames().len(),
+                pair.source.frames().len()
             ),
         );
     }
-    if let Some(apart) = worst_time_gap(output, source) {
+    if let Some(apart) = worst_time_gap(pair.output, pair.source) {
         return misaligned(
             &roles,
             attempt,
@@ -832,42 +921,38 @@ pub fn compare(
     }
     roles
         .into_iter()
-        .flat_map(|role| measure(role, output, source, bones, profile, attempt))
+        .flat_map(|role| measure(role, pair, profile, attempt))
         .collect()
 }
 
-/// The worst reading of one rule over one clip, and when it happened.
+/// The worst reading of one rule over one clip, and when it happened. In
+/// whatever unit the rule publishes: degrees for two of the three, meters for
+/// [`POSTURE`].
 #[derive(Default)]
 struct Worst {
-    degrees: f64,
+    reading: f64,
     seconds: f64,
 }
 
 impl Worst {
-    fn keep(&mut self, degrees: f64, seconds: f64) {
-        if degrees > self.degrees {
-            *self = Self { degrees, seconds };
+    fn keep(&mut self, reading: f64, seconds: f64) {
+        if reading > self.reading {
+            *self = Self { reading, seconds };
         }
     }
 }
 
-/// Both rules on one role, or the reason neither can be measured.
-fn measure(
-    role: &str,
-    output: &Motion,
-    source: &Motion,
-    bones: &BTreeMap<String, String>,
-    profile: &Profile,
-    attempt: u32,
-) -> Vec<Finding> {
-    let bone = bones.get(role).map_or(role, String::as_str);
+/// All three rules on one role, or the reason none can be measured.
+fn measure(role: &str, pair: &Compared<'_>, profile: &Profile, attempt: u32) -> Vec<Finding> {
+    let (output, source) = (pair.output, pair.source);
+    let bone = pair.bones.get(role).map_or(role, String::as_str);
     let (Some(out_rest), Some(src_rest)) = (output.rest(role), source.rest(role)) else {
         let missing = if output.rest(role).is_none() {
             format!("the clip has no bone for the {role} role, so nothing carries its motion")
         } else {
             format!("the source clip drives no {role}, so there is nothing to measure against")
         };
-        return [&SWING, &TWIST]
+        return [&SWING, &TWIST, &POSTURE]
             .map(|rule| rule.undefined(role, attempt, missing.clone()))
             .to_vec();
     };
@@ -904,11 +989,11 @@ fn measure(
         SWING.measured(
             profile,
             role,
-            swing.degrees,
+            swing.reading,
             attempt,
             format!(
                 "{bone} points {:.6} degrees from the source's {role} at {} s",
-                swing.degrees, swing.seconds
+                swing.reading, swing.seconds
             ),
         ),
         match singular {
@@ -920,12 +1005,12 @@ fn measure(
             None => TWIST.measured(
                 profile,
                 role,
-                twist.degrees,
+                twist.reading,
                 attempt,
                 format!(
                     "{bone} is rolled {:.3} degrees from the {:.3} degrees the two bind \
                      poses call for, at {} s",
-                    twist.degrees,
+                    twist.reading,
                     at_rest
                         .twist
                         .expect("a rest roll, or `singular` would carry the reason"),
@@ -933,7 +1018,58 @@ fn measure(
                 ),
             ),
         },
+        posture(role, bone, pair, profile, attempt),
     ]
+}
+
+/// `clip.posture` on one role: how far our joint sits from the source's, both
+/// read against their own root joint and the source's sized by the femur.
+fn posture(
+    role: &str,
+    bone: &str,
+    pair: &Compared<'_>,
+    profile: &Profile,
+    attempt: u32,
+) -> Finding {
+    let Some(ratio) = pair.ratio else {
+        return POSTURE.undefined(
+            role,
+            attempt,
+            format!(
+                "neither rig has a stride segment to size {bone} by, so its joint \
+                 has nothing to be read against"
+            ),
+        );
+    };
+    let mut worst = Worst::default();
+    for (out, src) in pair.output.frames().iter().zip(pair.source.frames()) {
+        let body = |frame: &super::motion::Frame| {
+            Some(*frame.joints.get(role)? - *frame.joints.get(pair.root)?)
+        };
+        let (Some(ours), Some(theirs)) = (body(out), body(src)) else {
+            return POSTURE.undefined(
+                role,
+                attempt,
+                format!(
+                    "one of the two clips puts no joint on {bone} or on its {} root \
+                     at {} s",
+                    pair.root, out.seconds
+                ),
+            );
+        };
+        worst.keep((ours - theirs * ratio).length(), out.seconds);
+    }
+    POSTURE.measured(
+        profile,
+        role,
+        worst.reading,
+        attempt,
+        format!(
+            "{bone} sits {:.4} m from where the source's {role} has it, against \
+             the root joint and sized by {ratio:.4}, at {} s",
+            worst.reading, worst.seconds
+        ),
+    )
 }
 
 /// One undefined finding per role per rule, for a fault that makes the whole
@@ -942,7 +1078,9 @@ fn measure(
 fn misaligned(roles: &BTreeSet<&str>, attempt: u32, why: &str) -> Vec<Finding> {
     roles
         .iter()
-        .flat_map(|role| [&SWING, &TWIST].map(|rule| rule.undefined(role, attempt, why.to_owned())))
+        .flat_map(|role| {
+            [&SWING, &TWIST, &POSTURE].map(|rule| rule.undefined(role, attempt, why.to_owned()))
+        })
         .collect()
 }
 

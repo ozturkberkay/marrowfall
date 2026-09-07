@@ -8,7 +8,7 @@ CharacterSpec(
         symmetry: true,
         description: "an adult male survivor in his mid-thirties, starting from nothing. Lean and wiry, hard but underfed — a survivor's body, not a bodybuilder. Weathered, dirt-smudged skin with a few faint old scars. Short, unkempt dark hair and light stubble. He wears ONLY a pair of torn, filthy cloth shorts with a frayed ripped hem, dirt-stained. Bare chest, bare arms, bare legs, barefoot. No weapon, no armour, no shirt, no shoes, no jewellery.",
     ),
-    animations: ["idle", "run", "walk_back"],
+    animations: ["idle", "run", "walk_back", "strafe_left", "strafe_right"],
     remesh: Remesh(
         target: 30000,
         quads: true,
@@ -21,7 +21,6 @@ CharacterSpec(
         directions: 16,
         render_size: 512,
         sprite_height: 240,
-        forearm_roll: 0.0,
         trim_start: 0.0,
     ),
 )

@@ -10,7 +10,8 @@ use xtask_art::preview;
 use xtask_art::spec::Paths;
 use xtask_art::stages;
 
-use crate::support::{a_library, a_png, a_spec, install_skeleton};
+use crate::stubs::a_godot_stub;
+use crate::support::{EnvGuard, a_library, a_png, a_spec, install_skeleton};
 
 /// Writes one frame: an opaque block inset from the canvas edge, so cropping
 /// has something to find and nothing touches the border.
@@ -39,16 +40,24 @@ fn write_animation(dir: &std::path::Path, name: &str, frames: usize, height: u32
 /// A repository the pack stage can measure in: the skeleton is there because
 /// `Rule::measured` takes a profile, not because any `atlas.*` limit reads
 /// one. All three count defects and publish 0.
-fn a_packed_repo() -> tempfile::TempDir {
+///
+/// The stub Godot comes with it, because the stage hands the project to the
+/// importer and no test may need Godot installed.
+fn a_packed_repo() -> (tempfile::TempDir, EnvGuard) {
     let dir = tempfile::tempdir().unwrap();
     install_skeleton(dir.path());
-    dir
+    let mut env = EnvGuard::new();
+    env.set(
+        "MARROWFALL_GODOT_BIN",
+        a_godot_stub(dir.path()).to_str().unwrap(),
+    );
+    (dir, env)
 }
 
 #[test]
 fn pack_writes_one_atlas_per_animation_plus_the_manifest() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     let mut spec = a_spec("survivor");
     spec.animations.push("run".to_owned());
@@ -72,7 +81,7 @@ fn pack_writes_one_atlas_per_animation_plus_the_manifest() {
 #[test]
 fn packing_measures_the_atlases_it_just_wrote() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 3, 40);
 
@@ -108,7 +117,7 @@ fn packing_measures_the_atlases_it_just_wrote() {
 #[test]
 fn a_manifest_claiming_a_frame_nobody_packed_stops_the_pack() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     let spec = a_spec("survivor");
     write_animation(&paths.staging(), "idle", 3, 40);
@@ -131,7 +140,7 @@ fn a_manifest_claiming_a_frame_nobody_packed_stops_the_pack() {
 #[test]
 fn the_manifest_ends_with_a_newline() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 2, 40);
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
@@ -143,23 +152,132 @@ fn the_manifest_ends_with_a_newline() {
     );
 }
 
-/// Godot regenerates everything else in a `.import` file from the atlas and
-/// these params, but a `uid` it cannot see it mints anew, and a resource id that
-/// changes on every re-pack is a diff nobody asked for.
+/// A seed is not a loadable sidecar, so the stage finishes the job by handing
+/// the whole project to Godot's own importer.
+#[test]
+fn packing_hands_the_project_to_godots_own_importer() {
+    let library = a_library();
+    let (dir, mut env) = a_packed_repo();
+    let argv = dir.path().join("godot.argv");
+    env.set("MARROWFALL_STUB_ARGV", argv.to_str().unwrap());
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    let recorded = std::fs::read_to_string(&argv).expect("godot was never run");
+    assert_eq!(
+        recorded.lines().collect::<Vec<&str>>(),
+        vec![
+            "--headless",
+            "--import",
+            "--path",
+            paths.godot_project().to_str().unwrap()
+        ]
+    );
+}
+
+/// And the file the importer wrote is the file that lands, because the two
+/// lines the runtime needs are Godot's and not ours. Measured: without them
+/// the game refuses the atlas with `can't load resource of class: 'Texture2D'`.
+#[test]
+fn the_sidecar_the_importer_wrote_is_what_lands() {
+    let library = a_library();
+    let (dir, _env) = a_packed_repo();
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+
+    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+
+    let text = std::fs::read_to_string(paths.assets().join("idle.png.import")).unwrap();
+    assert!(text.contains("path.bptc="), "no imported path:\n{text}");
+    assert!(text.contains("[deps]"), "no dependency block:\n{text}");
+    // BC7, the whole reason a seed is written at all, and the import keeps it.
+    assert!(text.contains("compress/mode=2"), "got:\n{text}");
+}
+
+/// A pack that cannot import ships atlases the game cannot load, so Godot's
+/// own failure is the stage's, in Godot's own words.
+#[test]
+fn a_godot_that_cannot_import_stops_the_pack() {
+    let library = a_library();
+    let (dir, mut env) = a_packed_repo();
+    let refuses = a_godot_that(dir.path(), "cannot-open", "ERROR: cannot open project", 1);
+    env.set("MARROWFALL_GODOT_BIN", refuses.to_str().unwrap());
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+
+    let error = stages::pack(&a_spec("survivor"), &library, &paths)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("cannot open project"), "got: {error}");
+}
+
+/// Measured on 4.7.2: a file Godot fails to import still exits 0, and the
+/// only sign is the line it printed on stderr. So the exit code cannot be the
+/// gate, or a broken atlas would be packed and recorded as done.
+#[test]
+fn an_import_error_stops_the_pack_even_though_godot_exits_zero() {
+    let library = a_library();
+    let (dir, mut env) = a_packed_repo();
+    let quiet = a_godot_that(
+        dir.path(),
+        "exits-zero",
+        "ERROR: Error importing 'res://assets/characters/survivor/idle.png'.",
+        0,
+    );
+    env.set("MARROWFALL_GODOT_BIN", quiet.to_str().unwrap());
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+
+    let error = stages::pack(&a_spec("survivor"), &library, &paths)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("Error importing"), "got: {error}");
+}
+
+/// And no Godot at all is named rather than skipped, for the same reason.
+#[test]
+fn a_missing_godot_stops_the_pack_by_name() {
+    let library = a_library();
+    let (dir, mut env) = a_packed_repo();
+    env.set("MARROWFALL_GODOT_BIN", "definitely-not-installed-godot");
+    let paths = Paths::new(dir.path(), "survivor");
+    write_animation(&paths.staging(), "idle", 2, 40);
+
+    let error = stages::pack(&a_spec("survivor"), &library, &paths)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("on PATH"), "got: {error}");
+}
+
+/// One Godot that prints a line on stderr and exits with a code a test chose.
+fn a_godot_that(dir: &std::path::Path, name: &str, says: &str, code: u8) -> std::path::PathBuf {
+    crate::stubs::an_executable(
+        dir,
+        &format!("godot-{name}.sh"),
+        &format!("echo \"{says}\" >&2\nexit {code}\n"),
+    )
+}
+
+/// Godot mints a `uid` whenever it cannot see one, and a resource id that
+/// changes on every re-pack is a diff nobody asked for. So the seed carries
+/// the one already on disk across.
 #[test]
 fn re_packing_keeps_the_resource_id_godot_already_assigned() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 2, 40);
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
 
-    // Stand in for the editor, which fills the file in on the next import.
     let settings = paths.assets().join("idle.png.import");
-    let imported = std::fs::read_to_string(&settings).unwrap().replace(
-        "type=\"CompressedTexture2D\"",
-        "type=\"CompressedTexture2D\"\nuid=\"uid://abc123\"",
-    );
+    let imported = std::fs::read_to_string(&settings)
+        .unwrap()
+        .replace("uid://stubminted", "uid://abc123");
     std::fs::write(&settings, &imported).unwrap();
 
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
@@ -175,17 +293,17 @@ fn re_packing_keeps_the_resource_id_godot_already_assigned() {
     );
 }
 
-/// The first pack has no file to read a `uid` from, so it must not leave a hole
-/// where one would go.
+/// The seed itself, before Godot sees it: the first pack has no file to read a
+/// `uid` from, so it must not leave a hole where one would go.
 #[test]
-fn a_first_pack_writes_settings_godot_can_import() {
-    let library = a_library();
-    let dir = a_packed_repo();
-    let paths = Paths::new(dir.path(), "survivor");
-    write_animation(&paths.staging(), "idle", 2, 40);
-    stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
+fn a_seed_with_no_resource_id_yet_leaves_no_hole_for_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let atlas = dir.path().join("idle.png");
+    std::fs::write(&atlas, a_png()).unwrap();
 
-    let text = std::fs::read_to_string(paths.assets().join("idle.png.import")).unwrap();
+    pack::seed_import_settings(&atlas).unwrap();
+
+    let text = std::fs::read_to_string(dir.path().join("idle.png.import")).unwrap();
     assert!(!text.contains("uid="), "nothing had assigned one yet");
     // BC7, the whole reason these settings are written at all.
     assert!(text.contains("compress/mode=2"));
@@ -198,7 +316,7 @@ fn a_first_pack_writes_settings_godot_can_import() {
 #[test]
 fn every_animation_of_a_character_is_packed_at_one_scale() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     let mut spec = a_spec("survivor");
     spec.animations.push("run".to_owned());
@@ -221,7 +339,7 @@ fn every_animation_of_a_character_is_packed_at_one_scale() {
 #[test]
 fn packing_reports_which_animation_has_no_frames() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     std::fs::create_dir_all(paths.staging()).unwrap();
 
@@ -234,7 +352,7 @@ fn packing_reports_which_animation_has_no_frames() {
 #[test]
 fn a_direction_ring_the_bake_cannot_produce_is_rejected() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     let mut spec = a_spec("survivor");
     spec.bake.directions = 6;
@@ -249,7 +367,7 @@ fn a_direction_ring_the_bake_cannot_produce_is_rejected() {
 
 #[test]
 fn the_concept_preview_lays_the_views_out_in_one_row() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     for view in xtask_art::spec::View::ALL {
         let path = paths.concept(view);
@@ -266,7 +384,7 @@ fn the_concept_preview_lays_the_views_out_in_one_row() {
 
 #[test]
 fn no_concepts_on_disk_writes_no_preview_rather_than_failing() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     preview::concept(&paths).unwrap();
     assert!(!paths.preview().join("concept.png").exists());
@@ -274,7 +392,7 @@ fn no_concepts_on_disk_writes_no_preview_rather_than_failing() {
 
 #[test]
 fn the_model_preview_renders_the_thumbnails_it_was_given() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
 
     preview::model(&paths, &[a_png(), a_png()]).unwrap();
@@ -285,7 +403,7 @@ fn the_model_preview_renders_the_thumbnails_it_was_given() {
 
 #[test]
 fn undecodable_thumbnails_are_skipped_rather_than_failing_the_stage() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
 
     preview::model(&paths, &[b"not a png".to_vec()]).unwrap();
@@ -299,7 +417,7 @@ fn undecodable_thumbnails_are_skipped_rather_than_failing_the_stage() {
 #[test]
 fn the_sprite_preview_is_written_from_the_packed_atlases() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 4, 40);
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
@@ -330,7 +448,7 @@ fn the_sprite_preview_is_written_from_the_packed_atlases() {
 #[test]
 fn the_sprite_preview_shows_a_character_in_every_direction() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 4, 40);
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
@@ -366,7 +484,7 @@ fn the_sprite_preview_shows_a_character_in_every_direction() {
 #[test]
 fn a_missing_atlas_is_skipped_rather_than_failing_the_preview() {
     let library = a_library();
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 2, 40);
     stages::pack(&a_spec("survivor"), &library, &paths).unwrap();
@@ -387,7 +505,7 @@ fn a_missing_atlas_is_skipped_rather_than_failing_the_preview() {
 
 #[test]
 fn the_bake_preview_shows_one_row_per_animation() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     write_animation(&paths.staging(), "idle", 3, 40);
     write_animation(&paths.staging(), "run", 3, 40);
@@ -401,7 +519,7 @@ fn the_bake_preview_shows_one_row_per_animation() {
 
 #[test]
 fn no_baked_frames_writes_no_preview_rather_than_failing() {
-    let dir = a_packed_repo();
+    let (dir, _env) = a_packed_repo();
     let paths = Paths::new(dir.path(), "survivor");
     std::fs::create_dir_all(paths.staging()).unwrap();
 

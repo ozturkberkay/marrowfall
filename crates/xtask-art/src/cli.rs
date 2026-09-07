@@ -16,9 +16,10 @@ use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::blender::Build;
+use crate::check::aim::AimTable;
 use crate::check::profile::Profile;
 use crate::check::{self, Finding, Report, Severity, Symmetry, mesh, rig};
-use crate::library::{AnimationLibrary, ClipFiles, LibraryLock, MotionSource};
+use crate::library::{Animation, AnimationLibrary, ClipFiles, LibraryLock, MotionSource};
 use crate::lock::{self, Inputs, Lock, Provider, Stage, StageRecord, TaskRef};
 use crate::providers::mixamo::{self, session};
 use crate::spec::{CharacterSpec, CharacterType, Paths, View};
@@ -79,6 +80,12 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Promote a character's conformed rig to its skeleton's canonical rig,
+    /// the armature every clip for that skeleton is fitted onto.
+    ///
+    /// Rare and deliberate: it replaces shared art, so `cargo art fetch`
+    /// refits every clip in the library afterwards.
+    Promote { name: String },
     /// Show which stages are complete.
     Status {
         name: String,
@@ -136,10 +143,12 @@ pub enum Step {
 /// testable with no network and no browser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FetchStep {
-    /// Download it, fit it to the canonical rig, and record it.
+    /// Fit it to the canonical rig and record it. The source is the vendor's
+    /// own download when one is on disk, asked for when it is not, and the
+    /// committed source when the vendor cannot be asked again.
     Fetch {
         name: String,
-        product_id: String,
+        source: MotionSource,
         /// What made this necessary, printed so a re-fetch is never a
         /// surprise.
         why: &'static str,
@@ -184,31 +193,36 @@ pub fn fetch_plan(
         .into_iter()
         .map(|name| {
             let animation = library.get(name)?;
-            let product_id = match &animation.source {
-                MotionSource::Meshy { .. } => {
-                    return Ok(FetchStep::Skipped(
-                        name.to_owned(),
-                        "arrives with the rig stage",
-                    ));
-                }
+            let on_disk_already = on_disk.glb.get(name);
+            match &animation.source {
                 MotionSource::Authored => {
                     return Ok(FetchStep::Skipped(
                         name.to_owned(),
                         "authored, committed with the art",
                     ));
                 }
-                MotionSource::Mixamo { product_id } => product_id.clone(),
-            };
+                // Bought attached to a rig task, so there is nothing to ask
+                // for until that stage runs. Once its file is here it is
+                // refitted from the copy in hand like any other clip: the
+                // canonical rig moves and a bought clip has to follow it.
+                MotionSource::Meshy { .. } if on_disk_already.is_none() => {
+                    return Ok(FetchStep::Skipped(
+                        name.to_owned(),
+                        "arrives with the rig stage",
+                    ));
+                }
+                MotionSource::Meshy { .. } | MotionSource::Mixamo { .. } => {}
+            }
             let fetch = |why| FetchStep::Fetch {
                 name: name.to_owned(),
-                product_id: product_id.clone(),
+                source: animation.source.clone(),
                 why,
             };
             if force {
                 return Ok(fetch("--force"));
             }
             let fitted_by = fitted_by(on_disk, &animation.skeleton)?;
-            let Some(hash) = on_disk.glb.get(name) else {
+            let Some(hash) = on_disk_already else {
                 return Ok(fetch("nothing on disk"));
             };
             let Some(record) = lock.fetched.get(name) else {
@@ -540,11 +554,7 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
     let mut wanted = Vec::new();
     for step in steps {
         match step {
-            FetchStep::Fetch {
-                name,
-                product_id,
-                why,
-            } => wanted.push((name, product_id, why)),
+            FetchStep::Fetch { name, source, why } => wanted.push((name, source, why)),
             FetchStep::Cached(name) => println!("{name}: already fetched"),
             FetchStep::Skipped(name, why) => println!("{name}: skipped ({why})"),
             FetchStep::Changed(name) => println!(
@@ -557,28 +567,55 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Asked for only once something actually needs fetching, so a no-op run
-    // never opens a browser.
-    let token = mixamo_session()?;
-    let client = mixamo::Client::new()?;
+    // Asked for only once a clip has to be downloaded, so a run that only
+    // refits what is already here never opens a browser.
+    let mut session = None;
+    let canonical = AimTable::of(root, &fitted_skeleton(&library, &wanted)?)?
+        .canonical()
+        .to_owned();
     // One at a time: Mixamo rate limits, and a clip takes seconds.
-    for (name, product_id, why) in wanted {
-        println!("{name}: fetching {product_id} ({why})…");
+    for (name, source, why) in wanted {
         let animation = library.get(&name)?;
-        let fbx = client
-            .motion_fbx(&product_id, animation.source_fps, &token)
-            .await?;
-
-        let download = AnimationLibrary::staged_download(root, &name, "fbx");
-        std::fs::create_dir_all(download.parent().unwrap_or(root))
-            .with_context(|| format!("creating {}", download.display()))?;
-        std::fs::write(&download, &fbx)
-            .with_context(|| format!("writing {}", download.display()))?;
-        // Before the retarget: the vendor's own rest geometry is on record
+        let (from, convention) = match clip_source(root, &name, animation, &canonical) {
+            Some(found) => {
+                println!("{name}: refitting {} ({why})…", found.0.display());
+                found
+            }
+            None => {
+                let MotionSource::Mixamo { product_id } = &source else {
+                    // Every other provider sells motion attached to a rig
+                    // task, which expires, so the committed source is all
+                    // there ever is.
+                    anyhow::bail!(
+                        "{name} has no source to fit and no vendor to ask. Restore {}",
+                        crate::check::relative_to(
+                            &AnimationLibrary::source_clip(root, &name),
+                            root
+                        )
+                    );
+                };
+                println!("{name}: fetching {product_id} ({why})…");
+                let token = match &session {
+                    Some(token) => token,
+                    None => session.insert(mixamo_session()?),
+                };
+                let fbx = mixamo::Client::new()?
+                    .motion_fbx(product_id, animation.source_fps, token)
+                    .await?;
+                let download = AnimationLibrary::staged_download(root, &name, "fbx");
+                std::fs::create_dir_all(download.parent().unwrap_or(root))
+                    .with_context(|| format!("creating {}", download.display()))?;
+                std::fs::write(&download, &fbx)
+                    .with_context(|| format!("writing {}", download.display()))?;
+                (download, animation.source.bone_convention())
+            }
+        };
+        let read = std::fs::read(&from).with_context(|| format!("reading {}", from.display()))?;
+        // Before the retarget: the source's own rest geometry is on record
         // from here, and nothing downstream still carries it.
-        crate::stages::check_source(&download, &name, animation, root)?;
+        crate::stages::check_source(&from, &name, animation, convention, root)?;
         let glb = library.glb(root, &name);
-        let verdict = crate::stages::retarget(&download, &glb, &name, animation, root)?;
+        let verdict = crate::stages::retarget(&from, &glb, &name, animation, convention, root)?;
 
         let fitted = std::fs::read(&glb).with_context(|| {
             format!(
@@ -590,7 +627,8 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
             &name,
             animation.source.clone(),
             ClipFiles {
-                download: &fbx,
+                from: &crate::check::relative_to(&from, root),
+                download: &read,
                 glb: &fitted,
             },
             fitted_by(&on_disk, &animation.skeleton)?,
@@ -600,6 +638,50 @@ pub async fn fetch(root: &Path, names: &[String], force: bool) -> Result<()> {
         println!("  → {}", glb.display());
     }
     Ok(())
+}
+
+/// The one skeleton the clips about to be fitted are on. Refused rather than
+/// assumed: two skeletons in one run would need two canonical conventions.
+fn fitted_skeleton(
+    library: &AnimationLibrary,
+    wanted: &[(String, MotionSource, &'static str)],
+) -> Result<String> {
+    let mut skeletons: Vec<&str> = wanted
+        .iter()
+        .filter_map(|(name, _, _)| library.animations.get(name))
+        .map(|animation| animation.skeleton.as_str())
+        .collect();
+    skeletons.sort_unstable();
+    skeletons.dedup();
+    match skeletons[..] {
+        [only] => Ok(only.to_owned()),
+        _ => anyhow::bail!("one fetch fits one skeleton, and this one names {skeletons:?}"),
+    }
+}
+
+/// The file a fit reads, and the convention it names its bones in.
+///
+/// The vendor's own download first, then the committed source, which is in
+/// the canonical convention whoever sold the motion. A file on disk is never
+/// asked for again, for the reason the download stage gives: a task URL
+/// expires and a Mixamo session needs a browser.
+///
+/// Never the library's own copy, which is the fit this run is about to
+/// replace: reading it would measure the last run's output, and Blender's
+/// import and export round trip is not bit exact, so the motion would drift
+/// a little every time.
+fn clip_source<'a>(
+    root: &Path,
+    name: &str,
+    animation: &'a Animation,
+    canonical: &'a str,
+) -> Option<(PathBuf, &'a str)> {
+    let vendor = AnimationLibrary::staged_download(root, name, animation.source.download_format());
+    if vendor.exists() {
+        return Some((vendor, animation.source.bone_convention()));
+    }
+    let source = AnimationLibrary::source_clip(root, name);
+    source.exists().then_some((source, canonical))
 }
 
 /// What would fit a clip today, one entry per skeleton the library uses.
@@ -651,6 +733,22 @@ fn mixamo_session() -> Result<session::Token> {
     );
     session::open_login()?;
     session::wait_for_token(&profiles, LOGIN_TIMEOUT)
+}
+
+/// Writes the skeleton's canonical rig out of one character, and says what
+/// has to happen next: every clip in the library was fitted to the rig this
+/// replaces.
+pub fn promote(root: &Path, name: &str) -> Result<()> {
+    let paths = Paths::new(root, name);
+    let spec = CharacterSpec::load(&paths.spec())?;
+    spec.validate().context("spec is not valid")?;
+    let rig = crate::stages::promote_rig(&spec, &paths, root)?;
+    println!(
+        "{name}: promoted to {}\nevery clip was fitted to the rig this \
+         replaces, so run `cargo art fetch` next",
+        rig.strip_prefix(root).unwrap_or(&rig).display()
+    );
+    Ok(())
 }
 
 pub fn status(root: &Path, name: &str, json: bool) -> Result<()> {
@@ -1160,6 +1258,7 @@ where
         Command::SpikePose { name, rig, yes } => {
             crate::spike::run(&root, &name, rig, yes, &mut std::io::stdin().lock()).await
         }
+        Command::Promote { name } => promote(&root, &name),
         Command::Status { name, json } => status(&root, &name, json),
         Command::Check {
             name,

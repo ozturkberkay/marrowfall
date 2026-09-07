@@ -45,6 +45,7 @@ from actions import (
     location_curves,
     scale_translation,
 )
+from armature import export, keep_only
 from clip import (
     FPS_GRID,
     FPS_GRID_RANGE,
@@ -56,7 +57,6 @@ from clip import (
     ground_from,
     on_the_grid,
     placed,
-    rest_floor,
     source_motion,
     whole_range,
 )
@@ -69,14 +69,15 @@ from skeleton import Skeleton, bare_bone_name, unfilled_roles
 # `travel` is the same measurement `source.traveling` took at the fetch
 # boundary, so the two cannot mean different things by the word.
 from source import travel
-from strip_animation import skin_carrier
 from transfer import (
     Bone,
     LocalPose,
     Mat4,
+    child_basis,
     mat_translation,
     offsets,
     quat_degrees,
+    re_rolled,
     reference_pose,
     segment_length,
     transfer,
@@ -137,6 +138,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--children",
+        required=True,
+        help=(
+            "ROLE=CHILD pairs, comma separated: which role each bone's own "
+            "axis points at. The source's bones are re-rolled onto these "
+            "before either rig is aimed. The Rust side reads them off "
+            "`[profile.tails]`."
+        ),
+    )
+    parser.add_argument(
         "--limit",
         action="append",
         default=[],
@@ -144,6 +155,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="The published limit for one rule, passed by the runner.",
     )
     return parser.parse_args(argv)
+
+
+def children_from(entry: str) -> dict[str, str]:
+    """`hips=spine_lower,neck=head` into the map `child_basis` reads.
+
+    Here and not in `check_source.py` because both scripts take the same
+    table: the source gates report how far a vendor bone sits from its own
+    child, and the retarget is what takes that difference out.
+    """
+    pairs = {}
+    for pair in entry.split(","):
+        role, _, child = pair.partition("=")
+        if not role or not child:
+            sys.exit(f"error: --children needs ROLE=CHILD pairs, got {pair!r}")
+        pairs[role] = child
+    return pairs
 
 
 def read_skeleton(rig: pathlib.Path) -> Skeleton:
@@ -179,22 +206,6 @@ def import_armature(path: pathlib.Path) -> bpy.types.Object:
     if armature is None:
         sys.exit(f"error: {path} has no armature, so there is nothing to retarget")
     return armature
-
-
-def keep_only(armature: bpy.types.Object) -> None:
-    """Empties the scene of everything but one armature.
-
-    Both files arrive with a body attached: the rig with its skin carrier, a
-    provider's clip with a whole stock character. Only the canonical skeleton
-    is exported, so the rest goes.
-    """
-    for obj in list(bpy.data.objects):
-        if obj is not armature:
-            bpy.data.objects.remove(obj, do_unlink=True)
-    for image in list(bpy.data.images):
-        bpy.data.images.remove(image)
-    for material in list(bpy.data.materials):
-        bpy.data.materials.remove(material)
 
 
 def source_action(known: set[bpy.types.Action], path: pathlib.Path) -> bpy.types.Action:
@@ -479,6 +490,32 @@ def posed_leg(
     )
 
 
+def sole_paths(
+    armature: bpy.types.Object, toes: list[str], frames: range
+) -> dict[str, list[Vec3]]:
+    """Every foot's two sole points over the clip, keyed by the joint each
+    one hangs under.
+
+    What the floor snap stands the clip on, and the same two points
+    `plant.py` reads contact and penetration on.
+    """
+    chains = {toe: leg_bones(armature, toe) for toe in toes}
+    bones = [bone for chain in chains.values() for bone in chain[3:5]]
+    rest = {
+        bone: armature.matrix_world @ armature.data.bones[bone].matrix_local
+        for bone in bones
+    }
+    sole = {bone: sole_under(matrix) for bone, matrix in rest.items()}
+    paths: dict[str, list[Vec3]] = {bone: [] for bone in bones}
+    scene = bpy.context.scene
+    for frame in frames:
+        scene.frame_set(frame)
+        for bone in bones:
+            world = armature.matrix_world @ armature.pose.bones[bone].matrix
+            paths[bone].append(tuple(world @ sole[bone]))
+    return paths
+
+
 def read_legs(
     armature: bpy.types.Object,
     legs: dict[str, list[str]],
@@ -558,7 +595,7 @@ def foot_plant(
     for toe, chain in legs.items():
         ball, _, posed = read[toe]
         runs[toe] = plant.plant_runs(ball, source_fps, scale)
-        held = plant.locked(ball, runs[toe])
+        held = plant.locked(ball, runs[toe], travels, plant.SKATE.at(limits).limit)
         worst = max(worst, hold_still(armature, chain, posed, held, ball, frames))
 
     findings = []
@@ -628,32 +665,6 @@ def lift_root(
         curve.update()
 
 
-def export(out: pathlib.Path, armature: bpy.types.Object) -> None:
-    """Writes the canonical armature and its new action, with a skin carrier.
-
-    glTF has no standalone armature: bones only survive as part of a skin, so
-    a one-triangle mesh is what carries this file's skeleton through.
-    """
-    carrier = skin_carrier(armature)
-    out.parent.mkdir(parents=True, exist_ok=True)
-
-    bpy.ops.object.select_all(action="DESELECT")
-    armature.select_set(True)
-    carrier.select_set(True)
-    bpy.context.view_layer.objects.active = armature
-    bpy.ops.export_scene.gltf(
-        filepath=str(out),
-        export_format="GLB",
-        use_selection=True,
-        export_animations=True,
-        export_skins=True,
-        export_materials="NONE",
-        # `clip.twist` reads its rest term off the delivered joints, so the
-        # armature must be exported at rest and not at the current frame.
-        export_rest_position_armature=True,
-    )
-
-
 def retarget(args: argparse.Namespace) -> None:
     source_path, rig_path, out = args.source, args.rig, args.out
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -688,7 +699,15 @@ def retarget(args: argparse.Namespace) -> None:
     }
     aim = {role: skeleton.aim(role) for role in driven}
     rest_ours = rest_in_world(ours, our_roles)
+    # The vendor's own axis convention, taken out before anything is aimed: a
+    # bone whose own axis is not the direction to its child gets a reference
+    # pose that is not the same BODY pose as ours, and the difference lands in
+    # every key. Ours is not re-rolled, because `rig.child_axis` holds it to
+    # 2 degrees and the clip gates state its bone frames.
     rest_source = rest_in_world(source, source_roles)
+    basis = child_basis(rest_source, children_from(args.children))
+    rest_source = re_rolled(rest_source, basis)
+    driven_basis = {role: basis[role] for role in driven}
     offset = offsets(
         reference_pose({r: rest_ours[r] for r in driven}, chain, aim),
         reference_pose({r: rest_source[r] for r in driven}, chain, aim),
@@ -704,7 +723,7 @@ def retarget(args: argparse.Namespace) -> None:
         bpy.context.scene.frame_set(frame)
         # Kept, not only passed on: `clip.swing` and `clip.twist` measure the
         # exported GLB against this, and nothing downstream can reopen an FBX.
-        source_world[frame] = pose_in_world(source, driven)
+        source_world[frame] = re_rolled(pose_in_world(source, driven), driven_basis)
         poses[frame] = transfer(bones, object_matrix, source_world[frame], offset)
     segment = (
         segment_length(rest_ours, *skeleton.stride_segment),
@@ -731,8 +750,7 @@ def retarget(args: argparse.Namespace) -> None:
 
     root = our_roles[top]
     toes = [our_roles[role] for role in skeleton.ground_roles]
-    floor = rest_floor(rest_ours, skeleton.ground_roles)
-    lift = floor_lift(ground_from(world_heads(ours, toes, frames), frames), floor)
+    lift = floor_lift(ground_from(sole_paths(ours, toes, frames), frames))
     lift_root(ours, fitted, root, lift)
     limits = limits_from(args.limit)
     standing, unreached = foot_plant(
@@ -742,11 +760,10 @@ def retarget(args: argparse.Namespace) -> None:
 
     # Read back after the lift and the plant, so the report is what the file
     # carries rather than what either was asked for.
-    tracked = world_heads(ours, [*toes, root], frames)
+    tracked = world_heads(ours, [root], frames)
     fit = Fit(
         name=args.name,
-        ground=tuple(ground_from({toe: tracked[toe] for toe in toes}, frames)),
-        floor=floor,
+        ground=tuple(ground_from(sole_paths(ours, toes, frames), frames)),
         travel=(travel(tuple(tracked[root])), source_travel),
         segment=segment,
         ratio=ratio,

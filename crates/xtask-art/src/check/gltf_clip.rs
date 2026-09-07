@@ -37,7 +37,8 @@ use super::motion::{Frame, Motion};
 /// frame, which is 1/120 s.
 const SAME_FRAME_SECONDS: f64 = 1e-6;
 
-/// One clip's world rotations per role, in Blender Z-up world space.
+/// One clip's world rotations and joints per role, in Blender Z-up world
+/// space.
 ///
 /// `bones` maps each role to the bone that fills it on this rig. A role whose
 /// bone the file does not have is absent from the result, and the rule that
@@ -75,11 +76,30 @@ pub fn read(bytes: &[u8], bones: &BTreeMap<String, String>) -> Result<Motion> {
             })
             .collect::<BTreeMap<String, DQuat>>()
     };
+    // Only for the roles `by_role` answered, so a bone whose frame holds no
+    // rotation does not reach one rule through the other.
+    let joints_of = |world: &BTreeMap<usize, DMat4>, turned: &BTreeMap<String, DQuat>| {
+        role_nodes
+            .iter()
+            .filter(|(role, _)| turned.contains_key(*role))
+            .filter_map(|(role, node)| {
+                Some((
+                    role.clone(),
+                    gltf_to_blender(world.get(node)?.w_axis.truncate()),
+                ))
+            })
+            .collect::<BTreeMap<String, DVec3>>()
+    };
     let frames = times
         .iter()
-        .map(|seconds| Frame {
-            seconds: *seconds,
-            rotations: by_role(&tree.world_at(&channels, *seconds)),
+        .map(|seconds| {
+            let world = tree.world_at(&channels, *seconds);
+            let rotations = by_role(&world);
+            Frame {
+                seconds: *seconds,
+                joints: joints_of(&world, &rotations),
+                rotations,
+            }
         })
         .collect();
     Motion::new(by_role(&rest), frames)
@@ -130,82 +150,6 @@ pub fn keys(bytes: &[u8]) -> Result<Keys> {
     Ok(Keys {
         seconds: times.iter().map(|time| time - first).collect(),
         ends,
-    })
-}
-
-/// The lowest one joint gets over a clip, and when it got there.
-#[derive(Debug, Clone)]
-pub struct Lowest {
-    pub joint: String,
-    /// Meters up, in Blender Z-up world space.
-    pub height: f64,
-    /// Seconds from the file's own first key.
-    pub seconds: f64,
-}
-
-/// How low a clip's ground joints get, and where the floor is for them.
-#[derive(Debug, Clone)]
-pub struct Ground {
-    /// The height the rig's own rest pose puts its lowest ground joint at.
-    /// **Not zero**: on this skeleton the toe joint is the ball of the foot
-    /// and rests 0.0307 m above the sole, so snapping it to zero would bury
-    /// the character.
-    pub floor: f64,
-    pub lowest: Vec<Lowest>,
-}
-
-/// How low each named joint gets over the clip, against the rest height its
-/// own graph puts it at, in Blender Z-up world space.
-///
-/// `clip.floor_snap`'s file-side half: between the pose the retarget
-/// evaluated and this GLB sit the interpolation pass and the exporter. The
-/// rest term is the graph as declared, so the export writes the armature at
-/// rest, which `clip.twist` already requires. A joint the file lacks is
-/// absent rather than reported as zero.
-pub fn ground(bytes: &[u8], joints: &BTreeSet<String>) -> Result<Ground> {
-    let gltf = gltf::Gltf::from_slice(bytes).context("parsing the glTF")?;
-    let document = &gltf.document;
-    let skinned = joint_nodes(document)?;
-    let scene = world_nodes(document)?;
-    let named: BTreeMap<usize, (String, f64)> = scene
-        .iter()
-        .filter(|entry| skinned.contains(&entry.node.index()))
-        .map(|entry| {
-            (
-                entry.node.index(),
-                (node_name(&entry.node), height_of(entry.world)),
-            )
-        })
-        .filter(|(_, (name, _))| joints.contains(name))
-        .collect();
-    let channels = Channels::read(document, gltf.blob.as_deref())?;
-    let times = key_grid(&channels, &skinned)?;
-    let tree = Tree::of(&scene)?;
-    let first = times[0];
-    let mut lowest: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
-    for seconds in &times {
-        let world = tree.world_at(&channels, *seconds);
-        for node in named.keys() {
-            let height = height_of(world[node]);
-            let at = lowest.entry(*node).or_insert((height, seconds - first));
-            if height < at.0 {
-                *at = (height, seconds - first);
-            }
-        }
-    }
-    Ok(Ground {
-        floor: named
-            .values()
-            .map(|(_, rest)| *rest)
-            .fold(f64::INFINITY, f64::min),
-        lowest: named
-            .into_iter()
-            .map(|(node, (joint, _))| Lowest {
-                joint,
-                height: lowest[&node].0,
-                seconds: lowest[&node].1,
-            })
-            .collect(),
     })
 }
 
@@ -544,7 +488,7 @@ impl Channels {
                 .read_outputs()
                 .with_context(|| format!("node {node} has a sampler with no values"))?;
             // `CUBICSPLINE` stores two tangents beside every value, so its
-            // output is three times as long and none of the maths below
+            // output is three times as long and none of the math below
             // applies. The retarget writes `LINEAR`, and `clip.interpolation`
             // is the rule that says so, hence a refusal rather than a guess.
             let step = match channel.sampler().interpolation() {

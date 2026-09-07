@@ -124,7 +124,6 @@ pub fn a_spec(name: &str) -> CharacterSpec {
             directions: A_SPEC_DIRECTIONS,
             render_size: 256,
             sprite_height: 160,
-            forearm_roll: 0.0,
             trim_start: 0.0,
         },
     }
@@ -384,13 +383,18 @@ pub fn a_tree() -> tempfile::TempDir {
     for name in library.animations.keys() {
         let glb = library.glb(root, name);
         std::fs::create_dir_all(glb.parent().unwrap()).unwrap();
-        std::fs::copy(
-            repo_root()
-                .join("art/animations")
-                .join(format!("{name}.glb")),
-            glb,
-        )
-        .unwrap();
+        // The real clip where this repository ships one. A clip we may not
+        // redistribute is gitignored, so a fingerprint reads a stand-in with
+        // bytes of its own: what these tests need is one file per name that
+        // is not another name's.
+        let committed = repo_root()
+            .join("art/animations")
+            .join(format!("{name}.glb"));
+        if committed.exists() {
+            std::fs::copy(committed, glb).unwrap();
+        } else {
+            std::fs::write(glb, format!("glTF stand-in for {name}")).unwrap();
+        }
     }
     let paths = Paths::new(root, "survivor");
     std::fs::create_dir_all(paths.dir()).unwrap();

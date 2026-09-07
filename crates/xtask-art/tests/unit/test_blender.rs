@@ -656,9 +656,9 @@ fn every_gltf_export_that_carries_an_armature_asks_for_its_rest_position() {
     }
 
     // A rename that left nothing exporting would pass without proving
-    // anything: three scripts write a GLB, and the retarget and the strip
-    // are the two that put an armature in one.
-    assert_eq!(written, (3, 2));
+    // anything: two modules write a GLB, and `armature.py` is the one that
+    // puts an armature in one, for the retarget and the promotion both.
+    assert_eq!(written, (2, 1));
 }
 
 /// The lint's own negative: an export that leaves the flag to the default.

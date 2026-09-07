@@ -153,11 +153,11 @@ fn the_calibration_asset_measures_exactly_what_the_limits_were_set_from() {
     let findings = findings_for(&committed_glb(CALIBRATION));
 
     for (rule, expected) in [
-        ("mesh.holes", 171.0),
-        ("mesh.non_manifold", 8.0),
-        ("mesh.islands", 7.0),
-        ("mesh.self_intersect", 861.0),
-        ("mesh.budget", 54_864.0),
+        ("mesh.holes", 18.0),
+        ("mesh.non_manifold", 17.0),
+        ("mesh.islands", 1.0),
+        ("mesh.self_intersect", 1113.0),
+        ("mesh.budget", 55_533.0),
         ("mesh.facing", 0.0),
     ] {
         assert_eq!(measured(&findings, rule, CALIBRATION), expected, "{rule}");
@@ -170,15 +170,15 @@ fn the_calibration_asset_measures_exactly_what_the_limits_were_set_from() {
     ] {
         assert_eq!(measured(&findings, rule, subject), expected, "{rule}");
     }
-    // 3.021 percent of width was measured a second time by an independent
-    // kd-tree pass in the design's fact 9, which read 3.02.
+    // The fixer mirrors this mesh, so the width it is off by is the `f32` a
+    // GLB stores a vertex in. The bare mesh it was made from reads 3.257.
     let mirror = measured(&findings, "mesh.mirror", CALIBRATION);
     assert!(
-        (mirror - 3.021).abs() < 0.001,
+        mirror < 1e-4,
         "the worst mirror distance is {mirror} percent of width"
     );
-    // 1.6999997 m against the spec's 1.700, which is the mesh and not the
-    // skeleton: the joints span 1.6652 m.
+    // 1.70000 m against the spec's 1.700, which is the mesh and not the
+    // skeleton: the joints span 1.6688 m.
     let height = measured(&findings, "mesh.world_size", CALIBRATION);
     assert!(height < 1e-4, "the mesh is {height} percent off 1.70 m");
 }
@@ -209,9 +209,16 @@ fn the_calibration_assets_feet_point_forward_with_room_to_spare() {
 
 /// Silence on known-good art is the other half of the contract, and the one
 /// that lets these gates become required checks.
+///
+/// Through `CLEANED_RULES`, because this file is what rigging returned of the
+/// file the fixer wrote: `mesh.non_manifold`'s ceiling is calibrated before
+/// the fixer, and filling a hole raises that count on purpose.
 #[test]
 fn the_calibration_asset_breaks_no_rule() {
-    let findings = findings_for(&committed_glb(CALIBRATION));
+    let findings = mesh::only(
+        &mesh::CLEANED_RULES,
+        findings_for(&committed_glb(CALIBRATION)),
+    );
 
     assert_eq!(broken(&findings), Vec::<String>::new(), "{findings:#?}");
 }
@@ -222,9 +229,11 @@ fn the_calibration_asset_breaks_no_rule() {
 fn every_published_limit_leaves_headroom_over_the_calibration() {
     let findings = findings_for(&committed_glb(CALIBRATION));
 
+    // `mesh.non_manifold`'s ceiling is calibrated before the fixer, and this
+    // file is what rigging returned of the file the fixer wrote, so the
+    // reading it has to leave headroom over is `mesh.non_manifold_post`'s.
     for rule in [
         "mesh.holes",
-        "mesh.non_manifold",
         "mesh.islands",
         "mesh.self_intersect",
         "mesh.mirror",
@@ -903,6 +912,7 @@ fn a_recorded_response_leaves_nothing_unavailable() {
     assert!(
         findings
             .iter()
+            .filter(|finding| finding.rule != "mesh.non_manifold")
             .all(|finding| finding.severity == Severity::Info),
         "{findings:#?}"
     );

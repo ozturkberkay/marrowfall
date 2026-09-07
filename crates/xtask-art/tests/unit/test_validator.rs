@@ -10,11 +10,13 @@ use xtask_art::check::{Comparison, Severity, validator};
 
 use crate::support::{EnvGuard, committed_glb, repo_root};
 
-/// The four GLBs the repository commits. The calibration set: known-good art
-/// in, no errors out.
-const COMMITTED: [&str; 4] = [
+/// Every GLB the repository commits, the two clip sources among them. The
+/// calibration set: known-good art in, no errors out.
+const COMMITTED: [&str; 6] = [
     "art/animations/idle.glb",
     "art/animations/run.glb",
+    "art/animations/sources/idle.glb",
+    "art/animations/sources/run.glb",
     "art/characters/survivor/model.glb",
     "art/skeletons/humanoid.glb",
 ];
@@ -53,7 +55,7 @@ fn with_an_injected_nan(glb: &Path, out: &Path) {
 }
 
 #[test]
-fn the_four_committed_glbs_carry_no_errors() {
+fn every_committed_glb_carries_no_errors() {
     let root = repo_root();
     for file in COMMITTED {
         let findings = validator::validate(&committed_glb(file), &root, 1).unwrap();

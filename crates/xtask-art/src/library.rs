@@ -55,6 +55,16 @@ impl MotionSource {
         }
     }
 
+    /// The extension the vendor's own file arrives in. Mixamo exports FBX
+    /// and Meshy delivers GLB; authored motion arrives as the GLB it was
+    /// made as.
+    pub const fn download_format(&self) -> &'static str {
+        match self {
+            Self::Mixamo { .. } => "fbx",
+            Self::Meshy { .. } | Self::Authored => "glb",
+        }
+    }
+
     /// How the file this motion arrives in names its bones, a table in
     /// `art/skeletons/<skeleton>.toml`. Declared rather than guessed from the
     /// file, so a new provider is a decision the compiler asks for.
@@ -144,6 +154,26 @@ impl AnimationLibrary {
             .join(format!("{name}.{extension}"))
     }
 
+    /// The first-hand motion a bought clip is refit from, committed beside
+    /// the library.
+    ///
+    /// A vendor that cannot serve a purchase again leaves it nowhere else to
+    /// live, and the library's own copy is the previous fit rather than the
+    /// motion. `art/animations/library.ron` says which clips have one and why.
+    pub fn source_clip(root: &Path, name: &str) -> PathBuf {
+        root.join("art/animations/sources")
+            .join(format!("{name}.glb"))
+    }
+
+    /// Where a fit is written before its gates have passed.
+    ///
+    /// The retarget's own output, kept out of `art/animations/` until the
+    /// rules have read it: a refused clip left where the bake looks would be
+    /// played, and nothing in the lock would say it failed.
+    pub fn staged_fit(root: &Path, name: &str) -> PathBuf {
+        root.join("art/staging/fits").join(format!("{name}.glb"))
+    }
+
     /// The armature every clip for this skeleton is authored against.
     ///
     /// A path rather than a declaration: a second skeleton is a second file
@@ -223,9 +253,10 @@ impl AnimationLibrary {
     /// The defaults `cargo art` writes when a project has no library yet.
     ///
     /// Every `source_fps` and every `travels` here is a measurement, listed
-    /// beside the rule that reads it in the design document. The three Meshy
-    /// clips carry keys 1/24 s apart, and only `walk_back` moves its hips
-    /// anywhere: 1.271 m, against 0.000 for `run` and idle's 0.000.
+    /// beside the rule that reads it in the design document. The two Meshy
+    /// clips carry keys 1/24 s apart and neither moves its hips anywhere;
+    /// Mixamo renders every export at the rate the request asks for, and
+    /// `walk_back` travels 1.414 m.
     pub fn template() -> Self {
         Self {
             animations: BTreeMap::from([
@@ -252,15 +283,20 @@ impl AnimationLibrary {
                         source: MotionSource::Meshy { action_id: 15 },
                     },
                 ),
+                // Mixamo's own backward walk. Meshy's action 544 ends 6.910
+                // degrees from the pose it started in and breaks `clip.loop`
+                // on nine bones, so no new project starts with it.
                 (
                     "walk_back".to_owned(),
                     Animation {
                         skeleton: HUMANOID.to_owned(),
                         loops: true,
                         fps: 20,
-                        source_fps: 24,
+                        source_fps: 30,
                         travels: true,
-                        source: MotionSource::Meshy { action_id: 544 },
+                        source: MotionSource::Mixamo {
+                            product_id: "c9ccc468-b96c-11e4-a802-0aaa78deedf9".to_owned(),
+                        },
                     },
                 ),
             ]),
@@ -309,10 +345,13 @@ impl Verdict {
     }
 }
 
-/// The two files one fetch produced. Named, because both are bytes and
-/// transposing them would record each under the other's fingerprint.
+/// The two files one fetch produced, and where the first of them came from.
+/// The bytes are named because transposing them would record each under the
+/// other's fingerprint.
 #[derive(Debug, Clone, Copy)]
 pub struct ClipFiles<'a> {
+    /// Where the fit read its source, relative to the repository.
+    pub from: &'a str,
     /// What the vendor sent.
     pub download: &'a [u8],
     /// What the retarget wrote from it.
@@ -325,7 +364,16 @@ pub struct ClipFiles<'a> {
 pub struct Fetched {
     /// Where it came from, as the library declared it at the time.
     pub source: MotionSource,
-    /// Fingerprint of the provider's own download, before any conversion.
+    /// Which file the fit read, relative to the repository.
+    ///
+    /// A refit takes the provider's own download when one is on disk and the
+    /// committed source from [`AnimationLibrary::source_clip`] otherwise,
+    /// and the digest below cannot say which of the two it was. A record
+    /// written before this existed carries nothing.
+    #[serde(default)]
+    pub from: String,
+    /// Fingerprint of the file the fit read: the provider's own download,
+    /// or the committed source when the vendor cannot be asked again.
     pub download: String,
     /// Fingerprint of the GLB the retarget wrote from it.
     pub glb: String,
@@ -391,6 +439,7 @@ impl LibraryLock {
             name.to_owned(),
             Fetched {
                 source,
+                from: files.from.to_owned(),
                 download: crate::lock::digest(files.download),
                 glb: crate::lock::digest(files.glb),
                 fingerprint: fingerprint.to_owned(),

@@ -2,7 +2,7 @@
 //!
 //! The expected numbers here were worked out by hand, once, and written as
 //! numbers. Nothing in this file compares the reader against a second run of
-//! the same maths, because that is how a wrong transform ships green.
+//! the same math, because that is how a wrong transform ships green.
 
 use glam::{DQuat, DVec3};
 use xtask_art::check::gltf_world::{
@@ -91,7 +91,7 @@ fn a_joint_axis_is_the_turned_one_and_not_the_files_own() {
     about(rig.get("A").unwrap().axis(y).unwrap(), [0.0, 1.0, 0.0]);
     about(rig.get("B").unwrap().axis(y).unwrap(), [-1.0, 0.0, 0.0]);
     about(rig.get("C").unwrap().axis(y).unwrap(), [-1.0, 0.0, 0.0]);
-    // The sign is part of the axis, so -y is the other way round.
+    // The sign is part of the axis, so -y is the other way around.
     about(
         rig.get("B")
             .unwrap()
@@ -217,8 +217,8 @@ fn the_committed_rig_reads_at_the_size_the_spec_asks_for() {
 
     assert_eq!(rig.joints().len(), 24, "24 bones, no fingers");
     assert!(
-        (span - 1.665_165).abs() < 1e-4,
-        "the joints span {span} m, and 1.665165 was measured by hand"
+        (span - 1.668_801).abs() < 1e-4,
+        "the joints span {span} m, and 1.668801 was measured by hand"
     );
     assert!(
         rig.object_channels().is_empty(),

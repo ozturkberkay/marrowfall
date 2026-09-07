@@ -36,21 +36,18 @@ hangs. `[profile.tails]` is the one child a bone's own axis must point at,
 which a branch bone needs: `Hips` has three children and only `Spine`
 continues the body.
 
-The committed rig was renamed to these names, so `rig.names_standard`,
-`rig.bone_set` and `rig.parents` pass on it. Five rules still break, and all
-five are geometry a rename cannot move: `rig.child_axis` on `Hips`, `Spine2`
-and `Head`, `rig.mirror_length` and `rig.mirror_direction` on the limb
-segments, `rig.humerus_angle` on both arms, and `rig.aim_table` on `Hips`,
-which lives in `check/aim.rs` rather than `check/rig.rs` and shares the
-prefix. `cargo art check` prints 14 defects across the five.
+The committed rig breaks none of them: `cargo art check` prints zero defects,
+and that is what makes them required CI checks.
 
 **Regenerating the rig closes none of them, measured.** Meshy's rigger points
-`Hips` at a hip socket on every generation it has made here, and places limb
-joints 1 to 4 percent asymmetric even on a mesh whose own `mesh.mirror` reads
-0.000. Twelve of the fourteen are closed by the conform step in
-`crates/xtask-art/src/conform.rs`, which the download stage runs; the other
-two are `rig.humerus_angle`, which reads where the mesh's arms are and is a
-generation defect rather than a rig one.
+`Hips` at a hip socket on every generation it has made here, 95.7 degrees off
+the direction to its own child, and places limb joints 1 to 4 percent
+asymmetric even on a mesh whose own `mesh.mirror` reads 0.000. What closes
+them is the conform step in `crates/xtask-art/src/conform.rs`, which the
+download stage runs on every rig it fetches. `rig.humerus_angle` is the one it
+cannot move: it reads where the mesh's arms are, and this character's hang
+19.3 degrees off the 40 the prompt asked for, so the published tolerance is
+calibrated on that with the headroom written beside it in `humanoid.toml`.
 
 ## `[aim_table]`, where every bone must point
 
@@ -72,10 +69,10 @@ a mirror pair that is not an exact reflection. `rig.aim_table`, in
 `crates/xtask-art/src/check/aim.rs`, is the check that needs a rig: it
 measures each aim against the rest pose the rig itself carries and reports
 anything further out than `max_bind_deviation_degrees`. Measured against the
-committed table, our A-posed rig is worst at 34.86 degrees and a T-posed
-Mixamo rig at 45.01, while the committed `Hips` reads 97.80 because its own
-axis points out of a hip socket. Our own figures are asserted against the
-committed GLB. The Mixamo one was measured by hand on a downloaded FBX under
+committed table, our A-posed rig is worst at 32.93 degrees and a T-posed
+Mixamo rig at 45.01, and the committed `Hips` reads 2.41 where the rig this
+replaces read 97.80 out of a hip socket. Our own figures are asserted against
+the committed GLB. The Mixamo one was measured by hand on a downloaded FBX under
 `../staging/`, which is gitignored, so no test can re-derive it.
 
 ## Five more tables the retarget reads
@@ -87,9 +84,12 @@ committed GLB. The Mixamo one was measured by hand on a downloaded FBX under
   because total height carries the head and the feet and neither takes a step.
   `clip.stride_ratio` records the ratio it gives.
 - `ground_roles` names the roles that stand on the floor. The retarget lifts
-  every clip until the lowest of them over the whole clip stands where this
-  rig's rest pose stands, and `clip.floor_snap` reports what is left under it.
-  Data rather than a name, because a quadruped has four of them.
+  every clip until the lowest **sole point** of those feet over the whole clip
+  reaches zero, and `clip.floor_snap` reports what is left under it. The sole
+  and not the joint: a joint's rest height is only where the contact patch is
+  while the foot keeps its rest pitch, and a cross-rig fit matches the
+  source's pitch instead. Data rather than a name, because a quadruped has
+  four of them.
 - `[retarget_chain]` is the hierarchy the transfer walks, by role. It is not
   the rig's own bone hierarchy in `[profile.parents]`: a source with three
   spine bones drives a target with four, so the walk steps over any role the
@@ -114,10 +114,34 @@ our `Spine2` and its lowest spine bone is `Spine02`.
 
 ## Regenerating it
 
-`humanoid.glb` is the survivor's armature plus the one-triangle skin carrier
-glTF needs to keep an armature at all. Every clip in `../animations/` is
-authored against it, so regenerating it means refitting every clip in the same
-change.
+`humanoid.glb` is a character's armature plus the one-triangle skin carrier
+glTF needs to keep an armature at all: the same 24 joints in the same rest
+pose as `../characters/<char>/model.glb`, with no mesh and no motion.
+
+One deliberate operation writes it, and it is a pipeline verb rather than a
+recipe:
+
+```bash
+cargo art run survivor --from model    # generate, clean, gate, rig, conform
+cargo art promote survivor             # model.glb -> humanoid.glb
+cargo art fetch                        # refit every clip onto the new rig
+cargo art run survivor --from bake     # re-bake, re-pack, re-sheet
+```
+
+`cargo art promote` runs every `rig.*` rule on `model.glb` first and refuses
+to write a canonical rig that fails one, because every character on the
+skeleton would inherit the defect. It then runs
+`../../tools/blender/src/promote_rig.py`, which keeps the armature, drops the
+mesh, the materials and the vendor's bind-pose action, and exports at rest;
+Rust reads the result back and refuses it if any joint sits further than
+1e-4 m from the character's. The committed pair reads 1.02e-5 m, which is the
+`f32` a GLB stores a joint position in.
+
+Every clip in `../animations/` is authored against this file, so the fetch is
+part of the same change: `cargo art fetch` reports each clip as "the rig or
+the tooling it was fitted with has changed" and refits it from the vendor
+download when one is on disk and from `../animations/sources/<clip>.glb` when
+there is none. Never from the fitted clip itself, which is the previous fit.
 
 ## Renaming its bones
 
@@ -142,12 +166,12 @@ refit**, in that order and in one change:
    bake stops: it refuses a clip that drives a bone the character does not
    have.
 2. Update `[conventions.standard]` in `humanoid.toml` to the new names.
-3. Refit every clip under `../animations/` through
-   `tools/blender/src/retarget_animation.py`, with the clip as `--source` and
-   `--convention standard`, which is the convention a committed clip is in
-   whoever sold the motion. Same body, so every offset is identity to about
-   0.03 degrees and the posture does not move. That number is the check: a
-   larger one means the rig and the clips disagree about the rest pose.
+3. `cargo art fetch --force`, which refits every clip through
+   `tools/blender/src/retarget_animation.py` with `--convention standard`,
+   the convention a committed clip is in whoever sold the motion. Same body,
+   so every offset is identity to about 0.03 degrees and the posture does not
+   move. That number is the check: a larger one means the rig and the clips
+   disagree about the rest pose.
 
 `../../crates/xtask-art/tests/fixtures/humanoid_before_rename.glb` is this
 file as it stood before the last rename, under Meshy's own names. It is the

@@ -1,4 +1,5 @@
-//! A complete `cargo art run`, with both providers and Blender stubbed.
+//! A complete `cargo art run`, with both providers, Blender and Godot
+//! stubbed.
 //!
 //! This is the only place the whole pipeline executes end to end, so it is
 //! what covers the driver's decisions: what is cached, what is skipped, what
@@ -12,6 +13,7 @@ use xtask_art::cli::{RunOptions, run};
 use xtask_art::lock::{Lock, Stage};
 use xtask_art::spec::Paths;
 
+use crate::stubs::a_godot_stub;
 use crate::support::{
     EnvGuard, a_bake_report, a_bare_mesh, a_cleaned_mesh, a_concept_view, a_library, a_png,
     a_rigged_character, a_spec, answers_its_version, inputs, install_library, install_skeleton,
@@ -107,10 +109,13 @@ async fn a_working_repo(server: &MockServer) -> tempfile::TempDir {
     dir
 }
 
-/// A stub that writes the frames the packer expects, so the bake "succeeds",
-/// and the cleaned mesh the fixer would write. The two are told apart by
-/// what `--out` names: a directory of frames, or one GLB.
-fn install_blender_stub(root: &std::path::Path, env: &mut EnvGuard) {
+/// Both tools the pipeline shells out to.
+///
+/// The Blender stub writes the frames the packer expects, so the bake
+/// "succeeds", and the cleaned mesh the fixer would write; the two are told
+/// apart by what `--out` names, a directory of frames or one GLB. The Godot
+/// stub finishes the import sidecar the pack seeds.
+fn install_stubs(root: &std::path::Path, env: &mut EnvGuard) {
     let prepared = root.join("prepared.json");
     std::fs::write(&prepared, a_bake_report("survivor", &["idle"])).unwrap();
     let cleaned = root.join("cleaned.glb");
@@ -166,7 +171,8 @@ exit 0
     frame.save(&frame_path).unwrap();
 
     env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
-        .set("MARROWFALL_STUB_FRAME", frame_path.to_str().unwrap());
+        .set("MARROWFALL_STUB_FRAME", frame_path.to_str().unwrap())
+        .set("MARROWFALL_GODOT_BIN", a_godot_stub(root).to_str().unwrap());
 }
 
 #[tokio::test]
@@ -175,7 +181,7 @@ async fn a_full_run_completes_every_stage_and_records_each_one() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
 
     run(
         dir.path(),
@@ -255,7 +261,7 @@ async fn a_second_run_reports_every_stage_as_cached_and_calls_nothing() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
 
     run(
         dir.path(),
@@ -287,7 +293,7 @@ async fn from_bake_reruns_the_free_tail_without_touching_the_paid_stages() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
 
     run(
         dir.path(),
@@ -319,7 +325,7 @@ async fn editing_a_sprite_setting_does_not_invalidate_the_paid_stages() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
     let paths = Paths::new(dir.path(), "survivor");
 
     run(
@@ -366,7 +372,7 @@ async fn a_non_humanoid_skips_rigging_with_a_reason() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
 
     let paths = Paths::new(dir.path(), "hound");
     let mut spec = a_spec("hound");
@@ -402,7 +408,7 @@ async fn a_paid_stage_failing_partway_still_records_what_was_charged() {
     env.with_api(&server.uri());
     // The rig stage cleans the mesh before it spends anything, so it needs
     // the fixer even on the way to a failure further down.
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
     let paths = Paths::new(dir.path(), "survivor");
 
     // Get as far as the model, then make animation submissions fail.
@@ -483,7 +489,7 @@ async fn a_failing_mesh_gate_stops_the_run_and_is_never_retried() {
     let dir = a_working_repo(&server).await;
     let mut env = EnvGuard::new();
     env.with_api(&server.uri());
-    install_blender_stub(dir.path(), &mut env);
+    install_stubs(dir.path(), &mut env);
     let paths = Paths::new(dir.path(), "survivor");
 
     // A bare mesh carrying a second object the profile does not name, which

@@ -19,6 +19,7 @@ use crate::check::{
     Artifacts, Finding, Report, Rule, Severity, Symmetry, atlas, bake as bake_check, clip, concept,
     gltf_mesh, mesh, rig, source,
 };
+use crate::godot;
 use crate::library::{Animation, AnimationLibrary, MotionSource, Verdict};
 use crate::lock::{Stage, StageRecord, TaskRef};
 use crate::pack::{self, CharacterAssets};
@@ -503,12 +504,21 @@ pub async fn download(
 /// just moved. The fit also drops the stock character the clip arrives with.
 fn fit_clip(library: &AnimationLibrary, root: &Path, name: &str, download: &Path) -> Result<()> {
     let animation = library.get(name)?;
+    let convention = animation.source.bone_convention();
     // Before the retarget: the vendor's own rest geometry is on record from
     // here, and nothing downstream still carries it.
-    check_source(download, name, animation, root)?;
-    // The verdict has no reader here: the fit is committed and `cargo art
-    // fetch` never looks at a bought clip. Its report is on disk either way.
-    retarget(download, &library.glb(root, name), name, animation, root)?;
+    check_source(download, name, animation, convention, root)?;
+    // The verdict has no reader here: the download stage records no clip of
+    // its own, and `cargo art fetch` is what refits one later. Its report is
+    // on disk either way.
+    retarget(
+        download,
+        &library.glb(root, name),
+        name,
+        animation,
+        convention,
+        root,
+    )?;
     Ok(())
 }
 
@@ -564,6 +574,93 @@ pub fn conform_rig(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Res
     );
     println!("  conformed rig at {}", paths.relative(&out));
     Ok(())
+}
+
+/// Promotes a conformed character to its skeleton's canonical rig, the file
+/// every clip for that skeleton is fitted onto.
+///
+/// Deliberate and rare: it replaces shared art, so every clip in the library
+/// is refitted afterwards, which `cargo art fetch` is what does. The rig
+/// gates run first, because a canonical rig that fails one is a defect every
+/// character on that skeleton inherits.
+pub fn promote_rig(spec: &CharacterSpec, paths: &Paths, repo_root: &Path) -> Result<PathBuf> {
+    let character = paths.character_glb();
+    let bytes = std::fs::read(&character)
+        .with_context(|| format!("reading {}", paths.relative(&character)))?;
+    let report = check_rig(
+        spec,
+        paths,
+        repo_root,
+        rig::CONFORMED_STAGE,
+        &character,
+        &bytes,
+    )?;
+    anyhow::ensure!(
+        !report.has_errors(),
+        "{} left {}, and a canonical rig is shared by every character on the \
+         {:?} skeleton, listed in {}",
+        paths.relative(&character),
+        defects(&report),
+        spec.subject.skeleton,
+        report.artifacts(repo_root)?.report().display()
+    );
+
+    let script = repo_root.join(BLENDER_SRC).join("promote_rig.py");
+    anyhow::ensure!(
+        script.exists(),
+        "missing the promotion script at {}",
+        script.display()
+    );
+    let out = AnimationLibrary::reference_rig(repo_root, &spec.subject.skeleton);
+    let artifacts = Artifacts::new(repo_root, PROMOTE_STAGE, paths.item(), FIRST_ATTEMPT)?;
+    let args = vec![
+        OsString::from("--character"),
+        character.clone().into(),
+        OsString::from("--out"),
+        out.clone().into(),
+    ];
+    let findings = blender::run(&script, &args, &artifacts, repo_root)
+        .with_context(|| format!("promoting {}", paths.relative(&character)))?;
+    anyhow::ensure!(
+        findings.is_none(),
+        "the promotion wrote a report, and it measures nothing: the rig rules \
+         above are what read the rig it copies"
+    );
+
+    let promoted = Skeleton::read(&out)?;
+    let moved = furthest_joint(&Skeleton::from_slice(&bytes)?, &promoted)?;
+    anyhow::ensure!(
+        moved <= PROMOTION_METERS,
+        "the promoted rig's joints sit {moved:.2e} m from the character's, \
+         over the {PROMOTION_METERS:.0e} m a GLB round trip can explain"
+    );
+    println!(
+        "  canonical rig at {}, joints moved {moved:.2e} m",
+        paths.relative(&out)
+    );
+    Ok(out)
+}
+
+/// How far the furthest shared joint of two rigs sits apart, and an error
+/// when one of them is missing a joint the other has.
+fn furthest_joint(character: &Skeleton, promoted: &Skeleton) -> Result<f64> {
+    let mut worst = 0.0_f64;
+    for joint in promoted.joints() {
+        let same = character.get(&joint.name).with_context(|| {
+            format!(
+                "the promoted rig carries {:?} and the character does not",
+                joint.name
+            )
+        })?;
+        worst = worst.max(joint.position().distance(same.position()));
+    }
+    anyhow::ensure!(
+        promoted.joints().len() == character.joints().len(),
+        "the character has {} joints and the promoted rig {}",
+        character.joints().len(),
+        promoted.joints().len()
+    );
+    Ok(worst)
 }
 
 /// Every `rig.*` rule on one rig in memory, filed under one stage name.
@@ -682,6 +779,7 @@ pub fn check_source(
     download: &Path,
     name: &str,
     animation: &Animation,
+    convention: &str,
     repo_root: &Path,
 ) -> Result<()> {
     let script = repo_root.join(BLENDER_SRC).join("check_source.py");
@@ -692,12 +790,7 @@ pub fn check_source(
     );
     let skeleton = &animation.skeleton;
     let profile = Profile::of(repo_root, skeleton)?;
-    let table = AimTable::of(repo_root, skeleton)?;
-    let children = source::mapped_children(&profile, table.bones(table.canonical())?)
-        .into_iter()
-        .map(|(role, child)| format!("{role}={child}"))
-        .collect::<Vec<String>>()
-        .join(",");
+    let children = mapped_children(&profile, &AimTable::of(repo_root, skeleton)?)?;
     let axis = profile.child_axis.vector();
     let mut args = vec![
         OsString::from("--source"),
@@ -705,7 +798,7 @@ pub fn check_source(
         OsString::from("--skeleton"),
         Profile::path(repo_root, skeleton).into(),
         OsString::from("--convention"),
-        animation.source.bone_convention().into(),
+        convention.into(),
         OsString::from("--source-fps"),
         animation.source_fps.to_string().into(),
         OsString::from("--travels"),
@@ -730,6 +823,23 @@ pub fn check_source(
         artifacts.report().display()
     );
     Ok(())
+}
+
+/// `hips=spine_lower,...`: which role each bone's own axis points at, read
+/// off `[profile.tails]` and turned into roles, which is the only key a
+/// vendor rig also carries.
+///
+/// Both Blender scripts take the same table, and that is the point: the
+/// source gates report how far a vendor bone sits from the direction to its
+/// own child, and the retarget is what takes that difference out.
+fn mapped_children(profile: &Profile, table: &AimTable) -> Result<String> {
+    Ok(
+        source::mapped_children(profile, table.bones(table.canonical())?)
+            .into_iter()
+            .map(|(role, child)| format!("{role}={child}"))
+            .collect::<Vec<String>>()
+            .join(","),
+    )
 }
 
 /// `--limit RULE=NUMBER` for every rule a script reports, read off the rule
@@ -850,6 +960,7 @@ pub fn retarget(
     out: &Path,
     name: &str,
     animation: &Animation,
+    convention: &str,
     repo_root: &Path,
 ) -> Result<Verdict> {
     let script = repo_root.join(BLENDER_SRC).join("retarget_animation.py");
@@ -870,15 +981,19 @@ pub fn retarget(
     // Not a `Stage`: the retarget runs inside the fetch path and the lock
     // keeps its six stages. It still gets its own report.
     let artifacts = Artifacts::new(repo_root, "retarget", name, FIRST_ATTEMPT)?;
+    // Written to staging and copied into place only once the gates pass, so a
+    // refused fit never lands where the bake reads it. The staged copy stays
+    // behind either way, which is what the refusal below points a human at.
+    let fitted = AnimationLibrary::staged_fit(repo_root, name);
     let mut args = vec![
         OsString::from("--source"),
         source.into(),
         OsString::from("--rig"),
         rig.clone().into(),
         OsString::from("--convention"),
-        animation.source.bone_convention().into(),
+        convention.into(),
         OsString::from("--out"),
-        out.into(),
+        fitted.clone().into(),
         OsString::from("--name"),
         name.into(),
         OsString::from("--source-motion"),
@@ -889,6 +1004,11 @@ pub fn retarget(
         animation.travels.to_string().into(),
     ];
     let profile = Profile::of(repo_root, skeleton)?;
+    let table = AimTable::of(repo_root, skeleton)?;
+    args.extend([
+        OsString::from("--children"),
+        mapped_children(&profile, &table)?.into(),
+    ]);
     args.extend(published(clip::RETARGET_RULES, &profile));
     let mut report = blender::run(&script, &args, &artifacts, repo_root)
         .with_context(|| format!("retargeting {}", source.display()))?
@@ -900,7 +1020,7 @@ pub fn retarget(
     // otherwise hide.
     report.extend(clip::check_files(
         &clip::Fitted {
-            output: out,
+            output: &fitted,
             source_motion: &artifacts.source_motion(),
             rig: &rig,
             repo_root,
@@ -909,16 +1029,22 @@ pub fn retarget(
             travels: animation.travels,
         },
         &profile,
-        &AimTable::of(repo_root, skeleton)?,
+        &table,
         FIRST_ATTEMPT,
     )?)?;
     report.write(repo_root)?;
     anyhow::ensure!(
         !report.has_errors(),
-        "the retarget of {name} left {}, listed in {}",
+        "the retarget of {name} left {}, listed in {}. The fit itself is at {}",
         defects(&report),
-        artifacts.report().display()
+        artifacts.report().display(),
+        fitted.display()
     );
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&fitted, out)
+        .with_context(|| format!("copying {} to {}", fitted.display(), out.display()))?;
     Ok(Verdict::of(&report, &artifacts))
 }
 
@@ -1004,17 +1130,11 @@ pub fn bake(
             directions,
         })
         .collect();
-    report.extend(bake_check::check_files(
-        &rendered,
-        &spec.name,
-        f64::from(spec.bake.forearm_roll),
-        &profile,
-        FIRST_ATTEMPT,
-    ))?;
+    report.extend(bake_check::check_files(&rendered, &profile, FIRST_ATTEMPT))?;
     report.write(repo_root)?;
     refuse_off_registry(&report, &profile, &spec.name, "bake")?;
     let mut owed = per_axis(&names);
-    owed.extend(bake_check::subjects(&names, &spec.name, &goldens));
+    owed.extend(bake_check::subjects(&names, &goldens));
     refuse_unreported_subjects(&report, &owed, &spec.name, "bake")?;
     refuse_unread_rules(&report, &bake_rules(), &spec.name, "bake")?;
     anyhow::ensure!(
@@ -1026,6 +1146,7 @@ pub fn bake(
     );
 
     preview::bake(&names, directions, paths)?;
+    preview::strips(&names, paths)?;
 
     let frames = std::fs::read_dir(paths.staging())
         .map(|entries| {
@@ -1063,6 +1184,17 @@ fn clear_frames(dir: &Path) -> Result<()> {
 /// Nothing but the concept stage retries, so every other report is the first
 /// and only attempt.
 const FIRST_ATTEMPT: u32 = 1;
+
+/// Where the promotion's diagnostics land. Not a [`Stage`]: it writes shared
+/// art rather than a character's, so it has no lock record of its own.
+const PROMOTE_STAGE: &str = "promote";
+
+/// How far a joint may move between a character and the rig promoted out of
+/// it. Blender imports and re-exports the armature, and a GLB stores a joint
+/// position as an `f32`, so this is storage rather than geometry: the
+/// committed pair reads 1.02e-5 m, which
+/// `the_canonical_rig_carries_the_characters_own_joints` pins.
+const PROMOTION_METERS: f64 = 1e-4;
 
 /// Every subject the bake's own two rules own: one per axis of every clip.
 fn per_axis(names: &[&str]) -> Vec<String> {
@@ -1104,8 +1236,6 @@ fn bake_args(paths: &Paths, spec: &CharacterSpec) -> Vec<OsString> {
         spec.bake.render_size.to_string().into(),
         "--trim-start".into(),
         spec.bake.trim_start.to_string().into(),
-        "--forearm-roll".into(),
-        spec.bake.forearm_roll.to_string().into(),
     ];
     if updating_goldens() {
         args.push("--update-goldens".into());
@@ -1156,7 +1286,7 @@ pub fn pack(
         atlas
             .save(&dest)
             .with_context(|| format!("writing atlas {}", dest.display()))?;
-        pack::write_import_settings(&dest)?;
+        pack::seed_import_settings(&dest)?;
         animations.insert(name.clone(), layout);
     }
 
@@ -1173,6 +1303,9 @@ pub fn pack(
 
     check_atlases(spec, &manifest, paths)?;
     preview::sheet(&assets, paths)?;
+    // The seeds above are not loadable. Godot writes the imported path the
+    // runtime resolves a texture through, and what it writes is what ships.
+    godot::import(&paths.godot_project())?;
     Ok(StageRecord {
         note: Some(format!(
             "{} atlases → {}",

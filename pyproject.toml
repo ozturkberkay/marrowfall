@@ -53,12 +53,13 @@ extra-paths = ["tools/blender/src"]
 [[tool.ty.overrides]]
 include = [
     "tools/blender/src/actions.py",
+    "tools/blender/src/armature.py",
     "tools/blender/src/bake_sprites.py",
     "tools/blender/src/check_source.py",
     "tools/blender/src/mesh_clean.py",
     "tools/blender/src/mesh_sheet.py",
+    "tools/blender/src/promote_rig.py",
     "tools/blender/src/retarget_animation.py",
-    "tools/blender/src/strip_animation.py",
 ]
 
 [tool.ty.overrides.rules]

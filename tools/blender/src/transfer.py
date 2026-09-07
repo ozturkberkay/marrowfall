@@ -1,4 +1,4 @@
-"""The retarget maths: world matrices in, local poses out.
+"""The retarget math: world matrices in, local poses out.
 
 A clip authored on someone else's skeleton is fitted by transferring **world**
 orientations, never local ones. Every rig rolls its bones differently, and a
@@ -6,17 +6,23 @@ local rotation means nothing outside the rest pose it was authored against,
 which is how the code this replaces left both wrists 53 and 67 degrees out of
 their own rest.
 
-The whole method is four steps:
+The whole method is five steps:
 
-1. Aim both rigs at the same absolute table of world directions, one row per
+1. Re-roll every source bone's own frame onto the direction to its mapped
+   child, `child_basis` and `re_rolled`. The aim below points `CHILD_AXIS`,
+   so a rig that means something else by it gets a reference pose that is not
+   the same BODY pose as ours, and the whole difference lands in the keys.
+   Our own rig is not re-rolled: `rig.child_axis` holds its axes to 2 degrees,
+   and the clip gates state its bone frames.
+2. Aim both rigs at the same absolute table of world directions, one row per
    role, keeping each rig's own roll. That pose is the **reference pose**, and
    it is recorded per rig as `ref_world_ours` and `ref_world_src`.
-2. `Offset(role) = ref_world_src(role)^-1 @ ref_world_ours(role)`, one constant
+3. `Offset(role) = ref_world_src(role)^-1 @ ref_world_ours(role)`, one constant
    rotation per role. Nothing here ever sees the aim table again: feeding the
    table where a reference pose belongs would make the offset a re-roll rather
    than a correction.
-3. `world_out(role, t) = world_src(role, t) @ Offset(role)`, per frame.
-4. Recover each local pose algebraically, parents first, from the rest
+4. `world_out(role, t) = world_src(role, t) @ Offset(role)`, per frame.
+5. Recover each local pose algebraically, parents first, from the rest
    hierarchy. Nothing is read back out of a posed target, so the dependency
    graph is evaluated once per source frame rather than once per bone per
    frame.
@@ -341,6 +347,53 @@ def _orthonormal(m: Mat4, subject: str) -> list[Vec3]:
 
 
 # --- the transfer ----------------------------------------------------------
+
+
+def child_basis(
+    rest_world: dict[str, Mat4], children: dict[str, str]
+) -> dict[str, Mat4]:
+    """Per role, the turn that puts `CHILD_AXIS` on the direction to its child.
+
+    Read off the rest JOINTS, so it is free of any rig's axis convention. The
+    rig T15b replaced held its `Hips` 97.612 degrees off the direction to its
+    own `Spine`, recorded on that rig's own clip in
+    `crates/xtask-art/tests/fixtures/fetch.run.1.json`, and every Mixamo
+    `Neck` sits 16.933 off its `Head`. `re_rolled` is what applies these.
+
+    A role `children` has no row for, or whose child this rig does not fill,
+    keeps its own axis: nothing about a hand's or a toe's joints says how it
+    should be rolled.
+    """
+    turns: dict[str, Mat4] = {}
+    for role, rest in rest_world.items():
+        child = children.get(role)
+        if child is None or child not in rest_world:
+            turns[role] = IDENTITY
+            continue
+        head, tail = mat_translation(rest), mat_translation(rest_world[child])
+        towards = (tail[0] - head[0], tail[1] - head[1], tail[2] - head[2])
+        if length(towards) < EPSILON:
+            raise TransferError(code="no_direction", subject=role)
+        own = mat_direction(mat_inverted(rest, role), towards)
+        # The swing alone, and the singular case `reference_pose` also refuses:
+        # half a turn has no shortest arc, so every roll gives the same aim and
+        # picking one would invent a convention.
+        swing, _ = swing_twist(aim_rotation(CHILD_AXIS, own), CHILD_AXIS, role)
+        turns[role] = _quat_matrix(swing)
+    return turns
+
+
+def re_rolled(world: dict[str, Mat4], basis: dict[str, Mat4]) -> dict[str, Mat4]:
+    """`world` with each bone's own frame turned by `basis`, joints unmoved.
+
+    A rotation on the right leaves every translation column alone, so nothing
+    here moves a joint: it only changes which direction each bone calls its
+    own. Applied to a rig's rest and to every frame of its clip with one
+    basis, or the two stop describing the same rig.
+    """
+    if set(world) != set(basis):
+        raise TransferError(code="role_unmapped", subject=min(set(world) ^ set(basis)))
+    return {role: mat_multiply(matrix, basis[role]) for role, matrix in world.items()}
 
 
 def reference_pose(

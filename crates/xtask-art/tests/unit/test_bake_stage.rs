@@ -686,7 +686,6 @@ fn the_written_report_carries_what_blender_measured_and_what_rust_did() {
     assert_eq!(
         rules,
         [
-            "bake.forearm_roll",
             "bake.frame_count",
             "bake.in_frame",
             "bake.landmark_golden",

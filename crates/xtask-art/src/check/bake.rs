@@ -25,8 +25,6 @@ const INSET: &str = "the gap between the content of each rendered frame of one c
                      nearest canvas border, worst frame";
 const REFLECTED: &str = "each rendered frame of one clip against the same frame half a turn \
                          around, both content spans reflected about the canvas center, worst pair";
-const PATCH: &str = "spec.bake.forearm_roll, the hand-derived patch the world-space transfer \
-                     replaces";
 const SAMPLED: &str = "the frames the bake renders, against the frames the clip's own action \
                        keys";
 const PROJECTED: &str = "every joint of the rig at three sampled frames, projected through the \
@@ -87,20 +85,6 @@ pub const PIVOT: Rule = Rule {
     limit: |profile| profile.bake.pivot_pixels,
 };
 
-/// Whether anything still asks for the forearm patch.
-///
-/// The transfer aims both rigs at one table of world directions, so a
-/// palms-forward bind pose is corrected by the fit rather than by rolling two
-/// bones afterwards. An error rather than a warning because the roll runs
-/// after `clip.swing` has measured the clip, where nothing else can see it.
-pub const FOREARM_ROLL: Rule = Rule {
-    id: "bake.forearm_roll",
-    comparison: Comparison::Eq,
-    unit: "degrees",
-    space: PATCH,
-    limit: |_| 0.0,
-};
-
 /// Whether every rendered frame is a frame the clip actually keys.
 ///
 /// There is no divisibility rule between the sprite rate and the clip's own
@@ -128,12 +112,11 @@ pub const LANDMARK_GOLDEN: Rule = Rule {
 };
 
 /// Every bake rule, in the order `--list-rules` prints them.
-pub const RULES: [&Rule; 7] = [
+pub const RULES: [&Rule; 6] = [
     &FRAME_COUNT,
     &NON_EMPTY,
     &IN_FRAME,
     &PIVOT,
-    &FOREARM_ROLL,
     &SAMPLED_FRAMES_ARE_KEYS,
     &LANDMARK_GOLDEN,
 ];
@@ -142,8 +125,8 @@ pub const RULES: [&Rule; 7] = [
 /// on argv beside the two `clip::BAKE_RULES` ones.
 pub const BLENDER_RULES: [&Rule; 2] = [&SAMPLED_FRAMES_ARE_KEYS, &LANDMARK_GOLDEN];
 
-/// And the five [`check_files`] reads off the rendered PNGs and the spec.
-pub const FILE_RULES: [&Rule; 5] = [&FRAME_COUNT, &NON_EMPTY, &IN_FRAME, &PIVOT, &FOREARM_ROLL];
+/// And the four [`check_files`] reads off the rendered PNGs.
+pub const FILE_RULES: [&Rule; 4] = [&FRAME_COUNT, &NON_EMPTY, &IN_FRAME, &PIVOT];
 
 /// One clip's rendered frames, as the bake left them on disk.
 pub struct Rendered<'a> {
@@ -159,19 +142,8 @@ pub struct Rendered<'a> {
 ///
 /// An unreadable or absent frame is an error under every rule that owns it,
 /// never a skip: a gate that goes quiet on absent input proves nothing.
-pub fn check_files(
-    clips: &[Rendered<'_>],
-    character: &str,
-    forearm_roll: f64,
-    profile: &Profile,
-    attempt: u32,
-) -> Vec<Finding> {
-    let mut findings = vec![forearm_roll_patch(
-        character,
-        forearm_roll,
-        profile,
-        attempt,
-    )];
+pub fn check_files(clips: &[Rendered<'_>], profile: &Profile, attempt: u32) -> Vec<Finding> {
+    let mut findings = Vec::new();
     for clip in clips {
         let read = Set::read(clip);
         findings.push(read.frame_count(clip, profile, attempt));
@@ -183,10 +155,9 @@ pub fn check_files(
 }
 
 /// Every subject the bake owes a finding on, beyond the per-axis ones
-/// `clip::BAKE_RULES` own: the character, each clip, and each golden.
-pub fn subjects(names: &[&str], character: &str, goldens: &[&str]) -> Vec<String> {
-    let mut owed = vec![character.to_owned()];
-    owed.extend(names.iter().map(|name| (*name).to_owned()));
+/// `clip::BAKE_RULES` own: each clip, and each golden.
+pub fn subjects(names: &[&str], goldens: &[&str]) -> Vec<String> {
+    let mut owed: Vec<String> = names.iter().map(|name| (*name).to_owned()).collect();
     for name in names {
         owed.extend(goldens.iter().map(|direction| golden(name, direction)));
     }
@@ -208,19 +179,6 @@ pub fn golden(clip: &str, direction: &str) -> String {
 pub fn golden_directions<'a>(directions: &[&'a str]) -> Option<[&'a str; 2]> {
     let count = directions.len();
     (count >= 4).then(|| [directions[0], directions[count * 3 / 4]])
-}
-
-fn forearm_roll_patch(character: &str, degrees: f64, profile: &Profile, attempt: u32) -> Finding {
-    FOREARM_ROLL.measured(
-        profile,
-        character,
-        degrees,
-        attempt,
-        format!(
-            "spec.bake.forearm_roll asks for {degrees} degrees, and the transfer aims both rigs \
-             at one table of world directions instead"
-        ),
-    )
 }
 
 /// One rendered frame, read down to what the rules need of it.

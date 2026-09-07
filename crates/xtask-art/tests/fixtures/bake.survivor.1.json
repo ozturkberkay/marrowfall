@@ -7,7 +7,7 @@
       "rule": "clip.root_travel",
       "severity": "info",
       "subject": "idle x",
-      "measured": 1.8044374883174894e-09,
+      "measured": 2.9103830456733704e-10,
       "limit": 0.02,
       "comparison": "le",
       "unit": "meters",
@@ -19,7 +19,7 @@
       "rule": "clip.root_travel",
       "severity": "info",
       "subject": "idle y",
-      "measured": 1.3969838619232178e-09,
+      "measured": 2.3283064365386963e-09,
       "limit": 0.02,
       "comparison": "le",
       "unit": "meters",
@@ -31,13 +31,13 @@
       "rule": "clip.root_bob",
       "severity": "info",
       "subject": "idle z",
-      "measured": 0.008866667747497559,
+      "measured": 0.009028732776641846,
       "limit": 0.15,
       "comparison": "le",
       "unit": "meters",
       "attempt": 1,
       "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
-      "message": "Hips bobs 0.0089 m along z over idle, which the strip keeps"
+      "message": "Hips bobs 0.0090 m along z over idle, which the strip keeps"
     },
     {
       "rule": "clip.root_travel",
@@ -55,7 +55,7 @@
       "rule": "clip.root_travel",
       "severity": "info",
       "subject": "run y",
-      "measured": 5.587935447692871e-09,
+      "measured": 1.862645149230957e-09,
       "limit": 0.02,
       "comparison": "le",
       "unit": "meters",
@@ -67,19 +67,19 @@
       "rule": "clip.root_bob",
       "severity": "info",
       "subject": "run z",
-      "measured": 0.05354863405227661,
+      "measured": 0.05452728271484375,
       "limit": 0.15,
       "comparison": "le",
       "unit": "meters",
       "attempt": 1,
       "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
-      "message": "Hips bobs 0.0535 m along z over run, which the strip keeps"
+      "message": "Hips bobs 0.0545 m along z over run, which the strip keeps"
     },
     {
       "rule": "clip.root_travel",
       "severity": "info",
       "subject": "walk_back x",
-      "measured": 1.3969838619232178e-09,
+      "measured": 2.9103830456733704e-10,
       "limit": 0.02,
       "comparison": "le",
       "unit": "meters",
@@ -91,7 +91,7 @@
       "rule": "clip.root_travel",
       "severity": "info",
       "subject": "walk_back y",
-      "measured": 1.862645149230957e-09,
+      "measured": 6.984919309616089e-10,
       "limit": 0.02,
       "comparison": "le",
       "unit": "meters",
@@ -103,13 +103,85 @@
       "rule": "clip.root_bob",
       "severity": "info",
       "subject": "walk_back z",
-      "measured": 0.03907114267349243,
+      "measured": 0.04265552759170532,
       "limit": 0.15,
       "comparison": "le",
       "unit": "meters",
       "attempt": 1,
       "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
-      "message": "Hips bobs 0.0391 m along z over walk_back, which the strip keeps"
+      "message": "Hips bobs 0.0427 m along z over walk_back, which the strip keeps"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "strafe_left x",
+      "measured": 1.164153218269348e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along x over strafe_left once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "strafe_left y",
+      "measured": 6.984919309616089e-10,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along y over strafe_left once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_bob",
+      "severity": "info",
+      "subject": "strafe_left z",
+      "measured": 0.03843790292739868,
+      "limit": 0.15,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
+      "message": "Hips bobs 0.0384 m along z over strafe_left, which the strip keeps"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "strafe_right x",
+      "measured": 4.656612873077393e-10,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along x over strafe_right once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_travel",
+      "severity": "info",
+      "subject": "strafe_right y",
+      "measured": 1.6298145055770872e-09,
+      "limit": 0.02,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, per horizontal axis, after strip_root_motion",
+      "message": "Hips drifts 0.0000 m along y over strafe_right once its horizontal motion is pinned"
+    },
+    {
+      "rule": "clip.root_bob",
+      "severity": "info",
+      "subject": "strafe_right z",
+      "measured": 0.025863826274871823,
+      "limit": 0.15,
+      "comparison": "le",
+      "unit": "meters",
+      "attempt": 1,
+      "measured_on": "the root bone's world head against its first frame, on the up axis, after strip_root_motion",
+      "message": "Hips bobs 0.0259 m along z over strafe_right, which the strip keeps"
     },
     {
       "rule": "bake.sampled_frames_are_keys",
@@ -145,7 +217,31 @@
       "unit": "frames",
       "attempt": 1,
       "measured_on": "the frames the bake renders, against the frames the clip's own action keys",
-      "message": "walk_back renders 18 frame(s) of the 23 its action keys"
+      "message": "walk_back renders 25 frame(s) of the 30 its action keys"
+    },
+    {
+      "rule": "bake.sampled_frames_are_keys",
+      "severity": "info",
+      "subject": "strafe_left",
+      "measured": 0.0,
+      "limit": 0.0,
+      "comparison": "eq",
+      "unit": "frames",
+      "attempt": 1,
+      "measured_on": "the frames the bake renders, against the frames the clip's own action keys",
+      "message": "strafe_left renders 16 frame(s) of the 17 its action keys"
+    },
+    {
+      "rule": "bake.sampled_frames_are_keys",
+      "severity": "info",
+      "subject": "strafe_right",
+      "measured": 0.0,
+      "limit": 0.0,
+      "comparison": "eq",
+      "unit": "frames",
+      "attempt": 1,
+      "measured_on": "the frames the bake renders, against the frames the clip's own action keys",
+      "message": "strafe_right renders 16 frame(s) of the 17 its action keys"
     },
     {
       "rule": "bake.landmark_golden",
@@ -220,16 +316,52 @@
       "message": "of the 72 joints of walk_back_e, every joint is on the pixel the golden records"
     },
     {
-      "rule": "bake.forearm_roll",
+      "rule": "bake.landmark_golden",
       "severity": "info",
-      "subject": "survivor",
+      "subject": "strafe_left_s",
       "measured": 0.0,
-      "limit": 0.0,
-      "comparison": "eq",
-      "unit": "degrees",
+      "limit": 1.0,
+      "comparison": "le",
+      "unit": "pixels",
       "attempt": 1,
-      "measured_on": "spec.bake.forearm_roll, the hand-derived patch the world-space transfer replaces",
-      "message": "spec.bake.forearm_roll asks for 0 degrees, and the transfer aims both rigs at one table of world directions instead"
+      "measured_on": "every joint of the rig at three sampled frames, projected through the bake camera to whole pixels, against the committed golden, the wider of the two axes of the worst joint",
+      "message": "of the 72 joints of strafe_left_s, every joint is on the pixel the golden records"
+    },
+    {
+      "rule": "bake.landmark_golden",
+      "severity": "info",
+      "subject": "strafe_left_e",
+      "measured": 0.0,
+      "limit": 1.0,
+      "comparison": "le",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "every joint of the rig at three sampled frames, projected through the bake camera to whole pixels, against the committed golden, the wider of the two axes of the worst joint",
+      "message": "of the 72 joints of strafe_left_e, every joint is on the pixel the golden records"
+    },
+    {
+      "rule": "bake.landmark_golden",
+      "severity": "info",
+      "subject": "strafe_right_s",
+      "measured": 0.0,
+      "limit": 1.0,
+      "comparison": "le",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "every joint of the rig at three sampled frames, projected through the bake camera to whole pixels, against the committed golden, the wider of the two axes of the worst joint",
+      "message": "of the 72 joints of strafe_right_s, every joint is on the pixel the golden records"
+    },
+    {
+      "rule": "bake.landmark_golden",
+      "severity": "info",
+      "subject": "strafe_right_e",
+      "measured": 0.0,
+      "limit": 1.0,
+      "comparison": "le",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "every joint of the rig at three sampled frames, projected through the bake camera to whole pixels, against the committed golden, the wider of the two axes of the worst joint",
+      "message": "of the 72 joints of strafe_right_e, every joint is on the pixel the golden records"
     },
     {
       "rule": "bake.frame_count",
@@ -247,25 +379,25 @@
       "rule": "bake.non_empty",
       "severity": "info",
       "subject": "idle",
-      "measured": 4.891204833984375,
+      "measured": 5.310821533203125,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "percent",
       "attempt": 1,
       "measured_on": "the pixels of each rendered frame of one clip at or above alpha 1, as a percent of its own canvas, worst frame",
-      "message": "the emptiest frame of idle is ene 03, at 4.8912 percent of its canvas"
+      "message": "the emptiest frame of idle is ene 03, at 5.3108 percent of its canvas"
     },
     {
       "rule": "bake.in_frame",
       "severity": "info",
       "subject": "idle",
-      "measured": 89.0,
+      "measured": 78.0,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "the gap between the content of each rendered frame of one clip and the nearest canvas border, worst frame",
-      "message": "the tightest frame of idle is sw 00, 89 px clear of the nearest border"
+      "message": "the tightest frame of idle is sw 00, 78 px clear of the nearest border"
     },
     {
       "rule": "bake.pivot",
@@ -277,7 +409,7 @@
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "each rendered frame of one clip against the same frame half a turn around, both content spans reflected about the canvas center, worst pair",
-      "message": "the worst of 120 opposite pair(s) of idle is ssw against nne at frame 11, 1 px off its own reflection"
+      "message": "the worst of 120 opposite pair(s) of idle is wsw against ene at frame 00, 1 px off its own reflection"
     },
     {
       "rule": "bake.frame_count",
@@ -295,25 +427,25 @@
       "rule": "bake.non_empty",
       "severity": "info",
       "subject": "run",
-      "measured": 4.1164398193359375,
+      "measured": 4.386138916015625,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "percent",
       "attempt": 1,
       "measured_on": "the pixels of each rendered frame of one clip at or above alpha 1, as a percent of its own canvas, worst frame",
-      "message": "the emptiest frame of run is sse 04, at 4.1164 percent of its canvas"
+      "message": "the emptiest frame of run is sse 04, at 4.3861 percent of its canvas"
     },
     {
       "rule": "bake.in_frame",
       "severity": "info",
       "subject": "run",
-      "measured": 65.0,
+      "measured": 67.0,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "the gap between the content of each rendered frame of one clip and the nearest canvas border, worst frame",
-      "message": "the tightest frame of run is n 07, 65 px clear of the nearest border"
+      "message": "the tightest frame of run is n 07, 67 px clear of the nearest border"
     },
     {
       "rule": "bake.pivot",
@@ -325,7 +457,7 @@
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "each rendered frame of one clip against the same frame half a turn around, both content spans reflected about the canvas center, worst pair",
-      "message": "the worst of 160 opposite pair(s) of run is s against n at frame 12, 1 px off its own reflection"
+      "message": "the worst of 160 opposite pair(s) of run is s against n at frame 01, 1 px off its own reflection"
     },
     {
       "rule": "bake.frame_count",
@@ -337,31 +469,31 @@
       "unit": "missing frames",
       "attempt": 1,
       "measured_on": "the PNGs one clip left in the staging directory, against the rectangle of directions by the frame count of its widest direction",
-      "message": "walk_back rendered 288 of 288 frames, 16 directions x 18 frames"
+      "message": "walk_back rendered 400 of 400 frames, 16 directions x 25 frames"
     },
     {
       "rule": "bake.non_empty",
       "severity": "info",
       "subject": "walk_back",
-      "measured": 4.8366546630859375,
+      "measured": 5.2318572998046875,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "percent",
       "attempt": 1,
       "measured_on": "the pixels of each rendered frame of one clip at or above alpha 1, as a percent of its own canvas, worst frame",
-      "message": "the emptiest frame of walk_back is ene 10, at 4.8367 percent of its canvas"
+      "message": "the emptiest frame of walk_back is wnw 12, at 5.2319 percent of its canvas"
     },
     {
       "rule": "bake.in_frame",
       "severity": "info",
       "subject": "walk_back",
-      "measured": 58.0,
+      "measured": 64.0,
       "limit": 1.0,
       "comparison": "ge",
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "the gap between the content of each rendered frame of one clip and the nearest canvas border, worst frame",
-      "message": "the tightest frame of walk_back is s 13, 58 px clear of the nearest border"
+      "message": "the tightest frame of walk_back is sse 09, 64 px clear of the nearest border"
     },
     {
       "rule": "bake.pivot",
@@ -373,7 +505,103 @@
       "unit": "pixels",
       "attempt": 1,
       "measured_on": "each rendered frame of one clip against the same frame half a turn around, both content spans reflected about the canvas center, worst pair",
-      "message": "the worst of 144 opposite pair(s) of walk_back is s against n at frame 00, 1 px off its own reflection"
+      "message": "the worst of 200 opposite pair(s) of walk_back is ssw against nne at frame 09, 1 px off its own reflection"
+    },
+    {
+      "rule": "bake.frame_count",
+      "severity": "info",
+      "subject": "strafe_left",
+      "measured": 0.0,
+      "limit": 0.0,
+      "comparison": "eq",
+      "unit": "missing frames",
+      "attempt": 1,
+      "measured_on": "the PNGs one clip left in the staging directory, against the rectangle of directions by the frame count of its widest direction",
+      "message": "strafe_left rendered 256 of 256 frames, 16 directions x 16 frames"
+    },
+    {
+      "rule": "bake.non_empty",
+      "severity": "info",
+      "subject": "strafe_left",
+      "measured": 5.2356719970703125,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "percent",
+      "attempt": 1,
+      "measured_on": "the pixels of each rendered frame of one clip at or above alpha 1, as a percent of its own canvas, worst frame",
+      "message": "the emptiest frame of strafe_left is nnw 01, at 5.2357 percent of its canvas"
+    },
+    {
+      "rule": "bake.in_frame",
+      "severity": "info",
+      "subject": "strafe_left",
+      "measured": 65.0,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "the gap between the content of each rendered frame of one clip and the nearest canvas border, worst frame",
+      "message": "the tightest frame of strafe_left is ese 04, 65 px clear of the nearest border"
+    },
+    {
+      "rule": "bake.pivot",
+      "severity": "info",
+      "subject": "strafe_left",
+      "measured": 1.0,
+      "limit": 2.0,
+      "comparison": "le",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "each rendered frame of one clip against the same frame half a turn around, both content spans reflected about the canvas center, worst pair",
+      "message": "the worst of 128 opposite pair(s) of strafe_left is wsw against ene at frame 12, 1 px off its own reflection"
+    },
+    {
+      "rule": "bake.frame_count",
+      "severity": "info",
+      "subject": "strafe_right",
+      "measured": 0.0,
+      "limit": 0.0,
+      "comparison": "eq",
+      "unit": "missing frames",
+      "attempt": 1,
+      "measured_on": "the PNGs one clip left in the staging directory, against the rectangle of directions by the frame count of its widest direction",
+      "message": "strafe_right rendered 256 of 256 frames, 16 directions x 16 frames"
+    },
+    {
+      "rule": "bake.non_empty",
+      "severity": "info",
+      "subject": "strafe_right",
+      "measured": 5.2005767822265625,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "percent",
+      "attempt": 1,
+      "measured_on": "the pixels of each rendered frame of one clip at or above alpha 1, as a percent of its own canvas, worst frame",
+      "message": "the emptiest frame of strafe_right is e 04, at 5.2006 percent of its canvas"
+    },
+    {
+      "rule": "bake.in_frame",
+      "severity": "info",
+      "subject": "strafe_right",
+      "measured": 60.0,
+      "limit": 1.0,
+      "comparison": "ge",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "the gap between the content of each rendered frame of one clip and the nearest canvas border, worst frame",
+      "message": "the tightest frame of strafe_right is wsw 12, 60 px clear of the nearest border"
+    },
+    {
+      "rule": "bake.pivot",
+      "severity": "info",
+      "subject": "strafe_right",
+      "measured": 1.0,
+      "limit": 2.0,
+      "comparison": "le",
+      "unit": "pixels",
+      "attempt": 1,
+      "measured_on": "each rendered frame of one clip against the same frame half a turn around, both content spans reflected about the canvas center, worst pair",
+      "message": "the worst of 128 opposite pair(s) of strafe_right is s against n at frame 04, 1 px off its own reflection"
     }
   ]
 }

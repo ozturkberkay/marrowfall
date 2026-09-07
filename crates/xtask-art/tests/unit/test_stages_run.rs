@@ -1117,6 +1117,7 @@ fn the_retarget_needs_its_script() {
         &dir.path().join("walk_back.glb"),
         "walk_back",
         &a_mixamo_clip(),
+        "mixamo",
         dir.path(),
     )
     .unwrap_err()
@@ -1142,6 +1143,7 @@ fn the_retarget_needs_the_canonical_rig_and_says_where_it_comes_from() {
         &dir.path().join("walk_back.glb"),
         "walk_back",
         &a_mixamo_clip(),
+        "mixamo",
         dir.path(),
     )
     .unwrap_err()
@@ -1320,13 +1322,156 @@ fn the_rig_report_records_the_vendor_and_the_conformed_one_gates() {
     assert!(names.get("Spine1").is_some() && names.get("Spine01").is_none());
 }
 
+/// A stub Blender that copies one GLB to `--out`, which is what the
+/// promotion script does with the armature of the file it is handed.
+fn a_promotion_stub(dir: &std::path::Path, promoted: &[u8]) -> std::path::PathBuf {
+    a_promotion_stub_that_also(dir, promoted, "")
+}
+
+/// The same stub, plus the report a promotion must never write.
+fn a_reporting_promotion_stub(dir: &std::path::Path, promoted: &[u8]) -> std::path::PathBuf {
+    a_promotion_stub_that_also(
+        dir,
+        promoted,
+        "printf '{\"stage\":\"promote\",\"item\":\"survivor\",\"attempt\":1,\"findings\":[]}' \
+         > \"$MARROWFALL_REPORT\"\n",
+    )
+}
+
+fn a_promotion_stub_that_also(
+    dir: &std::path::Path,
+    promoted: &[u8],
+    extra: &str,
+) -> std::path::PathBuf {
+    std::fs::write(dir.join("promoted.glb"), promoted).unwrap();
+    crate::stubs::a_stub(
+        dir,
+        "blender-stub.sh",
+        &format!(
+            r#"out=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--out" ]; then out="$2"; fi
+  shift
+done
+mkdir -p "$(dirname "$out")"
+cp "{promoted}" "$out"
+{extra}: > "$MARROWFALL_SENTINEL"
+exit 0
+"#,
+            promoted = dir.join("promoted.glb").display(),
+        ),
+    )
+}
+
+/// The canonical rig is shared by every character on the skeleton, so the
+/// promotion writes it out of a conformed character and only out of one.
+#[test]
+fn promoting_writes_the_canonical_rig_out_of_the_conformed_character() {
+    let dir = a_repo_with_a_rigged_file(&a_vendor_rig());
+    let paths = Paths::new(dir.path(), "survivor");
+    stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap();
+    let character = std::fs::read(paths.character_glb()).unwrap();
+    let stub = a_promotion_stub(dir.path(), &character);
+    let scripts = dir.path().join("tools/blender/src");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("promote_rig.py"), "").unwrap();
+    std::fs::create_dir_all(dir.path().join(".venv/lib/python3.13/site-packages")).unwrap();
+    let mut env = crate::support::EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let rig = stages::promote_rig(&a_spec("survivor"), &paths, dir.path()).unwrap();
+
+    assert!(rig.ends_with("art/skeletons/humanoid.glb"));
+    assert_eq!(std::fs::read(&rig).unwrap(), character);
+}
+
+/// A canonical rig that fails a rig rule is a defect every character on that
+/// skeleton inherits, so the gates run before the promotion does.
+#[test]
+fn promoting_a_rig_that_fails_a_gate_writes_no_canonical_rig() {
+    let rig = crate::rigs::SyntheticRig::conformant()
+        .moved("LeftForeArm", glam::DVec3::new(0.0, -0.6, 0.0))
+        .moved("RightForeArm", glam::DVec3::new(0.0, -0.6, 0.0));
+    let dir = a_repo_with_a_rigged_file(&rig.to_glb(&rig.bind_pose_clip()));
+    let paths = Paths::new(dir.path(), "survivor");
+    std::fs::create_dir_all(paths.character_glb().parent().unwrap()).unwrap();
+    std::fs::write(paths.character_glb(), rig.to_glb(&rig.bind_pose_clip())).unwrap();
+    let canonical = AnimationLibrary::reference_rig(dir.path(), "humanoid");
+    let before = std::fs::read(&canonical).unwrap();
+
+    let error = stages::promote_rig(&a_spec("survivor"), &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("rig.humerus_angle"), "got: {error}");
+    assert!(
+        error.contains("shared by every character on the \"humanoid\" skeleton"),
+        "one sentence, and it names the skeleton: {error}"
+    );
+    assert_eq!(std::fs::read(&canonical).unwrap(), before, "left alone");
+}
+
+/// A promotion that lost or moved a joint is not the same rig, and every clip
+/// fitted onto it afterwards would be wrong.
+#[test]
+fn a_promotion_that_moves_a_joint_is_refused() {
+    let dir = a_repo_with_a_rigged_file(&a_vendor_rig());
+    let paths = Paths::new(dir.path(), "survivor");
+    stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap();
+    let moved =
+        crate::rigs::SyntheticRig::conformant().nudged("Head", glam::DVec3::new(0.01, 0.0, 0.0));
+    let stub = a_promotion_stub(dir.path(), moved.to_glb(&moved.bind_pose_clip()).as_slice());
+    let scripts = dir.path().join("tools/blender/src");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("promote_rig.py"), "").unwrap();
+    std::fs::create_dir_all(dir.path().join(".venv/lib/python3.13/site-packages")).unwrap();
+    let mut env = crate::support::EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let error = stages::promote_rig(&a_spec("survivor"), &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("from the character's, over the 1e-4 m a GLB round trip can explain"),
+        "one sentence, and it names the band: {error}"
+    );
+}
+
+/// The promotion copies an armature and measures nothing, so a script that
+/// wrote a report has taken over a job that is not its: rule three of the
+/// design.
+#[test]
+fn a_promotion_that_reported_a_finding_stops_the_stage() {
+    let dir = a_repo_with_a_rigged_file(&a_vendor_rig());
+    let paths = Paths::new(dir.path(), "survivor");
+    stages::conform_rig(&a_spec("survivor"), &paths, dir.path()).unwrap();
+    let character = std::fs::read(paths.character_glb()).unwrap();
+    let stub = a_reporting_promotion_stub(dir.path(), &character);
+    let scripts = dir.path().join("tools/blender/src");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("promote_rig.py"), "").unwrap();
+    std::fs::create_dir_all(dir.path().join(".venv/lib/python3.13/site-packages")).unwrap();
+    let mut env = crate::support::EnvGuard::new();
+    env.set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let error = stages::promote_rig(&a_spec("survivor"), &paths, dir.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        error.contains("it measures nothing: the rig rules above are what read the rig it copies"),
+        "one sentence: {error}"
+    );
+}
+
 /// The defect no rest-frame edit can close: the humerus is the direction from
 /// the shoulder joint to the elbow, which is where the mesh's arm is.
 #[test]
 fn a_rig_the_conform_cannot_close_stops_the_step_and_names_the_rule() {
     let rig = crate::rigs::SyntheticRig::conformant()
-        .moved("LeftForeArm", glam::DVec3::new(0.0, -0.2, 0.0))
-        .moved("RightForeArm", glam::DVec3::new(0.0, -0.2, 0.0));
+        .moved("LeftForeArm", glam::DVec3::new(0.0, -0.6, 0.0))
+        .moved("RightForeArm", glam::DVec3::new(0.0, -0.6, 0.0));
     let dir = a_repo_with_a_rigged_file(&rig.to_glb(&rig.bind_pose_clip()));
     let paths = Paths::new(dir.path(), "survivor");
 

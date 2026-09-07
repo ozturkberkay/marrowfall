@@ -36,15 +36,14 @@ calibrated before the fixer and filling a hole raises that count on purpose,
 so afterwards it is `mesh.non_manifold_post`'s. `mesh.printability` asks Meshy
 about a model task, and a file written locally has none.
 
-Today the committed survivor breaks five of the `rig.*` rules, on 14 subjects
-between them, so `check` exits non-zero on it. The rig is regenerated later in
-the pipeline work, and the rules become required checks then.
+The committed survivor breaks none of them, and `check` runs as a required CI
+job on every pull request that touches the art.
 
 `rig.elbow_bend` is the one that records rather than gates: it reads how far
 each forearm sits out of line with its own upper arm, and every rig this
-pipeline has bought carries some of it, 24 degrees on the committed one. A
-published limit would fail forever on a rig nothing here can regenerate, and
-the reading is what the `pose_mode` spike below needs.
+pipeline has bought carries some of it, 23.7 degrees on the committed one. A
+published limit would fail on every generation Meshy has made here, and the
+reading is what the `pose_mode` spike below needed.
 
 The `clip.*` and `source.*` rules run at their own stage boundaries rather
 than here, because each one needs something `check` does not have.
@@ -60,11 +59,15 @@ regenerate (Mixamo's `Neck` axis sits 16.933 degrees off the direction to its
 own `Head`, and it always will) and because an in-place cycle wanders 0.0276 m
 against a strafe's 2.3117, which no one threshold reads.
 
-Fourteen `clip.*` rules run at the **retarget** boundary. `clip.swing` and
-`clip.twist` measure the delivered GLB against the file its motion was bought
-in; that file is an FBX, so `retarget_animation.py` writes the source's own
-world orientations to `art/staging/reports/retarget.<clip>.1.source.json` and
-`check/clip.rs` reads that beside the GLB it just wrote. `clip.fps_grid` and
+Fifteen `clip.*` rules run at the **retarget** boundary. `clip.swing`,
+`clip.twist` and `clip.posture` measure the delivered GLB against the file its
+motion was bought in; that file is an FBX, so `retarget_animation.py` writes
+the source's own world orientations and joints to
+`art/staging/reports/retarget.<clip>.1.source.json` and `check/clip.rs` reads
+that beside the GLB it just wrote. The first two read where each bone points
+and how far it is rolled; `clip.posture` reads where the JOINTS ended up, each
+against its own rig's root joint and the source's sized by the femur ratio,
+which is the one thing no rotation rule can see. `clip.fps_grid` and
 `clip.fps_grid.range` are requirement 3: the scene runs at the clip's own
 `source_fps`, so a 30 fps clip cannot be read on a 24 fps grid, land at frames
 0.8 to 16.8 and lose four of them to rounding. `clip.loop` reads a looping
@@ -117,13 +120,12 @@ runs them with no Blender:
 | `bake.non_empty` | what share of its own canvas the emptiest frame covers |
 | `bake.in_frame` | how close the tightest frame's content comes to a canvas border |
 | `bake.pivot` | how far two opposite directions sit from being each other's reflection about the canvas center |
-| `bake.forearm_roll` | whether `spec.bake.forearm_roll` still asks for the patch the world-space transfer replaced |
 
 `bake.pivot` is the one that needs saying. An orthographic camera centered on
 the axis the ring turns about maps a point at world `x` to the mirror of where
 it maps it half a turn around, so the two content spans of opposite directions
-reflect about the middle of the canvas **exactly**, whatever the pose. All 848
-frames of the survivor read 0 or 1 px there. The ground line does not work
+reflect about the middle of the canvas **exactly**, whatever the pose. All
+1,472 frames of the survivor read 0 or 1 px there. The ground line does not work
 that way: a 35 degree camera projects depth onto the vertical axis of the
 image, so turning the character moves its lowest foot 28 to 86 px up or down
 the frame, and that is correct rather than a defect.
@@ -171,6 +173,21 @@ is that one rule and nothing here describes the format twice.
 `atlas.trim_boxes` is every rect and the anchor inside the atlas image and
 inside its own cell: the numbers behind two of those invariants, plus the one
 thing no format check can see.
+
+## Why the pack runs Godot
+
+An atlas is loadable only through the `.import` sidecar beside it: the runtime
+resolves the texture through the `path.bptc=` line that sidecar names, and
+refuses the atlas outright without it. Only Godot writes that line, so the
+pack writes the settings it owns, BC7 and the `uid` already on disk, then runs
+`godot --headless --import` over the project and commits what Godot wrote.
+
+The settings alone are a seed, not a sidecar. Committing one leaves a game
+that cannot load its own atlases until somebody runs an import, which is why
+the import is part of the stage and a missing Godot fails it rather than
+being skipped. Godot exits 0 on a file it could not import and says so on
+stderr only, so the stage reads that stream and fails on the line Godot
+printed.
 
 ## The contact sheet
 
@@ -408,7 +425,7 @@ what `art/characters/<name>/spec.lock` records:
 | `rig` | paid | Rust | Adds a skeleton, then one animation clip per entry in `animations`. |
 | `download` | free | Rust | Fetches the finished GLBs, renames and conforms the rig into `model.glb`, then fits every bought clip onto it. |
 | `bake` | free | **Blender** | Renders every clip through 8 compass directions into loose PNG frames. |
-| `pack` | free | Rust | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads, the three `atlas.*` rules over both, and the contact sheet. |
+| `pack` | free | Rust + **Godot** | Crops and packs those frames into one atlas per clip, plus the manifest Godot reads, the three `atlas.*` rules over both, the contact sheet, and Godot's own import pass over the sidecars. |
 
 The `.ron` spec describes the *character*; the `.lock` records *what has been
 built*. So `pack` appears in the lock without appearing in the spec, its
@@ -418,17 +435,20 @@ shared by the last two stages rather than one block per stage.
 The pipeline is Rust. `tools/blender/src/` holds the only Python in the repo,
 because `bpy` is Python-only and Blender is the one tool that cannot be driven
 any other way: `bake_sprites.py`, `check_source.py`, `mesh_clean.py`,
-`retarget_animation.py` and `mesh_sheet.py` run inside Blender, and
-`cleanup.py`, `clip.py`, `findings.py`, `framing.py`, `skeleton.py`,
-`source.py` and `transfer.py` are the `bpy`-free modules they import.
-`strip_animation.py` is neither: nothing shells out to it any more, and the
-retarget imports its one-triangle skin carrier.
-`cargo art` shells out to `blender --background --python …` for those five,
+`retarget_animation.py`, `promote_rig.py` and `mesh_sheet.py` run inside
+Blender, and `cleanup.py`, `clip.py`, `findings.py`, `framing.py`,
+`skeleton.py`, `source.py` and `transfer.py` are the `bpy`-free modules they
+import. `actions.py` and `armature.py` need `bpy` and are shared by two
+scripts each.
+`cargo art` shells out to `blender --background --python …` for those six,
 and does everything else itself. Every published limit those scripts report
 against is passed to them as `--limit RULE=NUMBER`, read off the same rule
 list `--list-rules` prints, so no script holds a second copy of a number. It
 finds `blender` on `PATH`, or at the path `MARROWFALL_BLENDER_BIN` names when
 it is set.
+
+Godot is the second tool, and only the pack stage needs it. It is found the
+same way: on `PATH`, or at the path `MARROWFALL_GODOT_BIN` names.
 
 ## What the lock covers, and how to force a stage
 
@@ -521,6 +541,19 @@ A fetch is three steps: the export is downloaded, `check_source.py` measures
 it against what the library declares, and only then is it fitted to the
 canonical rig. The download stage runs those same three on every clip Meshy
 animated, so no clip reaches `art/animations/` unmeasured or unfitted.
+
+**A refit reads a first-hand source, never the clip it is replacing.** The
+canonical rig is shared, so promoting a new one leaves every clip fitted to a
+rig that is gone and `cargo art fetch` refits them. A Mixamo clip is refit
+from the vendor's own FBX under `art/staging/downloads/`, which is gitignored
+because Adobe's license forbids republishing the file and which a browser
+session can export again from the product id. Meshy sells motion attached to
+a rig task that expires, so a bought clip is refit from
+`art/animations/sources/<clip>.glb`, committed for exactly that. Refitting a
+clip from its own fitted copy would measure the last run's output, and
+Blender's import and export round trip is not bit exact, so the motion would
+drift a little every run. A bought clip whose source is missing is refused,
+and the message names the file to restore.
 
 Every export is requested **traveling**, so the root carries
 the motion and the femur ratio can size the step to our own body, and at the

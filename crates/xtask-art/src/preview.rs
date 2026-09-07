@@ -87,6 +87,37 @@ pub fn bake(names: &[&str], directions: &[&str], paths: &Paths) -> Result<()> {
     write_grid(&rows, 1, &paths.preview().join("bake.png"))
 }
 
+/// The direction a contact strip is drawn for.
+///
+/// One is enough to see a stuck or hitching loop, and sixteen strips per clip
+/// is a wall nobody reads. `s` is the character walking toward the camera,
+/// which is the pose the eye judges a hunch on.
+pub const STRIP_DIRECTION: &str = "s";
+
+/// One strip per animation: every frame of [`STRIP_DIRECTION`] in playback
+/// order, side by side.
+///
+/// `bake.png` shows one frame of each direction, so a loop that hitches or a
+/// pose that sticks is invisible in it. These show the whole cycle.
+pub fn strips(names: &[&str], paths: &Paths) -> Result<()> {
+    for name in names {
+        let frames: Vec<RgbaImage> = frames_for(&paths.staging(), name, STRIP_DIRECTION)
+            .iter()
+            .filter_map(|path| image::open(path).ok())
+            .map(|frame| frame.to_rgba8())
+            .collect();
+        if frames.is_empty() {
+            continue;
+        }
+        let dest = paths
+            .preview()
+            .join("strips")
+            .join(format!("{name}_{STRIP_DIRECTION}.png"));
+        write_grid(&frames, frames.len() as u32, &dest)?;
+    }
+    Ok(())
+}
+
 /// Every frame of one animation facing one direction, in playback order.
 fn frames_for(dir: &Path, name: &str, direction: &str) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = std::fs::read_dir(dir)

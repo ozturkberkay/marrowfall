@@ -62,6 +62,7 @@ root_travel_meters = 0.02
 root_bob_meters = 0.15
 floor_snap_meters = 0.005
 stride_percent = 2.0
+posture_meters = 0.12
 loop_degrees = 2.0
 foot_plants = 1
 foot_skate_meters = 0.025
@@ -122,7 +123,7 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.mirror_tolerance_degrees, 1.0);
     assert_eq!(profile.max_bind_deviation_degrees, 75.0);
     assert_eq!(profile.humerus_below_horizontal.target, 40.0);
-    assert_eq!(profile.humerus_below_horizontal.tolerance, 15.0);
+    assert_eq!(profile.humerus_below_horizontal.tolerance, 25.0);
     // Calibrated on the four committed concept views, with the headroom
     // beside each in the profile and the readings in `test_concept.rs`.
     assert_eq!(profile.concept.background_spread_levels, 12.0);
@@ -150,6 +151,7 @@ fn the_committed_humanoid_profile_loads() {
     assert_eq!(profile.clip.root_bob_meters, 0.15);
     assert_eq!(profile.clip.floor_snap_meters, 0.005);
     assert_eq!(profile.clip.stride_percent, 2.0);
+    assert_eq!(profile.clip.posture_meters, 0.12);
     assert_eq!(profile.clip.loop_degrees, 2.0);
     assert_eq!(profile.clip.foot_plants, 1.0);
     assert_eq!(profile.clip.foot_skate_meters, 0.025);
@@ -491,6 +493,7 @@ fn a_clip_limit_that_is_not_a_positive_number_is_refused() {
         ("root_bob_meters", "0.15"),
         ("floor_snap_meters", "0.005"),
         ("stride_percent", "2.0"),
+        ("posture_meters", "0.12"),
         ("loop_degrees", "2.0"),
         ("foot_plants", "1"),
         ("foot_skate_meters", "0.025"),

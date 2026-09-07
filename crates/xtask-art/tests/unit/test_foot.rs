@@ -1,6 +1,6 @@
 //! The three foot contact rules, on the delivered file.
 //!
-//! Two halves. The maths runs on hand-built paths whose answers are counted
+//! Two halves. The math runs on hand-built paths whose answers are counted
 //! by hand, and the same paths and the same answers are in
 //! `tools/blender/tests/unit/test_plant.py`, so the two implementations are
 //! pinned to one set of numbers rather than to each other. The rules
@@ -43,7 +43,7 @@ fn sampled(fps: u32) -> Vec<DVec3> {
         .collect()
 }
 
-// --- the maths ------------------------------------------------------------
+// --- the math -------------------------------------------------------------
 
 #[test]
 fn the_vote_width_is_odd_and_at_least_three_at_every_rate() {
@@ -161,7 +161,7 @@ fn the_drift_inside_a_run_is_read_from_its_first_frame() {
 /// `retarget_animation.py::rig_height` spans the same bones inside Blender.
 /// The committed rig also carries two scene nodes that are no bone,
 /// `Armature` and `skin_carrier`, and spanning every node instead reads
-/// 1.6959 m: that is the reading this test rules out.
+/// 1.7040 m: that is the reading this test rules out.
 #[test]
 fn the_thresholds_scale_by_the_skin_joints_and_not_by_every_node() {
     let rig = std::fs::read(crate::support::committed_glb("art/skeletons/humanoid.glb"))
@@ -177,7 +177,7 @@ fn the_thresholds_scale_by_the_skin_joints_and_not_by_every_node() {
     let span = xtask_art::check::gltf_clip::joint_span(&rig).expect("the rig's span");
 
     assert_eq!(every_node, 2, "the Armature and the skin_carrier");
-    assert!((span - 1.665_165).abs() < 5e-7, "{span}");
+    assert!((span - 1.668_801).abs() < 5e-7, "{span}");
 }
 
 #[test]

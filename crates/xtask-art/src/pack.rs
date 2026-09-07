@@ -284,7 +284,7 @@ fn shelf_pack(sizes: &[(u32, u32)]) -> (Vec<(u32, u32)>, u32, u32) {
     )
 }
 
-/// Writes Godot's import settings beside an atlas.
+/// Seeds Godot's import settings beside an atlas, for Godot to finish.
 ///
 /// BC7 rather than the default S3TC, which is the same 8 bits per pixel at half
 /// the error. This is scoped to character atlases deliberately: Godot's own
@@ -295,12 +295,15 @@ fn shelf_pack(sizes: &[(u32, u32)]) -> (Vec<(u32, u32)>, u32, u32) {
 /// `detect_3d/compress_to=0` stops Godot quietly rewriting these if an atlas is
 /// ever seen in a 3D context.
 ///
-/// Only the settings above are written. Godot restores the content hash,
-/// `[deps]` and every remaining default byte for byte on the next import, so
-/// omitting them loses nothing. `uid` is the exception: it is minted fresh
-/// whenever it is absent, so an existing one is carried across and re-packing an
-/// unchanged atlas leaves the file exactly as it was.
-pub fn write_import_settings(atlas: &Path) -> Result<()> {
+/// **A seed is not a loadable sidecar.** The runtime finds the texture through
+/// the `path.bptc=` line and the `[deps]` block Godot adds on import, and
+/// refuses a file that carries neither, so [`crate::godot::import`] runs
+/// before the stage returns and what Godot writes is what is committed.
+///
+/// `uid` is the one line only we can keep: Godot mints a fresh one whenever it
+/// is absent, so an existing one is carried across and the resource id holds
+/// still across re-packs.
+pub fn seed_import_settings(atlas: &Path) -> Result<()> {
     let path = atlas.with_extension("png.import");
     let uid = existing_uid(&path).map_or_else(String::new, |line| format!("{line}\n"));
     std::fs::write(

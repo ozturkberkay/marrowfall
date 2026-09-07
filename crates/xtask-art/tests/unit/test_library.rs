@@ -290,6 +290,7 @@ fn a_fetch_record_round_trips_and_ends_with_a_newline() {
         "strafe_left",
         a_mixamo_source(),
         ClipFiles {
+            from: "art/staging/downloads/strafe_left.fbx",
             download: b"the download",
             glb: b"the glb",
         },
@@ -314,6 +315,7 @@ fn a_fetch_records_both_what_arrived_and_what_was_kept() {
         "strafe_left",
         a_mixamo_source(),
         ClipFiles {
+            from: "art/staging/downloads/strafe_left.fbx",
             download: b"the download",
             glb: b"the glb",
         },
@@ -400,6 +402,7 @@ fn a_fetch_record_carries_the_rig_it_was_fitted_to() {
         "strafe_left",
         a_mixamo_source(),
         ClipFiles {
+            from: "art/staging/downloads/strafe_left.fbx",
             download: b"the download",
             glb: b"the glb",
         },
@@ -515,7 +518,7 @@ fn the_committed_animation_library_loads() {
     for (name, source_fps, travels) in [
         ("idle", 24, false),
         ("run", 24, false),
-        ("walk_back", 24, true),
+        ("walk_back", 30, true),
         ("strafe_left", 30, true),
         ("strafe_right", 30, true),
     ] {

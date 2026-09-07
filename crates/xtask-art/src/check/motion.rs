@@ -17,8 +17,11 @@
 //! under a change of world frame, so measuring one side in glTF Y-up and the
 //! other in Blender would produce precise, wrong numbers.
 //!
-//! [`Motion`] is rotations only. Both rules read where a bone points and how
-//! far it is rolled about its own length, and neither reads a position.
+//! [`Motion`] carries a rotation and a joint per role. `clip.swing` and
+//! `clip.twist` read where a bone points and how far it is rolled about its
+//! own length; `clip.posture` reads where the joints ended up, which is the
+//! one thing no rotation rule can see and the blind spot that shipped a
+//! hunched idle.
 //!
 //! The same sidecar carries two lengths beside them, in [`SourceLengths`],
 //! because `clip.stride` and `clip.stride_ratio` also measure the fit against
@@ -29,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context as _, Result, ensure};
-use glam::DQuat;
+use glam::{DQuat, DVec3};
 use serde::Deserialize;
 
 /// One instant of a clip.
@@ -44,6 +47,8 @@ pub struct Frame {
     pub seconds: f64,
     /// Role to that bone's world rotation.
     pub rotations: BTreeMap<String, DQuat>,
+    /// Role to that bone's world head, in meters, in the same space.
+    pub joints: BTreeMap<String, DVec3>,
 }
 
 /// One clip's orientations: the rest pose it was authored on, and every frame.
@@ -114,6 +119,7 @@ impl SourceLengths {
 struct FrameFile {
     seconds: f64,
     rotations: BTreeMap<String, [f64; 4]>,
+    joints: BTreeMap<String, [f64; 3]>,
 }
 
 impl Motion {
@@ -141,14 +147,32 @@ impl Motion {
                 "a frame sits at {} s, which is no time at all",
                 frame.seconds
             );
-            let held: BTreeSet<&str> = frame.rotations.keys().map(String::as_str).collect();
-            ensure!(
-                held == roles,
-                "the frame at {} s carries {:?}, and the rest pose carries {:?}",
-                frame.seconds,
-                held,
-                roles
-            );
+            let held: [(&str, BTreeSet<&str>); 2] = [
+                (
+                    "rotations",
+                    frame.rotations.keys().map(String::as_str).collect(),
+                ),
+                ("joints", frame.joints.keys().map(String::as_str).collect()),
+            ];
+            for (what, held) in held {
+                ensure!(
+                    held == roles,
+                    "the {what} of the frame at {} s carry {:?}, and the rest \
+                     pose carries {:?}",
+                    frame.seconds,
+                    held,
+                    roles
+                );
+            }
+            // NaN would ride through every comparison as "not worse", so a
+            // joint that is nowhere is refused here rather than measured.
+            for (role, at) in &frame.joints {
+                ensure!(
+                    at.is_finite(),
+                    "the frame at {} s puts {role} at {at}, which is nowhere at all",
+                    frame.seconds
+                );
+            }
         }
         Ok(Self {
             rest,
@@ -183,6 +207,7 @@ impl Motion {
                             &frame.rotations,
                             &format!("the frame at {} s", frame.seconds),
                         )?,
+                        joints: points(&frame.joints),
                     })
                 })
                 .collect::<Result<Vec<Frame>>>()?,
@@ -202,6 +227,15 @@ impl Motion {
     pub fn frames(&self) -> &[Frame] {
         &self.frames
     }
+}
+
+/// Every row read as a point. [`Motion::new`] is what refuses one that is
+/// nowhere, so a record built in Rust is held to the same contract as one
+/// parsed from a file.
+fn points(rows: &BTreeMap<String, [f64; 3]>) -> BTreeMap<String, DVec3> {
+    rows.iter()
+        .map(|(role, values)| (role.clone(), DVec3::from(*values)))
+        .collect()
 }
 
 /// Every row read as a unit rotation. A row that is not one is refused here

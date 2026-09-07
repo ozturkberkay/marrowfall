@@ -2,9 +2,10 @@
 //!
 //! Both are byte edits, so every test here reads a file this repository
 //! ships, runs the step on it in memory, and measures the result with the
-//! same `rig.*` rules `cargo art check` prints. The negatives are the art
-//! that shipped: `humanoid_before_rename.glb` is the rig under Meshy's own
-//! names, and `model.glb` is the rig nothing has ever conformed.
+//! same `rig.*` rules `cargo art check` prints. The negative is the art that
+//! shipped: `humanoid_before_rename.glb` is the rig under Meshy's own names
+//! and with the joints Meshy's rigger placed, so renaming it is what the
+//! conform is measured on.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,9 +24,15 @@ use crate::support::{committed_glb, repo_root};
 /// have.
 const PRE_RENAME: &str = "crates/xtask-art/tests/fixtures/humanoid_before_rename.glb";
 
-/// The rigged, skinned survivor: 14 defects across five rules, and the file
-/// the conform is measured on.
+/// The rigged, skinned survivor, which the conform has already been run on:
+/// what a rest-frame edit must leave alone.
 const COMMITTED: &str = "art/characters/survivor/model.glb";
+
+/// The pre-rename fixture with its bones renamed, which is a vendor rig as
+/// the conform receives one: twelve defects across four geometry rules.
+fn an_unconformed_rig() -> Vec<u8> {
+    rename(&read(PRE_RENAME), &table()).expect("the rename")
+}
 
 /// The height `spec.ron` declares for him, which `rig.world_height` reads
 /// against.
@@ -36,6 +43,16 @@ const NAME_RULES: [&str; 3] = ["rig.names_standard", "rig.bone_set", "rig.parent
 
 fn profile() -> Profile {
     Profile::of(&repo_root(), HUMANOID).expect("the committed profile")
+}
+
+/// The committed profile with another axis named as the one that must point
+/// at a bone's child, so a conformed rig has every joint left to turn.
+fn sideways_profile() -> Profile {
+    let path = repo_root().join("art/skeletons").join("humanoid.toml");
+    let text = std::fs::read_to_string(path).expect("the committed profile");
+    let row = "child_axis = \"y\"";
+    assert_eq!(text.matches(row).count(), 1, "one child_axis row to turn");
+    Profile::parse(&text.replace(row, "child_axis = \"x\"")).expect("a valid profile")
 }
 
 fn table() -> AimTable {
@@ -175,27 +192,21 @@ fn renaming_a_rig_already_in_the_canonical_names_changes_nothing() {
 }
 
 #[test]
-fn the_conform_closes_every_defect_but_the_one_that_is_the_mesh_s() {
-    let before = read(COMMITTED);
+fn the_conform_closes_every_geometry_defect_a_vendor_rig_arrives_with() {
+    let before = an_unconformed_rig();
     assert_eq!(
         defects(&before),
         BTreeMap::from([
             ("rig.aim_table".to_owned(), 1),
             ("rig.child_axis".to_owned(), 3),
-            ("rig.humerus_angle".to_owned(), 2),
             ("rig.mirror_direction".to_owned(), 3),
             ("rig.mirror_length".to_owned(), 5),
         ]),
-        "the committed rig is the negative, and it reads 14 defects"
+        "the rig Meshy returned is the negative, and it reads 12 defects"
     );
 
     let after = conform(&before, &profile(), Symmetry::Enforced).expect("the conform");
-    assert_eq!(
-        defects(&after),
-        BTreeMap::from([("rig.humerus_angle".to_owned(), 2)]),
-        "the humerus is where the mesh's arms hang, and nothing that leaves \
-         the mesh alone can move it"
-    );
+    assert_eq!(defects(&after), BTreeMap::new(), "every one of them closed");
 }
 
 /// A reflected average is exact in `f64` and the file stores `f32`, so what
@@ -203,7 +214,8 @@ fn the_conform_closes_every_defect_but_the_one_that_is_the_mesh_s() {
 /// under the 1.0 percent the profile publishes.
 #[test]
 fn the_conform_leaves_the_mirror_rules_at_their_storage_floor() {
-    let after = conform(&read(COMMITTED), &profile(), Symmetry::Enforced).expect("the conform");
+    let after =
+        conform(&an_unconformed_rig(), &profile(), Symmetry::Enforced).expect("the conform");
     let worst = findings(&after)
         .into_iter()
         .filter(|finding| finding.rule.starts_with("rig.mirror_"))
@@ -294,7 +306,7 @@ fn conforming_a_conformed_rig_moves_nothing_a_rule_can_see() {
 
 #[test]
 fn a_character_that_declines_symmetry_keeps_its_own_joint_positions() {
-    let before = read(COMMITTED);
+    let before = an_unconformed_rig();
     let after = conform(&before, &profile(), Symmetry::Declined).expect("the conform");
     // And the mirror rules still read what they read, because nothing
     // averaged them.
@@ -373,26 +385,46 @@ fn rotation_sampler(glb: &Glb) -> usize {
 /// that ratio is what says the compensation is really there: a conform that
 /// forgot to recompute an inverse bind matrix would drag the mesh the whole
 /// way with them.
+///
+/// On the committed character, which is already conformed, driven by a
+/// profile that asks for another bone axis: that gives every joint of a real
+/// 27,761 vertex mesh a rest frame to turn, which is the work this measures.
 #[test]
 fn the_conform_moves_the_joints_and_leaves_every_vertex_where_it_was() {
     let before = read(COMMITTED);
-    let after = conform(&before, &profile(), Symmetry::Enforced).expect("the conform");
+    let after = conform(&before, &sideways_profile(), Symmetry::Enforced).expect("the conform");
 
-    let (was, is) = (positions(&before), positions(&after));
-    let joints = was
-        .iter()
-        .map(|(name, at)| (is[name] - *at).length())
-        .fold(0.0_f64, f64::max);
+    let turned = furthest_joint_turn(&before, &after);
     let vertices = furthest_rest_vertex(&before, &after);
 
     assert!(
-        joints > 1e-3,
-        "the joints moved {joints} m, so nothing happened"
+        turned > 45.0,
+        "the joints turned {turned} deg, so nothing happened"
     );
     assert!(
         vertices < SHORTEST_SEGMENT_METERS,
-        "a rest vertex moved {vertices} m while its joints moved {joints}"
+        "a rest vertex moved {vertices} m while its joints turned {turned} deg"
     );
+}
+
+/// How far the furthest joint's own rest frame turns between two rigs, in
+/// degrees.
+fn furthest_joint_turn(before: &[u8], after: &[u8]) -> f64 {
+    let orientations = |bytes: &[u8]| -> BTreeMap<String, glam::DQuat> {
+        Skeleton::from_slice(bytes)
+            .expect("a skeleton")
+            .joints()
+            .iter()
+            .map(|joint| {
+                let (_, rotation, _) = joint.world.to_scale_rotation_translation();
+                (joint.name.clone(), rotation)
+            })
+            .collect()
+    };
+    let (was, is) = (orientations(before), orientations(after));
+    was.iter()
+        .map(|(name, rotation)| is[name].angle_between(*rotation).to_degrees())
+        .fold(0.0_f64, f64::max)
 }
 
 /// How far the furthest vertex of the rest pose moves between two rigs, in

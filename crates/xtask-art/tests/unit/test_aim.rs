@@ -455,19 +455,19 @@ fn a_file_with_no_aim_table_at_all_is_refused() {
 
 // --- the rule, on the committed rig ---------------------------------------
 
-/// The audit's sideways `Hips`, whose own +Y points out of a hip socket
-/// rather than up the spine. Every other role of both committed files sits
-/// inside the band, so this rule can be made required once the rig is
-/// regenerated.
+/// Every role of both committed files sits inside the band. The audit's
+/// sideways `Hips` read 97.801 degrees on the rig this replaces, out of a hip
+/// socket rather than up the spine; the conform turned it onto its own tail
+/// and it reads 2.412.
 #[test]
-fn the_committed_rig_is_rejected_on_its_hips_and_on_nothing_else() {
+fn every_role_of_the_committed_rig_sits_inside_the_band() {
     for file in COMMITTED {
         let findings = findings_for(file);
 
-        assert_eq!(rejected(&findings), ["hips"], "{file}");
+        assert_eq!(rejected(&findings), [] as [&str; 0], "{file}");
         assert!(
-            (measured(&findings, "hips") - 97.801).abs() < 0.01,
-            "{file} measured {}, and 97.80 degrees was measured by hand",
+            (measured(&findings, "hips") - 2.412).abs() < 0.01,
+            "{file} measured {}, and 2.41 degrees was measured by hand",
             measured(&findings, "hips")
         );
     }
@@ -481,13 +481,13 @@ fn the_committed_rig_measures_what_was_measured_by_hand() {
     let findings = findings_for(COMMITTED[0]);
 
     for (role, expected) in [
-        ("head", 30.06),
-        ("right_hand", 34.86),
-        ("left_hand", 32.41),
-        ("left_arm", 21.43),
-        ("left_shoulder", 4.25),
-        ("neck", 2.47),
-        ("left_toe", 8.96),
+        ("head", 0.90),
+        ("right_hand", 32.93),
+        ("left_hand", 31.57),
+        ("left_arm", 20.78),
+        ("left_shoulder", 4.22),
+        ("neck", 2.10),
+        ("left_toe", 7.33),
     ] {
         let measured = measured(&findings, role);
         assert!(
@@ -528,18 +528,18 @@ fn a_t_pose_table_would_put_this_rigs_hands_outside_the_band() {
 
     assert_eq!(
         rejected(&findings),
-        ["hips", "left_hand", "right_hand"],
-        "the two hands join the hips outside the band"
+        ["left_hand", "right_hand"],
+        "the two hands land outside the band"
     );
-    for (role, expected) in [("left_hand", 76.15), ("right_hand", 78.22)] {
+    for (role, expected) in [("left_hand", 75.16), ("right_hand", 76.40)] {
         let measured = measured(&findings, role);
         assert!(
             (measured - expected).abs() < 0.01 && measured > profile().max_bind_deviation_degrees,
             "{role} measured {measured}, expected {expected} and past the band"
         );
     }
-    // The committed table is what keeps them in: 32.41 and 34.86.
-    assert_eq!(rejected(&findings_for(COMMITTED[0])), ["hips"]);
+    // The committed table is what keeps them in: 31.57 and 32.93.
+    assert_eq!(rejected(&findings_for(COMMITTED[0])), [] as [&str; 0]);
 }
 
 /// A rule that goes quiet when it passes cannot be told from a rule that
@@ -554,8 +554,8 @@ fn every_role_the_rig_fills_is_reported_either_way() {
             .iter()
             .filter(|finding| finding.severity == Severity::Info)
             .count(),
-        21,
-        "twenty-one measurements inside the band, and the hips outside it"
+        22,
+        "twenty-two measurements, every one inside the band"
     );
     assert_eq!(
         findings

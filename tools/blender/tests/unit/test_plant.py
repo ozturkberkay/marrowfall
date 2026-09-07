@@ -139,11 +139,14 @@ def test_a_foot_just_over_the_scaled_ceiling_is_not_a_contact() -> None:
 
 # --- the lock --------------------------------------------------------------
 
+SLIDE = 0.0
+"""`clip.foot_contact.skate`'s limit, zero here so every run is held."""
+
 
 def test_the_lock_holds_a_run_at_its_first_frame_and_leaves_the_rest_alone() -> None:
     path = [(step * 0.01, step * 0.02, 0.0) for step in range(12)]
 
-    held = plant.locked(path, [(4, 7)])
+    held = plant.locked(path, [(4, 7)], travels=True, slide=SLIDE)
 
     for frame in (4, 5, 6, 7):
         assert held[frame][0] == pytest.approx(path[4][0], abs=1e-9)
@@ -156,7 +159,7 @@ def test_the_lock_holds_a_run_at_its_first_frame_and_leaves_the_rest_alone() -> 
 def test_the_ramp_reaches_the_lock_in_two_frames_and_leaves_it_in_two() -> None:
     path = [(step * 0.1, 0.0, 0.0) for step in range(12)]
 
-    held = plant.locked(path, [(4, 7)])
+    held = plant.locked(path, [(4, 7)], travels=True, slide=SLIDE)
 
     # Two thirds of the way in one frame out, one third two frames out, and
     # nothing at all three frames out, either side of the run.
@@ -171,13 +174,30 @@ def test_the_ramp_reaches_the_lock_in_two_frames_and_leaves_it_in_two() -> None:
 def test_two_runs_sharing_a_frame_take_the_stronger_ramp() -> None:
     path = [(step * 0.1, 0.0, 0.0) for step in range(10)]
 
-    held = plant.locked(path, [(0, 2), (5, 7)])
+    held = plant.locked(path, [(0, 2), (5, 7)], travels=True, slide=SLIDE)
 
     # Frame 3 is one frame out of the first run and two out of the second, so
     # the first run's ramp is the stronger and holds it back towards zero.
     assert held[3][0] == pytest.approx(0.3 + (0.0 - 0.3) * 2 / 3, abs=1e-9)
-    # And frame 4 is the other way round, so the second run pulls it forward.
+    # And frame 4 is the other way around, so the second run pulls it forward.
     assert held[4][0] == pytest.approx(0.4 + (0.5 - 0.4) * 2 / 3, abs=1e-9)
+
+
+def test_an_in_place_clip_is_never_locked_because_its_ground_moves() -> None:
+    path = [(step * 0.01, step * 0.02, 0.0) for step in range(12)]
+
+    assert plant.locked(path, [(4, 7)], travels=False, slide=SLIDE) == path
+    assert plant.locked(path, [(4, 7)], travels=True, slide=SLIDE) != path
+
+
+def test_a_run_the_skate_gate_already_accepts_is_left_where_it_is() -> None:
+    """Holding a foot costs the leg its own direction, so a drift the
+    published limit accepts is not worth the trade."""
+    path = [(step * 0.001, 0.0, 0.0) for step in range(12)]
+
+    assert plant.drift(path, (4, 7)) == pytest.approx(0.003)
+    assert plant.locked(path, [(4, 7)], travels=True, slide=0.025) == path
+    assert plant.locked(path, [(4, 7)], travels=True, slide=0.001) != path
 
 
 def test_the_drift_inside_a_run_is_read_from_its_first_frame() -> None:
