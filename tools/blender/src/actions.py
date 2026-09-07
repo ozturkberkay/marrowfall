@@ -6,7 +6,7 @@ renders nothing, but both bind an action to an armature and both rewrite
 other: a helper with its only caller in a different file is one nobody knows
 who owns.
 
-Needs `bpy`, so the maths it serves stays in `framing.py` and `clip.py`, which
+Needs `bpy`, so the math it serves stays in `framing.py` and `clip.py`, which
 do not. Two things are deliberate.
 
 - **No object transform is ever applied**, only composed. Applying one to a rig

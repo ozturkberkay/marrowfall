@@ -14,6 +14,23 @@
 // The two are unrelated: `idle` is sampled 8 times a second out of a clip
 // authored at 24. Both `source_fps` and `travels` are measurements, and the
 // design document records what each was read on.
+//
+// `source` says who sold the motion. WHICH FILE the fit read is `from`, in
+// `library.lock`, per clip, and the two are not the same question. A Mixamo
+// clip is refit from the vendor's own FBX under the gitignored
+// `art/staging/downloads/`, which a browser session can export again from
+// the product id, and which Adobe's license forbids republishing.
+//
+// A Meshy clip cannot be asked for again, measured: this account lists zero
+// animation tasks and every recorded id answers 404. So `idle` and `run` are
+// refit from `art/animations/sources/<clip>.glb`, the copies this repository
+// shipped before the canonical rig was replaced, committed because they are
+// the only first-hand motion left.
+//
+// Never from the fitted clip beside them: a fit of a fit carries the previous
+// fit's defects, and Blender's round trip is not bit exact, so the motion
+// would drift a little every run. `clip.posture` is the gate that reads what
+// a fit of a fit lost.
 AnimationLibrary(
     animations: {
         "idle": Animation(
@@ -37,21 +54,24 @@ AnimationLibrary(
             travels: false,
             source: Meshy(action_id: 15),
         ),
+        // Mixamo motion. The file may not be redistributed, so these live in
+        // the gitignored `art/animations/local/` and every machine fetches
+        // its own with `cargo art fetch`.
+        //
+        // `walk_back` was Meshy's action 544 until T15b. That clip ends 6.910
+        // degrees from the pose it started in and breaks `clip.loop` on nine
+        // of its bones, which is the hitch this file recorded in prose before
+        // anything could measure it, and Mixamo's own backward walk is the
+        // replacement the note asked for.
         "walk_back": Animation(
             skeleton: "humanoid",
             loops: true,
             fps: 20,
-            source_fps: 24,
-            // Its hips end 1.271 m back from where they started.
+            source_fps: 30,
+            // 1.414 m backwards, and the export is requested traveling.
             travels: true,
-            // Known bad: this clip does not return to its start pose, so it
-            // hitches once a loop. Mirroring cannot complete it either, its
-            // gait is not left/right symmetric. Needs replacing.
-            source: Meshy(action_id: 544),
+            source: Mixamo(product_id: "c9ccc468-b96c-11e4-a802-0aaa78deedf9"),
         ),
-        // Mixamo motion. The file may not be redistributed, so these live in
-        // the gitignored `art/animations/local/` and every machine fetches
-        // its own with `cargo art fetch`.
         "strafe_left": Animation(
             skeleton: "humanoid",
             loops: true,

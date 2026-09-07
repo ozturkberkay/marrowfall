@@ -28,7 +28,6 @@ from framing import (
     Still,
     bone_from_data_path,
     direction_rotation,
-    forearm_roll_sign,
     frame_filename,
     frames_are_keys,
     frames_the_action_keys,
@@ -360,30 +359,13 @@ def test_frames_are_ascending_and_within_range() -> None:
     "name",
     ["LeftForeArm", "forearm.L", "RightForeArm", "lowerarm_r", "mixamo:LeftForeArm"],
 )
-def test_recognises_forearm_bones_across_rig_conventions(name: str) -> None:
+def test_recognizes_forearm_bones_across_rig_conventions(name: str) -> None:
     assert is_forearm(name)
 
 
 @pytest.mark.parametrize("name", ["Hips", "Spine", "LeftHand", "UpperArm.L", "Head"])
 def test_other_bones_are_not_forearms(name: str) -> None:
     assert not is_forearm(name)
-
-
-@pytest.mark.parametrize(
-    "name", ["LeftForeArm", "forearm.L", "forearm_l", "leftLowerArm"]
-)
-def test_left_forearms_roll_positive(name: str) -> None:
-    assert forearm_roll_sign(name) == 1.0
-
-
-@pytest.mark.parametrize("name", ["RightForeArm", "forearm.R", "forearm_r"])
-def test_right_forearms_roll_negative(name: str) -> None:
-    assert forearm_roll_sign(name) == -1.0
-
-
-def test_the_two_arms_roll_in_opposite_directions() -> None:
-    """Both palms must turn inward, which means mirrored signs."""
-    assert forearm_roll_sign("LeftForeArm") == -forearm_roll_sign("RightForeArm")
 
 
 @pytest.mark.parametrize(
@@ -620,9 +602,9 @@ def test_a_clip_authored_on_another_rig_is_a_distance_from_this_one(
 
 
 def test_the_f32_a_glb_stores_is_still_the_same_body() -> None:
-    """What the three committed clips really read against the committed
-    character: 1.227e-6, which is the `f32` a joint position is stored in."""
-    assert off_this_body(166.516_913_65, 166.516_709_33) < SAME_BODY
+    """What the five fitted clips really read against the committed
+    character: 1.007e-5, an order of magnitude inside the limit."""
+    assert off_this_body(166.878_805_637, 166.880_486_488) < SAME_BODY
 
 
 def test_a_rig_a_tenth_of_a_percent_out_is_another_body() -> None:
@@ -913,7 +895,7 @@ def test_rewriting_a_golden_measures_nothing_at_all(tmp_path: pathlib.Path) -> N
 def committed_goldens() -> list[pathlib.Path]:
     root = pathlib.Path(__file__).resolve().parents[4]
     found = sorted((root / "art/goldens/survivor").glob("*.txt"))
-    assert len(found) == 6, "three clips, two directions each"
+    assert len(found) == 10, "five clips, two directions each"
     return found
 
 
@@ -921,9 +903,10 @@ def committed_goldens() -> list[pathlib.Path]:
 def test_a_committed_golden_records_a_body_the_right_way_up(
     path: pathlib.Path,
 ) -> None:
-    """The calibration of the projection itself, on all six committed files:
+    """The calibration of the projection itself, on all ten committed files:
     a camera basis read before the scene was evaluated projected the depth
     where the height belongs, and it put the head 18 px under the hips."""
+    feet = {"LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"}
     marks = golden_landmarks(path.read_text())
     assert len(marks) == 72, "24 joints at three sampled frames"
 
@@ -932,12 +915,16 @@ def test_a_committed_golden_records_a_body_the_right_way_up(
         where = f"frame {frame} of {path.stem}"
         row = {mark.bone: mark.y for mark in pose}
         assert row["Head"] < row["Hips"], where
-        # The lowest joint of a body on the ground is a toe. Not the highest:
-        # a run swings a forearm past the head, which `run_s` frame 19 does.
-        assert max(pose, key=lambda mark: mark.y).bone in {
-            "LeftToeBase",
-            "RightToeBase",
-        }, where
+        # The lowest joint of a body on the ground is in a foot. Not the
+        # highest: a run swings a forearm past the head, which `run_s` frame
+        # 19 does. Usually the toe, and an ankle at a camera 35 degrees up
+        # can project a few pixels under its own ball: the worst of the ten
+        # files is 4 px on `strafe_left_e`, whose trailing foot swings past
+        # the lens.
+        lowest = max(pose, key=lambda mark: mark.y)
+        assert lowest.bone in feet, where
+        side = "Left" if lowest.bone.startswith("Left") else "Right"
+        assert lowest.y - row[f"{side}ToeBase"] <= 4, where
 
 
 @pytest.mark.parametrize("path", committed_goldens(), ids=lambda path: path.stem)

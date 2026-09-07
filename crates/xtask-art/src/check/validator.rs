@@ -26,7 +26,7 @@ const NOT_GLTF: i32 = 3;
 
 /// Locates Bun. Overridable for an install outside PATH.
 fn bun_binary() -> String {
-    std::env::var("MARROWFALL_BUN_BIN").unwrap_or_else(|_| "bun".to_owned())
+    crate::tool_binary("MARROWFALL_BUN_BIN", "bun")
 }
 
 /// Validates one glTF or GLB file.

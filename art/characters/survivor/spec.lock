@@ -5,49 +5,35 @@ Lock(
             note: Some("4 views, 1 newly generated"),
         ),
         Model: StageRecord(
-            fingerprint: "473fbc1cdad77dc2",
+            fingerprint: "fbc2eea9ef8e7282",
             tasks: [
                 Model(
-                    id: "01a0118b-4fcb-7930-a83c-a75da8e34036",
+                    id: "01a07813-b9d4-773b-b87f-c786eabfc4be",
                 ),
             ],
             credits: Some(30),
+            note: Some("bare mesh at art/staging/survivor/bare.glb"),
         ),
         Rig: StageRecord(
-            fingerprint: "b44e4037801e7e35",
+            fingerprint: "cb7be921c4118de9",
             tasks: [
                 Rig(
-                    id: "01a0118e-289c-7277-ba3f-95658c5da954",
+                    id: "01a07828-8f5a-73cc-9b75-e473bbfe0e10",
                     height_meters: 1.7,
-                ),
-                Animation(
-                    id: "01a0118e-bc3f-79e0-9352-1c797575f74e",
-                    name: "idle",
-                    action_id: 251,
-                ),
-                Animation(
-                    id: "01a0118e-e77a-710d-b4fd-1cca40b3c411",
-                    name: "run",
-                    action_id: 15,
-                ),
-                Animation(
-                    id: "01a0118f-2765-78ca-a5a4-8437ec1333aa",
-                    name: "walk_back",
-                    action_id: 544,
                 ),
             ],
         ),
         Download: StageRecord(
-            fingerprint: "b44e4037801e7e35",
-            note: Some("4 GLB(s)"),
+            fingerprint: "801e0137d3e4ceae",
+            note: Some("1 GLB(s)"),
         ),
         Bake: StageRecord(
-            fingerprint: "0fd9cf431717c8ce",
-            note: Some("848 frames"),
+            fingerprint: "7d8402d01c54d7dc",
+            note: Some("1472 frames"),
         ),
         Pack: StageRecord(
-            fingerprint: "7c13ca70d7780d62",
-            note: Some("3 atlases → project/assets/characters/survivor/character.ron"),
+            fingerprint: "0d6575cd28261bc3",
+            note: Some("5 atlases → project/assets/characters/survivor/character.ron"),
         ),
     },
 )

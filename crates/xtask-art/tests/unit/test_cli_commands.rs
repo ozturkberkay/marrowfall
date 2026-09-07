@@ -284,23 +284,40 @@ fn a_repo_with_a_rig(name: &str) -> tempfile::TempDir {
     dir
 }
 
-/// The committed rig breaks eight rules on twenty-three subjects, seven of
-/// them `rig.*` and one the aim table's `hips` row, and the command says so
-/// rather than reporting the spec as fine.
+/// A rig the conform has never run on breaks its name rules and its geometry
+/// ones, and the command says so rather than reporting the spec as fine.
+/// The fixture is `humanoid.glb` as it shipped before the rename.
 #[test]
 fn check_itemizes_the_defects_of_the_rig_on_disk() {
     let dir = a_repo_with_a_rig("survivor");
+    let glb = Paths::new(dir.path(), "survivor").character_glb();
+    std::fs::copy(
+        real_repo().join("crates/xtask-art/tests/fixtures/humanoid_before_rename.glb"),
+        &glb,
+    )
+    .unwrap();
 
     let error = check(dir.path(), None, Asked::Measure)
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("14 defect(s)"), "got: {error}");
+    assert!(error.contains("defect(s)"), "got: {error}");
 }
 
-/// The mesh gates run on the bare mesh, which is the mesh before rigging.
-/// The committed `model.glb` is the file after rigging, so it stands in as
-/// the calibration asset until `bare.glb` can be downloaded.
+/// And the committed art breaks nothing, which is what makes these gates
+/// required checks.
+#[test]
+fn check_passes_on_the_committed_rig() {
+    let dir = a_repo_with_a_rig("survivor");
+
+    check(dir.path(), None, Asked::Measure).unwrap();
+}
+
+/// The mesh gates run on the bare mesh, which is the mesh before the fixer
+/// and before rigging. `art/staging/` is gitignored, so the stand-in here is
+/// the committed `model.glb`: the same geometry after both, which reads one
+/// defect on `mesh.non_manifold`, whose ceiling is calibrated before the
+/// fixer and whose post-fixer ceiling is `mesh.non_manifold_post`'s 20.
 #[test]
 fn check_measures_the_bare_mesh_and_writes_its_own_report() {
     let dir = a_repo_with_a_rig("survivor");
@@ -308,16 +325,27 @@ fn check_measures_the_bare_mesh_and_writes_its_own_report() {
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     std::fs::copy(real_repo().join("art/characters/survivor/model.glb"), &bare).unwrap();
 
-    // The rig still fails, so the command still fails.
-    check(dir.path(), None, Asked::Measure).unwrap_err();
+    let error = check(dir.path(), None, Asked::Measure)
+        .unwrap_err()
+        .to_string();
 
+    assert!(error.contains("1 defect(s)"), "got: {error}");
     let report = xtask_art::check::Report::read(
         &dir.path().join("art/staging/reports/mesh.survivor.1.json"),
     )
     .unwrap();
     assert_eq!(report.stage(), "mesh");
     assert_eq!(report.findings().len(), 13);
-    assert!(!report.has_errors(), "the calibration asset passes");
+    assert_eq!(
+        report
+            .findings()
+            .iter()
+            .filter(|f| f.severity == xtask_art::check::Severity::Error)
+            .map(|f| f.rule.as_str())
+            .collect::<Vec<&str>>(),
+        ["mesh.non_manifold"],
+        "the one rule a post-fixer file cannot be read against"
+    );
     // `check` calls nothing, so the one remote rule reports as unavailable
     // rather than going quiet.
     let remote = report
@@ -332,13 +360,9 @@ fn check_measures_the_bare_mesh_and_writes_its_own_report() {
 fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
     let dir = a_repo_with_a_rig("survivor");
 
-    // The rig is there and the bare mesh is not, so only the rig is
-    // measured and only the rig fails.
-    let error = check(dir.path(), None, Asked::Measure)
-        .unwrap_err()
-        .to_string();
+    // The rig is there and the bare mesh is not, so only the rig is measured.
+    check(dir.path(), None, Asked::Measure).unwrap();
 
-    assert!(error.contains("14 defect(s)"), "got: {error}");
     assert!(
         !dir.path()
             .join("art/staging/reports/mesh.survivor.1.json")
@@ -353,7 +377,7 @@ fn check_says_when_a_character_has_no_bare_mesh_on_disk_yet() {
 fn check_writes_the_conformed_report_where_the_runner_writes_every_report() {
     let dir = a_repo_with_a_rig("survivor");
 
-    check(dir.path(), None, Asked::Measure).unwrap_err();
+    check(dir.path(), None, Asked::Measure).unwrap();
 
     let report = xtask_art::check::Report::read(
         &dir.path()
@@ -362,7 +386,7 @@ fn check_writes_the_conformed_report_where_the_runner_writes_every_report() {
     .unwrap();
     assert_eq!(report.stage(), "conformed");
     assert_eq!(report.item(), "survivor");
-    assert!(report.has_errors());
+    assert!(!report.has_errors());
 }
 
 /// And the file the vendor returned beside it, under its own stage name and
@@ -372,7 +396,7 @@ fn check_writes_the_rig_report_of_the_file_the_vendor_returned() {
     let dir = a_repo_with_a_rig("survivor");
     install_vendor_rig(dir.path());
 
-    check(dir.path(), None, Asked::Measure).unwrap_err();
+    check(dir.path(), None, Asked::Measure).unwrap();
 
     let report =
         xtask_art::check::Report::read(&dir.path().join("art/staging/reports/rig.survivor.1.json"))
@@ -407,17 +431,10 @@ fn install_vendor_rig(root: &std::path::Path) {
 #[test]
 fn the_vendor_rig_on_disk_adds_no_defect_to_the_count() {
     let dir = a_repo_with_a_rig("survivor");
-    let alone = check(dir.path(), None, Asked::Measure)
-        .unwrap_err()
-        .to_string();
+    check(dir.path(), None, Asked::Measure).unwrap();
     install_vendor_rig(dir.path());
 
-    let beside = check(dir.path(), None, Asked::Measure)
-        .unwrap_err()
-        .to_string();
-
-    assert!(alone.contains("14 defect(s)"), "got: {alone}");
-    assert_eq!(beside, alone, "the conformed file is the only gate");
+    check(dir.path(), None, Asked::Measure).unwrap();
 }
 
 #[test]

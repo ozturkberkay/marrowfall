@@ -194,9 +194,8 @@ pub struct ConceptLimits {
 /// The `[profile.bake]` table: what the rendered frames must be before they
 /// are packed.
 ///
-/// `bake.frame_count` and `bake.sampled_frames_are_keys` have no row, and
-/// neither does `bake.forearm_roll`: a count of defects and a patch that must
-/// be off have nothing to tune.
+/// `bake.frame_count` and `bake.sampled_frames_are_keys` have no row: a
+/// count of defects has nothing to tune.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BakeLimits {
@@ -260,6 +259,10 @@ pub struct ClipLimits {
     /// How far a fitted clip's travel may sit from the source's travel sized
     /// by the femur ratio, as a percent of that expected travel.
     pub stride_percent: f64,
+    /// How far a fitted joint may sit from the source's own, both read against
+    /// their rig's root joint and the source's sized by the femur ratio, in
+    /// meters.
+    pub posture_meters: f64,
     /// How far a looping clip's last pose may sit from its first, per bone.
     pub loop_degrees: f64,
     /// How often each foot must come to rest on the ground over one cycle.
@@ -561,6 +564,7 @@ impl Profile {
             ("clip.root_bob_meters", self.clip.root_bob_meters),
             ("clip.floor_snap_meters", self.clip.floor_snap_meters),
             ("clip.stride_percent", self.clip.stride_percent),
+            ("clip.posture_meters", self.clip.posture_meters),
             ("clip.loop_degrees", self.clip.loop_degrees),
             ("clip.foot_plants", self.clip.foot_plants),
             ("clip.foot_skate_meters", self.clip.foot_skate_meters),

@@ -189,7 +189,7 @@ impl Build {
 /// Locates the Blender executable. Overridable for a test stub, or an
 /// install outside PATH.
 fn blender_binary() -> String {
-    std::env::var("MARROWFALL_BLENDER_BIN").unwrap_or_else(|_| "blender".to_owned())
+    crate::tool_binary("MARROWFALL_BLENDER_BIN", "blender")
 }
 
 /// The invocation as a human would retype it, one argument per line so a

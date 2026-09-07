@@ -89,7 +89,6 @@ class BakeSettings(Frozen):
     fps: dict[str, int] = Field(default_factory=dict)
     size: int = Field(default=256, ge=16)
     trim_start: float = Field(default=0.0, ge=0.0, lt=1.0)
-    forearm_roll: float = 0.0
 
     @model_validator(mode="after")
     def every_rate_must_be_sane(self) -> "BakeSettings":
@@ -378,16 +377,6 @@ def sampled_frames(
     seconds = max(span / (scene_fps or 24), 0.0)
     count = max(round(seconds * fps), 1)
     return [round(start + span * i / count) for i in range(count)]
-
-
-def forearm_roll_sign(bone_name: str) -> float:
-    """Which way a forearm bone rolls, so both arms turn palms-inward.
-
-    Covers both common rig conventions: `LeftForeArm` and `forearm.L`.
-    """
-    lowered = bone_name.lower()
-    is_left = "left" in lowered or lowered.endswith((".l", "_l"))
-    return 1.0 if is_left else -1.0
 
 
 def is_forearm(bone_name: str) -> bool:
@@ -800,10 +789,10 @@ def landmark_golden(
 SAME_BODY = 1e-4
 """How far two rest heights may sit apart and still be one rig, as a ratio.
 
-Calibrated: the three committed clips read **1.227e-6** against the committed
-character, which is the `f32` a GLB stores a joint position in, and a clip
-bought on another rig is percent-scale out. This sits 81x over that noise and
-1,000x under the 12 percent a Mixamo femur differs by."""
+Calibrated: the five fitted clips read **1.007e-5** against the committed
+character, 166.8788 armature units against 166.8805, and a clip bought on
+another rig is percent-scale out. This sits 9.9x over that reading and 1,000x
+under the 12 percent a Mixamo femur differs by."""
 
 
 def off_this_body(source: float, target: float) -> float:

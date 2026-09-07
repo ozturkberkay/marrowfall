@@ -1,5 +1,6 @@
-//! Blender as the pipeline uses it: one shell stub that writes the clip, the
-//! source motion beside it, the report and the sentinel.
+//! The two tools the pipeline shells out to, as shell stubs: Blender, which
+//! writes the clip, the source motion beside it, the report and the sentinel,
+//! and Godot, which finishes the import sidecar beside an atlas.
 //!
 //! Shared, because two paths run the same two scripts: `cargo art fetch`
 //! fits a Mixamo clip, and the download stage fits the clips the vendor
@@ -13,23 +14,70 @@ use xtask_art::check::profile::Profile;
 use xtask_art::check::{Finding, Rule, clip, foot, source};
 use xtask_art::library::HUMANOID;
 
-/// One executable stub, named after what it does wrong.
-///
-/// Every one answers `--version` first, because a fetch reads the Blender
-/// build before it fits anything.
-pub fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+/// One executable stub of any tool, named after what it does.
+pub fn an_executable(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     let stub = dir.join(name);
-    std::fs::write(
-        &stub,
-        format!("#!/bin/sh\n{}{body}", crate::support::answers_its_version()),
-    )
-    .unwrap();
+    std::fs::write(&stub, format!("#!/bin/sh\n{body}")).unwrap();
     std::fs::set_permissions(
         &stub,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
     )
     .unwrap();
     stub
+}
+
+/// One Blender stub, named after what it does wrong.
+///
+/// Every one answers `--version` first, because a fetch reads the Blender
+/// build before it fits anything.
+pub fn a_stub(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    an_executable(
+        dir,
+        name,
+        &format!("{}{body}", crate::support::answers_its_version()),
+    )
+}
+
+/// Godot as the pack stage uses it: it rewrites every seed sidecar under the
+/// project the way the importer does, carrying the seed's own params across
+/// and adding the imported path and the `[deps]` block the runtime resolves a
+/// texture through.
+///
+/// It refuses a seed with no atlas beside it, because that is the ordering
+/// the real importer needs and a stub that shrugged at it would pass a pack
+/// that imported nothing.
+pub fn a_godot_stub(dir: &Path) -> std::path::PathBuf {
+    an_executable(
+        dir,
+        "godot-stub.sh",
+        r#"if [ -n "$MARROWFALL_STUB_ARGV" ]; then printf '%s\n' "$@" >> "$MARROWFALL_STUB_ARGV"; fi
+project=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--path" ]; then project="$2"; fi
+  shift
+done
+for seed in "$project"/assets/characters/*/*.png.import; do
+  [ -f "$seed" ] || continue
+  atlas="${seed%.import}"
+  if [ ! -f "$atlas" ]; then echo "ERROR: nothing to import at $atlas" >&2; exit 1; fi
+  png="res://assets/characters/$(basename "$(dirname "$atlas")")/$(basename "$atlas")"
+  out="res://.godot/imported/$(basename "$atlas")-stub.bptc.ctex"
+  minted=""
+  grep -q '^uid=' "$seed" || minted='uid="uid://stubminted"'
+  awk -v png="$png" -v out="$out" -v minted="$minted" '
+    /^\[params\]/ {
+      print "[deps]"; print "";
+      print "source_file=\"" png "\"";
+      print "dest_files=[\"" out "\"]"; print "";
+    }
+    { print }
+    /^type=/ { if (minted != "") { print minted; print "path.bptc=\"" out "\"" } }
+    /^uid=/ { print "path.bptc=\"" out "\"" }' "$seed" > "$seed.imported"
+  mv "$seed.imported" "$seed"
+done
+exit 0
+"#,
+    )
 }
 
 /// Blender as the fetch path uses it: it writes the clip, the source motion

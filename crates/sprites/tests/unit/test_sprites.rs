@@ -115,9 +115,11 @@ fn the_committed_survivor_manifest_is_valid() {
     assert_eq!(assets.name, "survivor");
 
     let expected = [
-        ("idle", 15, 8, (93, 240), (47, 239)),
-        ("run", 20, 24, (237, 259), (119, 241)),
-        ("walk_back", 18, 20, (169, 254), (85, 236)),
+        ("idle", 15, 8, (95, 240), (48, 239)),
+        ("run", 20, 24, (236, 260), (118, 251)),
+        ("strafe_left", 16, 24, (184, 247), (92, 237)),
+        ("strafe_right", 16, 24, (197, 249), (98, 236)),
+        ("walk_back", 25, 20, (179, 242), (90, 231)),
     ];
     assert_eq!(assets.animations.len(), expected.len());
 

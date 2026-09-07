@@ -800,10 +800,11 @@ spec.ron
                [clip.swing  absolute vs the vendor file, every mapped bone]
                [clip.twist  change from each rig's own rest twist]
                [clip.foot_contact.*] [clip.floor_snap]
+               [clip.posture  every joint against the source's own]
                [clip.stride  against the source's travel] [clip.stride_ratio]
   ▼ bake     ─▶ [clip.root_travel, clip.root_bob  on the stripped copy,
                                                   max over frames]
-               [bake.*  frame_count, non_empty, in_frame, pivot, forearm_roll,
+               [bake.*  frame_count, non_empty, in_frame, pivot,
                         sampled_frames_are_keys, landmark_golden]
   ▼ pack     ─▶ [atlas.*  frame_count, trim_boxes, manifest_schema]
                sheet.png, full under art/preview/ and downscaled beside the atlas
@@ -824,6 +825,7 @@ spec.ron
 | Self-intersection counting | **`parry3d` 0.30.2, its `Bvh`** | hand-rolled BVH, `pymeshlab` | dimforge, maintained, ships the broad-phase `Bvh` plus triangle queries. `Qbvh` was removed and replaced by `Bvh`. This is the one measurement `bmesh` never did (`research_concept_and_model_stage.md:40`). Default features off: `alloc`, `required-features` and `std` only, which drops `spade`, the Delaunay triangulation no gate does |
 | glTF structural validation | **npm `gltf-validator` under Bun** | Homebrew, a precompiled binary, a Rust wrapper | there is no Homebrew formula and the GitHub binaries are x64. The npm package is Dart compiled to JS, so it is architecture independent (fact 16), and `validateBytes()` returns a report with severities |
 | Concept image checks | **`opencv-python-headless`** | Pillow plus numpy, rembg | the arm-gap check needs contour hierarchy (`findContours` with `RETR_CCOMP`) |
+| Texture import sidecar | **Godot's own headless import, run by the pack** | write the whole sidecar ourselves, ship the settings and let a human's editor rewrite them | the runtime resolves an atlas through the `path.bptc=` line only Godot writes, so a hand-written sidecar is a second copy of an importer and a settings-only one is refused outright. Correction 22 |
 | Blender in CI | **Not used** | container, an x86_64 runner | fact 16 |
 | Art sign-off | **Pull request approval** | Chromatic, Skia Gold, a lock field | decision 13. GitHub already forbids self-approval |
 
@@ -1029,14 +1031,15 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `concept.cross_view` | 6.0 percent of the mean of two heights, from the worst of the six pairs, front against back at 3.256, so 1.8x over it | le |
 | `clip.swing` | 0.01 deg, set by T6 on a synthetic cross-rig fixture | le |
 | `clip.twist` | 15.0 deg, the same fixture plus the A-pose against T-pose residual | le |
+| `clip.posture` | 0.12 m between our joint and the source's, each read against its own rig's root joint and the source's sized by the femur ratio. Calibrated on the five fitted clips at 0.0192 (`idle`), 0.0199 (`run`), 0.0686 (`strafe_right`) and 0.0687 (`strafe_left` and `walk_back`), worst joint of each, so it sits 1.75x over the worst of them with 0.0513 m of headroom, and 1.8x under the 0.2150 m that hunch read | le |
 | `clip.root_travel` | 0.02 m, on the two horizontal axes the strip pins | le |
-| `clip.root_bob` | 0.15 m on the up axis, which the strip keeps. Calibrated on the four fitted clips at 0.0089 to 0.0535 m, so it sits 2.8x over the worst of them and still refuses the 0.2911 m the old strip sank a left strafe by | le |
-| `clip.floor_snap` | 5 mm from the rest height the snap aims at. Calibrated at both sites, per the Test Plan row: worst reading 6.7e-7 m, so it sits 7,493x over that and still refuses the 0.0599 m the same fit leaves with the lift removed | le |
-| `clip.stride` | 2.0 percent of the source's own travel sized by the femur ratio. Worst reading 2.4e-5 percent across both sites, so it sits 81,865x over that, and a fit sized five percent out reads 5.0 | le |
+| `clip.root_bob` | 0.15 m on the up axis, which the strip keeps. Calibrated on the five fitted clips at 0.0090 to 0.0545 m, so it sits 2.8x over the worst of them and still refuses the 0.2911 m the old strip sank a left strafe by | le |
+| `clip.floor_snap` | 5 mm from the floor the snap aims at. Calibrated at both sites, per the Test Plan row: worst reading 2.8e-6 m, so it sits 1,778x over that and still refuses the 0.0486 m `strafe_left` leaves with the lift removed | le |
+| `clip.stride` | 2.0 percent of the source's own travel sized by the femur ratio. Worst reading 0.0041 percent across both sites, so it sits 492x over that, and a fit sized five percent out reads 5.0 | le |
 | `clip.stride_ratio` | 100, further apart than two rigs of one skeleton can be, so every reading is `info`. Records rather than gates: the readings are in the Test Plan row | le |
 | `clip.foot_contact.plants` | 1 per foot per cycle. `travels: false` switches it off, because an in-place cycle's ground moves under it and its feet slide by construction: `run.glb` slides them at 3 to 5 m/s | ge |
-| `clip.foot_contact.skate` | 2.5 cm at 180 cm scale. With the lock in, the three Mixamo fits read exactly 0.0000 m; with it removed the same fits read 0.0207, 0.0148 and 0.0027 | le |
-| `clip.foot_contact.penetration` | 5 mm from the ground plane at zero. The vendor's own `strafe_left.fbx` reads 0.0000 m at every planted frame, and a refit of `run.glb` onto its own rig clears the floor by 0.0005 m. The three cross-rig fits read 0.0200 to 0.0203 m, which is correction 4 of T9 | le |
+| `clip.foot_contact.skate` | 2.5 cm at 180 cm scale. The three traveling fits read 0.0020 to 0.0120 m, so the lock holds none of them, and what fails the rule is a planted foot dragged 5 cm: correction 5 of T15b | le |
+| `clip.foot_contact.penetration` | 5 mm from the ground plane at zero. The vendor's own `strafe_left.fbx` reads 0.0000 m at every planted frame, and the five fitted clips read 1.3e-6 m at worst over both sites once the snap stands the lowest sole point on the floor. The 0.0200 to 0.0203 m the same three fits read is the joint datum that snap replaced: correction 4 of T15b | le |
 | `clip.fps_grid` | 1e-4 frames | le |
 | `clip.fps_grid.range` | 0 frames between what the retarget samples and what the source keyed | eq |
 | `clip.loop` | 2.0 deg, today's `LOOP_TOLERANCE_DEG` | le |
@@ -1046,18 +1049,17 @@ measured values are in the Test Plan, once, so the two cannot drift.
 | `source.child_axis`, `source.posture` | 180 deg, the largest angle two directions can be apart, so every reading is `info`. Both record rather than gate | le |
 | `rig.child_axis` | 2.0 deg | le |
 | `rig.mirror_length`, `rig.mirror_direction` | 1.0 percent, 1.0 deg | le |
-| `rig.humerus_angle` | 15 deg from the target of 40 | le |
+| `rig.humerus_angle` | 25 deg from the target of 40, calibrated on art that exists: the conformed rig reads 19.324 on both arms in `art/staging/reports/conformed.survivor.1.json`, so 5.676 degrees of headroom, 29 percent, and `pose_mode: "t-pose"` is still refused at 31.7 and 30.6. Correction 2 of T15b | le |
 | `rig.elbow_bend` | 180 deg, the largest angle two directions can be apart, so every reading is `info`. Records rather than gates: every rig Meshy has sold this project bends at rest, 24 degrees on the committed one, and a limit that failed it would fail on every run until that rig is regenerated | le |
 | `rig.world_height` | 5 percent of `spec.subject.height_meters` | le |
 | `rig.bind_deviation`, `rig.aim_table` | 75 deg | le |
 | `rig.names_standard`, `bone_set`, `single_root`, `parents`, `facing`, `up_axis`, `object_transform` | 0 defective bones, and exactly 1 bone per declared name for `bone_set`. A count of defects has no tunable limit, so these are the one family whose limit is not a `[profile]` number | eq |
 | `mesh.non_manifold_post` | 20 edges. T10 read 12 on a stand-in's `clean.glb` and T12 reads **17** on the real one | le |
 | `mesh.cleanup_effective` | the pre-fixer count, over holes and islands. Self-intersections left the set in T10, correction 1, because mirroring copies them | **lt** |
-| `bake.in_frame` | 1 px of alpha inset. The tightest of the 848 rendered frames is 58 px clear of a border, and a pose the camera cut off reads 0 | ge |
+| `bake.in_frame` | 1 px of alpha inset. The tightest of the 1,472 rendered frames is 60 px clear of a border, and a pose the camera cut off reads 0 | ge |
 | `bake.pivot` | 2 px between two opposite directions and their own reflection about the canvas center. **Not ground-line drift**, which reads 28 to 86 px on correct art: correction 1 | le |
-| `bake.non_empty` | 1.0 percent of a frame's own canvas. The emptiest frame of each clip reads 4.1164, 4.8367 and 4.8912, and a frame that rendered nothing reads 0.0000 | ge |
-| `bake.landmark_golden` | 1 px, which is one rounding step of a golden's own whole pixels. All 432 committed landmarks read 0 | le |
-| `bake.forearm_roll` | 0.0 | eq |
+| `bake.non_empty` | 1.0 percent of a frame's own canvas. The emptiest frame of each clip reads 4.3861 to 5.3108, and a frame that rendered nothing reads 0.0000 | ge |
+| `bake.landmark_golden` | 1 px, which is one rounding step of a golden's own whole pixels. All 720 committed landmarks read 0 | le |
 | `bake.sampled_frames_are_keys` | 0 rendered frames that are not authored keys | eq |
 | `bake.frame_count`, `atlas.frame_count`, `atlas.trim_boxes`, `atlas.manifest_schema` | 0 defects each: a frame absent from the rendered rectangle, a cell with no rect, a box outside the atlas or its cell, a manifest the game's own reader refuses. These join the `rig.*` family whose limit is not a `[profile]` number | eq |
 
@@ -1128,7 +1130,7 @@ per fact 15.
 - `pack.rs`, the sprite manifest, and the `crates/sprites` format.
 - `mixamo.rs` as a client. Only the export request and the fps source change.
 - `library.rs`, `MotionSource`, `redistributable`, `LibraryLock`, `Fetched`.
-- `chrome.rs`, `strip_animation.py`, and the one-triangle skin carrier.
+- `chrome.rs`, `armature.py`, and the one-triangle skin carrier.
 - Role-based matching itself, which `[profile]` extends in place. **T4 moved
   the reader**: `framing.SkeletonRoles` is now `skeleton.Skeleton`, in the
   module that owns the whole skeleton file, and `framing.py` keeps the bake's
@@ -1160,7 +1162,8 @@ per fact 15.
 | `loop_mismatch`, `report_loop` | `report_loop` warns and never refuses. `clip.loop` replaces it with a limit and a comparison. **T5 deleted both already**, with the 14 tests its correction 13 lists, so T7 found nothing left to delete |
 | the `array_index == 2` branch in `strip_root_motion` | it assumes `Hips` local Z is world Z (fact 5) |
 | twelve tests in `test_framing.py` | each asserts a function against itself. Two of them test `bind_pose_mismatch`, which goes with it |
-| `apply_forearm_roll` | a hand-derived patch for a roll problem the new transfer removes. Deleted in T15, and until then `bake.forearm_roll` is an error rule, because it runs after `clip.swing` and would otherwise be invisible |
+| `apply_forearm_roll`, `roll_forearm`, `edit_rotation_curves`, `rotation_curves`, `forearm_roll_sign`, `spec.bake.forearm_roll`, `bake.forearm_roll` | a hand-derived patch for a roll problem the world-space transfer removes. **T15b deleted the patch and the rule together**: with nothing left to ask for the patch, a rule that watches the field watches a field that is gone |
+| `strip_animation.py`'s `strip` and `main` | the retarget exports armature-only itself, so nothing had shelled out to the script since T15a. **T15b deleted them and the module with them**: `skin_carrier` and the export moved to `armature.py`, which is the one place an armature leaves Blender, and `promote_rig.py` is the second caller |
 | `pause_for_review`, `should_pause` | the four prompts at Concept, Model, Bake and Pack are replaced by gates plus pull request approval (decision 13) |
 
 ## Logic
@@ -1519,26 +1522,26 @@ it is local proof and never the gate. Correction 10 of T15a is what it draws.
 | `source.wander` | measured on the hips at every frame: `idle` **0.0112 m**, `run` **0.0276**, `walk_back` **1.2712**, `strafe_left.fbx` **2.3117**. `[art]` `run.glb` in `crates/xtask-art/tests/fixtures/fetch.run.1.json` | none, `info` only. `[synth]` a path that goes 0.6 m out and comes back, where `source.traveling` reads 0 and this reads 0.6 | the four clips above. This is the only boundary that can read the excursion at all: the bake pins the horizontal axes onto the first frame before `clip.root_travel` sees them, and `--keep-root-motion` reports both bake rules as `skipped` |
 | `clip.swing` | the synthetic cross-rig fixture, and the new output on the three Mixamo clips at 4.1e-5 to 7.1e-5 deg, a hand measurement | `[synth]` a 3 deg swing injected into one role, and `[synth]` the source read one frame out, which fires on every role. `[art]` the shipped `strafe_left.glb`: measured absolutely against the vendor file its worst role is 97.797 deg and its wrists are 76.154 and 78.216, **reproduced exactly by T6's implementation**. It cannot be committed, so the CI negatives are the two synthetic ones | the synthetic cross-rig fixture, T6, which reads 4.3e-6 deg |
 | `clip.twist` | the same fixture, and the three Mixamo clips at 11.411 deg, a hand measurement | `[synth]` a 90 deg twist **post-multiplied in the bone's local frame**, `q @ Quaternion((0, 1, 0), radians(90))`, on `LeftUpLeg`. The same test asserts `clip.swing` stays under its limit, which is what proves the injection is a twist and not a yaw. Pre-multiplying by a world +Y rotation would yaw a downward thigh and fire `clip.swing` instead. Plus `[synth]` 16 deg and minus 16 deg, one degree past the limit either way around, which fail beside 14 deg, which holds; and `[synth]` minus 90 deg, which reads 90 and is the control on the rule reporting a size rather than a direction. The shipped clips cannot serve: `rotation_difference` is pure swing, so they carry our rest twist unchanged (fact 2) and this rule reads 0.073 on them | the synthetic cross-rig fixture, T6, which reads 3.5e-6 deg |
-| `clip.fps_grid` | the three committed clips at `source_fps` 24, worst **9.5e-7** frames, which is the `f32` a GLB stores key times in | `[art]` the shipped `strafe_left.glb` in a 24 fps scene, range 0.8 to 16.8. In CI, the same shape on a clip that may be redistributed: `run.glb` read at 30, where 15 of its 21 keys land off the grid and the worst reads 0.5. Plus `[synth]` a declared rate of 0, which is undefined rather than infinite | `run.glb`. Measured at two sites: the retarget reads the action, which is the only place an off-grid **import** is visible, and `check/clip.rs` reads the delivered file's own key times, which is where a resampling **export** would show |
-| `clip.fps_grid.range` | the three committed clips, 0 frames | `[synth]` 21 keys at 0.8 to 16.8 sampled at frames 1 to 17, which reports the **4** frames the rounding dropped | the frames the retarget samples against the source's own key times. Not the scene's render range: the glTF importer sets none, so that reading fires on Blender's 1 to 250 default |
+| `clip.posture` | the five fitted clips against their own sources, worst joint of each: **0.0687 m** (`strafe_left` and `walk_back`, `spine_upper`), 0.0686 (`strafe_right`), 0.0199 (`run`) and 0.0192 (`idle`), which is the torso proportion one femur ratio cannot size | `[synth]` the cross-rig pair with every source joint but the root moved 0.25 m and every rotation left alone, which reads **0.2204 m** while `clip.swing` and `clip.twist` stay at their storage floors, plus `[synth]` a pair with no femur to size by, which is undefined. `[art]` a hand measurement, and the one negative CI cannot hold: the hunch T15b replaced, reproduced by refitting the same `idle` source with the re-roll switched off, reads **0.2150 m** on `left_toe`. A fit like that lands in the gitignored `art/staging/fits/idle.glb`, so what CI reads is the synthetic pair beside it | every joint against its own rig's root joint, the source's sized by the femur ratio. 0.12 m sits 1.75x over the worst of the five, 0.0513 m of headroom, and 1.8x under the defect. The rule the other thirteen could not be: correction 17 of T15b |
+| `clip.fps_grid` | the five fitted clips at their own `source_fps`, worst **1.6e-6** frames, on `walk_back`, which is the `f32` a GLB stores key times in | `[art]` the shipped `strafe_left.glb` in a 24 fps scene, range 0.8 to 16.8. In CI, the same shape on a clip that may be redistributed: `run.glb` read at 30, where 15 of its 21 keys land off the grid and the worst reads 0.5. Plus `[synth]` a declared rate of 0, which is undefined rather than infinite | `run.glb`. Measured at two sites: the retarget reads the action, which is the only place an off-grid **import** is visible, and `check/clip.rs` reads the delivered file's own key times, which is where a resampling **export** would show |
+| `clip.fps_grid.range` | the five fitted clips, 0 frames | `[synth]` 21 keys at 0.8 to 16.8 sampled at frames 1 to 17, which reports the **4** frames the rounding dropped | the frames the retarget samples against the source's own key times. Not the scene's render range: the glTF importer sets none, so that reading fires on Blender's 1 to 250 default |
 | `clip.object_transform` | the committed `run.glb` against `humanoid.glb`, exactly 2 subjects: `Armature` and `skin_carrier` | `[synth]` the same clip with the armature's 0.01 scale applied, which is what `transform_apply(scale=True)` leaves, **and** `[synth]` a translation channel on the armature object, which the static reading alone cannot see | the armature scale, byte identical at `0.009999999776482582` across six exported GLBs |
-| `clip.root_travel` | the three committed clips after the new strip: **1.8e-9 to 3.7e-9 m** on both horizontal axes, which is the `f32` an F-curve stores | `[art]` the shipped `strafe_left` output under the strip this replaces, which reads **0.0428 m on X** and 0.0170 on Y. Plus `[synth]` the same numbers through `framing.root_travel` | `run.glb`. Two axes, not three: the strip keeps the up one, which is `clip.root_bob` |
-| `clip.root_bob` | the four fitted clips: **0.0089 m** (`idle`), 0.0377 (`strafe_left`), 0.0391 (`walk_back`), 0.0535 (`run`) | `[synth]` a root sunk **0.3 m**, which is the shape of the 0.2911 m the old strip left on Z after pinning the root's own channels 0 and 1 | the same four readings. 0.15 m sits 2.8x over the worst of them and 1.9x under the sink it has to refuse |
-| `clip.floor_snap` | the three Mixamo fits, at both sites. The retarget's own evaluated pose reads **9.3e-9** (`walk_back`), 1.5e-8 (`strafe_right`) and 4.3e-8 m (`strafe_left`); `check/gltf_clip.rs` on the delivered file reads **3.9e-8** (`strafe_right`), 1.3e-7 (`walk_back`) and 6.7e-7 m (`strafe_left`). The refit of `run.glb` reads exactly 0 at the retarget, and the committed `run.glb` reads **0.0016536 m** in Rust | `[art]` the committed `idle.glb`, fitted before the snap existed, whose lowest toe hangs **0.0773 m** above the datum, and which a refit brings to 9.3e-9 m. Plus `[synth]` a delivered GLB whose root is keyed **0.06 m** below where its own rig rests, and the pair either side of the limit at 4 mm and 6 mm. `[mut]` the same retarget with `lift_root` removed, which reads **0.0599 m** on `strafe_left` | the lowest ground joint's frame, against the rest height the snap aims at. **Not zero**, and not the sole either: see correction 1 |
-| `clip.stride` | the three Mixamo fits: `strafe_left` **2.0378 m** against a source travel of 2.3117 sized by 0.8815, `strafe_right` 2.5477 against 2.8901, `walk_back` 1.2465 against 1.4140. The retarget reads **4.6e-6** (`walk_back`), 7.6e-6 (`strafe_right`) and 1.3e-5 percent (`strafe_left`); Rust on the delivered file reads **1.4e-5**, 1.5e-5 and 2.4e-5 percent on the same three | `[mut]` the same retarget with `scale_translation` removed, which reads **13.4409 percent** on `strafe_left` at both sites. Plus `[synth]` a fit whose root keys are scaled by 1.05, which reads 5.0 percent in Rust and in Python, and `[synth]` `travels: true` on a source that never moves, which is undefined rather than a division by nothing | T5's hand measurement, 2.3117 m times 0.8815 giving **2.0378 m**. `travels: false` reports `skipped` on the declaration, which the refit of `run.glb` records. What the two sites prove and cannot prove is correction 7 |
-| `clip.stride_ratio` | the same three at **0.8815161761312765** in the retarget and **0.8815163067471855** in Rust, off 0.3578832274114926 m of our femur against the vendor's 0.40599429901464934. The refit of `run.glb` records **1.0000204384738902**, which `crates/xtask-art/tests/fixtures/retarget.run.1.json` carries and a unit test pins to 1e-9 | none, `info` only, per the Terminology exemption | the two `stride_segment` joints of each rig at rest. Not 1 on a refit: the rig is exported, imported and exported again, and a GLB stores a joint position as an `f32` |
-| `clip.foot_contact.plants` | the three Mixamo fits at both sites: the left foot plants once on each, over frames 10..15 (`strafe_left`), 12..14 (`strafe_right`) and 9..27 (`walk_back`). `[synth]` the standing cross-rig pair, both feet, at both sites | `[synth]` the cross-rig pair as it stands, whose feet ride along with a root crossing 2.04 m in a third of a second, which comes to rest nowhere. `[art]` the **right** foot of all three Mixamo fits, at **0** runs: see correction 3 | `ge 1` per foot per cycle. The `[synth]` in-place clip the design named is a `skipped` instead, because `travels` switches the rule off |
-| `clip.foot_contact.skate` | the three Mixamo fits' left foot: **0.0000 m** at the retarget on all three, and 0.0000, 0.0021 and 0.0000 in Rust on the delivered files | `[synth]` the standing pair whose planted foot is translated **5 cm** during stance, which is slow enough to still read as contact. `[mut]` the same three fits with the lock removed, which read **0.0207** (`strafe_left`), 0.0148 (`walk_back`) and 0.0027 m (`strafe_right`), all inside the published 2.5 cm: what the mut proves is what the lock removed, and the 5 cm synthetic is what makes the rule fail | the pair 0.0207 against 0.0000 m. The 2 mm the delivered `strafe_right` reads is correction 5 |
-| `clip.foot_contact.penetration` | the refit of `run.glb`, which clears the floor by **0.0074** and 0.0005 m, and the vendor's own `strafe_left.fbx`, which reads **0.0000 m** at every planted frame and 0.0038 at worst | `[synth]` the standing pair keyed **2 cm** under its own floor, plus the pair either side of the limit at 4 mm and 6 mm. `[art]` the **left** foot of all three Mixamo fits, at **0.0200 to 0.0203 m**: see correction 4 | 5 mm, on the two sole points of each foot. The vendor file reading 0.0000 at every plant is what says the sole model is the right one |
-| `clip.loop` | `run.glb` at **0.000** deg and `idle.glb` at **0.487** | `[art]` `walk_back.glb`, which reads **6.910** on `LeftForeArm` and breaks on nine of its 24 bones. That is the hitch `library.ron` has recorded in prose all along and which nothing could measure until now. Plus `[synth]` a whole cycle against the same cycle cut one frame short | `idle.glb` and `run.glb`, 2.0 deg today. Per joint, on the local rotation, so one wrong hips reports once rather than dragging every bone below it into the count |
+| `clip.root_travel` | the five fitted clips after the new strip: **up to 5.6e-9 m** on both horizontal axes, which is the `f32` an F-curve stores | `[art]` the shipped `strafe_left` output under the strip this replaces, which reads **0.0428 m on X** and 0.0170 on Y. Plus `[synth]` the same numbers through `framing.root_travel` | `run.glb`. Two axes, not three: the strip keeps the up one, which is `clip.root_bob` |
+| `clip.root_bob` | the five fitted clips: **0.0090 m** (`idle`), 0.0259 (`strafe_right`), 0.0384 (`strafe_left`), 0.0427 (`walk_back`), 0.0545 (`run`) | `[synth]` a root sunk **0.3 m**, which is the shape of the 0.2911 m the old strip left on Z after pinning the root's own channels 0 and 1 | the same five readings. 0.15 m sits 2.8x over the worst of them and 1.9x under the sink it has to refuse |
+| `clip.floor_snap` | the five fitted clips, at both sites. The retarget's own evaluated pose reads **9.9e-8** (`run`) to 8.7e-7 m (`strafe_left`) and `check/gltf_clip.rs` on the delivered file **1.1e-6** (`idle`) to 2.8e-6 m (`strafe_right`), all of it `f32` storage. Before the refit the committed `run.glb` read **0.0016536 m** in Rust | `[art]` the committed `idle.glb`, fitted before the snap existed, whose lowest toe hangs **0.0773 m** above the datum, and which a refit brings to 9.3e-9 m. Plus `[synth]` a delivered GLB whose root is keyed **0.06 m** below where its own rig rests, and the pair either side of the limit at 4 mm and 6 mm. `[mut]` the same retarget with `lift_root` removed, which reads **0.0599 m** on `strafe_left` | the lowest **sole point** of either foot, against zero, which the rig's own rest pose puts every sole point on. Not the joint: correction 4 of T15b |
+| `clip.stride` | the three Mixamo fits: `strafe_left` **2.0750 m** against a source travel of 2.3117 sized by 0.8976, and `strafe_right` and `walk_back` sized by the same. The retarget reads **1.4e-6** (`walk_back`), 1.5e-6 (`strafe_right`) and 6.4e-6 percent (`strafe_left`); Rust on the delivered file reads **0.0041 percent** on all three, which is the `f32` a GLB stores a location key in | `[mut]` the same retarget with `scale_translation` removed, which reads **13.4409 percent** on `strafe_left` at both sites. Plus `[synth]` a fit whose root keys are scaled by 1.05, which reads 5.0 percent in Rust and in Python, and `[synth]` `travels: true` on a source that never moves, which is undefined rather than a division by nothing | T5's hand measurement, 2.3117 m times 0.8815 giving **2.0378 m**. `travels: false` reports `skipped` on the declaration, which the refit of `run.glb` records. What the two sites prove and cannot prove is correction 7 |
+| `clip.stride_ratio` | the same three at **0.8976081576674102** in the retarget and **0.8976446947647440** in Rust, off 0.3644 m of our femur against the vendor's 0.40599429901464934. The refit of `run.glb` records **1.0182757023787483**, our femur against the 0.3578832274114926 m of the rig its own source was authored on, which `crates/xtask-art/tests/fixtures/retarget.run.1.json` carries and a unit test pins to 1e-9 | none, `info` only, per the Terminology exemption | the two `stride_segment` joints of each rig at rest. Not 1 on a refit: the rig is exported, imported and exported again, and a GLB stores a joint position as an `f32` |
+| `clip.foot_contact.plants` | the three traveling fits at both sites: the left foot plants once on each, over frames 10..13 (`strafe_left`), 11..15 (`strafe_right`) and 10..25 (`walk_back`), and the right foot twice on each. `[synth]` the standing cross-rig pair, both feet, at both sites | `[synth]` the cross-rig pair as it stands, whose feet ride along with a root crossing 2.04 m in a third of a second, which comes to rest nowhere. `[art]` the **right** foot of the same three fits before T15b, at **0** runs, which the pelvis tilt held off the ground: correction 3 of T15b | `ge 1` per foot per cycle. The `[synth]` in-place clip the design named is a `skipped` instead, because `travels` switches the rule off |
+| `clip.foot_contact.skate` | the three traveling fits' left foot, the same reading at both sites: **0.0020 m** (`strafe_left`), 0.0070 (`strafe_right`) and 0.0120 (`walk_back`), none of them held | `[synth]` the standing pair whose planted foot is translated **5 cm** during stance, which is slow enough to still read as contact. `[mut]` the same three fits before T15b with the lock removed, which read **0.0207** (`strafe_left`), 0.0148 (`walk_back`) and 0.0027 m (`strafe_right`), all inside the published 2.5 cm: what the mut proves is what the lock removed, and the 5 cm synthetic is what makes the rule fail | the 0.0207 against 0.0000 m of that pair. What the limit decides now is which run the lock holds at all: correction 5 of T15b |
+| `clip.foot_contact.penetration` | the five fitted clips, **1.3e-6 m** at worst over both sites, and the vendor's own `strafe_left.fbx`, which reads **0.0000 m** at every planted frame and 0.0038 at worst | `[synth]` the standing pair keyed **2 cm** under its own floor, plus the pair either side of the limit at 4 mm and 6 mm. `[art]` the **left** foot of all three Mixamo fits under the joint datum this replaces, at **0.0200 to 0.0203 m**: correction 4 of T15b | 5 mm, on the two sole points of each foot. The vendor file reading 0.0000 at every plant is what says the sole model is the right one |
+| `clip.loop` | `run.glb` at **0.000** deg and `idle.glb` at **0.487** | `[art]` `crates/xtask-art/tests/fixtures/walk_back_hitching.glb`, Meshy's action 544 as it shipped until T15b, which reads **6.910** on `LeftForeArm` and breaks on nine of its 24 bones. That is the hitch `library.ron` recorded in prose all along and which nothing could measure until now. Plus `[synth]` a whole cycle against the same cycle cut one frame short | `idle.glb` and `run.glb`, 2.0 deg today. Per joint, on the local rotation, so one wrong hips reports once rather than dragging every bone below it into the count |
 | `clip.interpolation`, `clip.reference_pose_key` | the recorded report of the `run.glb` refit, committed as `crates/xtask-art/tests/fixtures/retarget.run.1.json`: 44 findings, no error | `[synth]` in CI, on `clip.py`: a Bezier key, a pose not held at the ends, and a key off either end of the range. Plus `[mut]` two Blender runs, one with the LINEAR and CONSTANT pass removed and one with a pose keyed outside the source's range, each firing its own rule on all 22 bones and leaving the other at `info`. Plus `[synth]` three reports the runner refuses: an unpublished rule id, a limit of its own, and a defect filed as `info` | `run.glb`. **The reference pose is never keyed at any frame**, so the rule measures keys outside the source's frame range rather than at frame 0. See the correction below |
-| `bake.frame_count`, `bake.non_empty` | the recorded run: 240, 320 and 288 frames rendered of the same, and 4.1164 percent of a canvas at the emptiest | `[synth]` one frame deleted, which reads 1 missing and names `w 01`, and one fully transparent, which reads 0.0000 percent | directions x sampled frames, alpha coverage. The rendered set is gitignored, so the readings are the recorded run in `crates/xtask-art/tests/fixtures/bake.survivor.1.json` and every negative is a synthetic 64 px frame set |
-| `bake.in_frame`, `bake.pivot` | the recorded run: 89, 65 and 58 px of inset, and 1 px of reflection error over 424 opposite pairs | `[synth]` a pose clipped at the border, which reads 0 px, and a frame offset 20 px, which reads 20 | 1 px of inset, and the reflection between opposite directions. **The ground line cannot serve**: correction 1 |
-| `bake.forearm_roll` | spec field 0.0 | `[synth]` the field set to 30 | `eq 0` |
-| `bake.sampled_frames_are_keys` | the recorded run: `idle` renders 15 frames of the 47 its action keys, `run` 20 of 21, `walk_back` 18 of 23. Green by construction, because each clip keys every integer frame of its own range: correction 2 | `[synth]` an action with every other key deleted, which reports the 3 frames of 6 that nothing keyed | `framing.sampled_frames` already rounds to integers. **Any channel, not every channel**: correction 2 |
-| `bake.landmark_golden` | the six committed goldens, all 432 landmarks at 0 px | `[synth]` one arm rotated 30 deg before projection, which moves a wrist 21 px; `[synth]` a golden of another set of joints, which is undefined; and no golden at all, which is an error | 3 frames x 2 directions per clip. The projection's own calibration is two known answers plus all six goldens read for a body the right way up: correction 3 |
-| `atlas.frame_count`, `atlas.trim_boxes` | the three committed atlases and the manifest the game loads, 0 defects each | `[synth]` a manifest claiming one extra frame, which reads the 16 cells with no rect, and a box one pixel outside, which reads 1 | the committed atlases |
-| `atlas.manifest_schema` | the same manifest, which `sprites::parse` loads as three animations | `[synth]` a missing field, which also leaves the other two rules undefined on every animation, plus a table of every refusal `sprites::parse` has, one case each on a two-frame manifest, each caught as an error by some `atlas.*` rule | the committed manifests |
+| `bake.frame_count`, `bake.non_empty` | the recorded run: 240 (`idle`), 320 (`run`), 400 (`walk_back`) and 256 frames of each strafe rendered of the same, and 4.3861 percent of a canvas at the emptiest | `[synth]` one frame deleted, which reads 1 missing and names `w 01`, and one fully transparent, which reads 0.0000 percent | directions x sampled frames, alpha coverage. The rendered set is gitignored, so the readings are the recorded run in `crates/xtask-art/tests/fixtures/bake.survivor.1.json` and every negative is a synthetic 64 px frame set |
+| `bake.in_frame`, `bake.pivot` | the recorded run: 60 to 78 px of inset, and 1 px of reflection error over 736 opposite pairs | `[synth]` a pose clipped at the border, which reads 0 px, and a frame offset 20 px, which reads 20 | 1 px of inset, and the reflection between opposite directions. **The ground line cannot serve**: correction 1 |
+| `bake.sampled_frames_are_keys` | the recorded run: `idle` renders 15 frames of the 47 its action keys, `run` 20 of 21, `walk_back` 25 of 30 and each strafe 16 of 17. Green by construction, because each clip keys every integer frame of its own range: correction 2 | `[synth]` an action with every other key deleted, which reports the 3 frames of 6 that nothing keyed | `framing.sampled_frames` already rounds to integers. **Any channel, not every channel**: correction 2 |
+| `bake.landmark_golden` | the ten committed goldens, all 720 landmarks at 0 px | `[synth]` one arm rotated 30 deg before projection, which moves a wrist 21 px; `[synth]` a golden of another set of joints, which is undefined; and no golden at all, which is an error | 3 frames x 2 directions per clip. The projection's own calibration is two known answers plus the six goldens T13 read for a body the right way up: correction 3 |
+| `atlas.frame_count`, `atlas.trim_boxes` | the five committed atlases and the manifest the game loads, 0 defects each | `[synth]` a manifest claiming one extra frame, which reads the 16 cells with no rect, and a box one pixel outside, which reads 1 | the committed atlases |
+| `atlas.manifest_schema` | the same manifest, which `sprites::parse` loads as five animations | `[synth]` a missing field, which also leaves the other two rules undefined on every animation, plus a table of every refusal `sprites::parse` has, one case each on a two-frame manifest, each caught as an error by some `atlas.*` rule | the committed manifests |
 
 ### Corrections T3 made to this document
 
@@ -3780,6 +3783,11 @@ bytes. T15a moves no committed art at all.
   them.
 - `docs/research/agent_reports/audit_the_current_art_pipeline.md`: a
   correction note. Its mesh numbers are the seam-split reading.
+- `crates/xtask-art/README.md` gains "Why the pack runs Godot", per
+  correction 22: what the sidecar has to hold for the runtime, why only Godot
+  writes it, and why a missing Godot fails the stage. The stage table names
+  Godot beside Rust for `pack`, and `MARROWFALL_GODOT_BIN` sits next to
+  `MARROWFALL_BLENDER_BIN`.
 
 ## Development Environment Changes
 
@@ -3819,16 +3827,27 @@ bytes. T15a moves no committed art at all.
   to Git LFS.
 - `pr.yml`: add `tools/blender/**` to the `python` filter, make the `required`
   aggregator the single required check pinned by `app_id`, empty the bypass
-  list, and enable `enforce_admins` and `require_last_push_approval`.
+  list, and enable `enforce_admins` and `require_last_push_approval`. **T15b
+  did the workflow half**: the `art` filter, the `cargo art check` step and
+  the comment on the aggregator saying what branch protection must name. The
+  `app_id` pin, the bypass list and the two flags are repository settings and
+  not files, so a human sets them.
+- `MARROWFALL_GODOT_BIN`, unset by default and read exactly like
+  `MARROWFALL_BLENDER_BIN`, through one shared `tool_binary`. **Correction 22
+  added it**: the pack stage runs `godot --headless --import`, and finds Godot
+  on `PATH` unless this names it. No install step is new, `Brewfile` already
+  carries `cask "godot"` and `setup.sh` already imports the project.
 - No new CI runner. Nothing added to CI needs Blender or a GPU.
 
 ## Tasks
 
-Seventeen vertical slices, 29.0 engineer days. Per decision 11 no gate is a
+Seventeen vertical slices, 29.0 engineer days. Per decision 11 no gate was a
 required CI check until T15b, the pull request that regenerates the survivor
-through the full gated pipeline. Until then each gate ships as a test whose
-negative fixture is the current art, so nothing is ever red and nothing is
-waived.
+through the full gated pipeline. Until then each gate shipped as a test whose
+negative fixture was the current art, so nothing was ever red and nothing was
+waived. **T15b flipped them**: `cargo art check` runs on the committed art in
+the `test` job, an art change selects the workflow that runs every rule, and
+the `Required` aggregator is the single check branch protection names.
 
 ```text
 T1 harness + validator + diagnostics
@@ -3866,3 +3885,425 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15a rename + conform
 | T15a | The rename and the conform steps | 1.5 d, 0 credits | The pipeline half of T15, and it moves no committed art. `[conventions.meshy]` says what Meshy ships again, `[conventions.standard]` is the canonical table, and `[fingerprints]` is what tells a file's convention apart. `stages::conform_rig` runs between the download and `model.glb`: the 14 `rig.*` rules on `rigged.glb` under the `rig` stage as a record, a JSON-chunk rename by role, a conform that turns each joint's rest axis onto its own tail and mirrors the pairs `rig.mirror_length` compares, then the same 14 rules under the `conformed` stage as the gate. Every clip Meshy animated then takes the path a Mixamo clip takes, `check_source` then `retarget --convention meshy` onto the canonical rig, and the fit is what lands in `art/animations/`. `Stage::Download` joins the version guard and fingerprints `rigged.glb` and the profile, and keeps the vendor's own files so re-running it asks the provider for nothing. | Three name rules fail on `humanoid_before_rename.glb` and pass on what the rename writes, with the BIN chunk byte identical. A downloaded Meshy clip leaves an argv with `--convention meshy` against `art/skeletons/humanoid.glb`, and the library file is the retarget's output rather than the download. A file already on disk is never asked for again. A copy of the committed `model.glb` goes from 14 defects to 2, both of them `rig.humerus_angle`, which no rig edit can move; every vertex accessor is byte identical, the furthest rest vertex moves 1.57e-7 m, and Blender draws the two files 0.00786 percent of a component apart. `--list-rules` still prints 67. | T2, T4, T12, T13 |
 | T15b | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | **T15a already built the rename and the conform, and this keeps every one of them**: the regeneration runs through `stages::conform_rig` rather than renaming anything by hand. One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, let the download stage refit `idle.glb`, `run.glb` and `walk_back.glb` onto it, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15a |
 | T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15b |
+
+### Corrections T15b made to this document
+
+T15a built the rename and the conform and moved no bytes. T15b ran them on
+the mesh T12's winner produced and replaced every piece of committed art:
+`humanoid.glb`, `model.glb`, five clips, five atlases, the manifest, ten
+goldens and the contact sheet. **0 Meshy credits: 1056 before, 1056 after.**
+
+1. **Nothing was bought, and the lock records what was.** T12's three
+   generations and three rigging calls are still on the provider's side, so
+   the task the survivor is built from was resumed rather than submitted.
+   Identified by downloading each task's own GLB and hashing it against the
+   file on disk: model `01a07813-b9d4-773b-b87f-c786eabfc4be` is
+   `bare.glb`, sha256 `75edd4ed`, and rig
+   `01a07828-8f5a-73cc-9b75-e473bbfe0e10` is `rigged.glb`, sha256 `7dd84313`.
+   Writing each id into `art/staging/reports/<stage>.survivor.1.task`, which
+   is the resume file T12 built, made `cargo art run --only model` and
+   `--only rig` replay both for nothing.
+
+   **The three bought clips cannot be re-downloaded, and that is measured.**
+   `GET /openapi/v1/animations` lists **zero** tasks under this key and every
+   recorded animation id answers 404, as the model and rig ids of the old
+   account do. So the file in hand is all there is, and correction 5 is what
+   the pipeline does about it.
+
+2. **The conform closed 14 of the fresh rig's 16 defects and the arm angle is
+   settled by measurement.** `rigged.glb` under the `rig` stage against
+   `model.glb` under `conformed`:
+
+   | Rule | Vendor's file | Conformed |
+   |---|---|---|
+   | `rig.names_standard`, `bone_set`, `parents` | 3, 3, 4 defects | 0 |
+   | `rig.child_axis` | 95.680 `Hips`, 29.902 `Head`, 2 defects | 0.614 `LeftForeArm`, 0 |
+   | `rig.aim_table` | 95.721 `hips`, 1 defect | 2.412 `hips`, 32.926 worst, 0 |
+   | `rig.mirror_length` | 1.056 to 3.660, 5 defects | 0.000, 0 |
+   | `rig.mirror_direction` | 1.214 `ForeArm`, 1 defect | 0.000, 0 |
+   | `rig.humerus_angle` | 19.120 / 19.531 | **19.324 / 19.324** |
+   | `rig.elbow_bend`, `bind_deviation`, `world_height` | 24.001, 2.412, 1.835 | 23.749, 2.412, 1.835 |
+
+   **`humerus_below_horizontal.tolerance` goes from 15 to 25, and no
+   regeneration was bought to try to move it.** T12 already ran the
+   experiment: two independent generations from the same four concept views
+   read 19.141 / 19.350 and 19.120 / 19.531, within 0.4 degrees of each
+   other, because the views draw the arms hanging. A third would land in the
+   same place, so the 30 credits were not spent.
+
+   The rule is a proxy for how far the retarget must turn a shoulder from
+   rest, and the two rules that measure that directly pass with room. On the
+   five fitted clips `clip.swing` reads **2e-5 to 6e-5 degrees on every arm
+   bone** against a limit of 0.01, and `clip.twist` reads **8.929 at worst**
+   (`left_forearm`) against 15, where the rig this replaces read 11.411. So the
+   proxy was wrong about this rig and the tolerance is recalibrated on art
+   that exists: 25 leaves 5.676 degrees over the reading, 29 percent, and
+   still rejects `pose_mode: "t-pose"` at 31.7 and 30.6.
+
+3. **T9's pelvis tilt is gone, and its own probe is the proof.** The same
+   measurement on the same clip, frame 3 of `strafe_left`, hip sockets
+   against their own rest heights:
+
+   | | Old rig | New rig |
+   |---|---|---|
+   | `RightUpLeg` | **+0.1316 m** | **-0.0255 m** |
+   | `LeftUpLeg` | -0.0493 m | -0.0405 m |
+   | Pelvis tilt, right minus left | **0.1809 m** | **0.0150 m** |
+   | Rest hip heights | 0.8696 / 0.8712 | 0.8710 / 0.8710 |
+   | `RightToeBase`, lowest over the clip | never under 0.2136 m | plants twice |
+
+   Twelve times less tilt, both sockets below their rest in a crouch rather
+   than one riding 13 cm up, and the two rest heights identical because the
+   conform mirrors them. T15a's hypothesis held: the cause was the `Hips`
+   rest axis, and moving it removed the effect.
+
+4. **The floor snap read the wrong point, and that is what the 2 cm dig
+   was.** The snap lifted a clip until its lowest ground **joint** reached
+   that joint's rest height. A joint's rest height is where the contact patch
+   is only while the foot keeps its rest pitch, and a cross-rig fit matches
+   the source's pitch instead: our foot rests 38.63 degrees below horizontal
+   from ankle to toe and Mixamo's 27.29, so the frame where the joint is
+   lowest is not the frame where the sole is. Measured on `strafe_left` with
+   the joint snap: the left sole read **-0.0069 m under the toe and -0.0251
+   under the ankle** while `clip.floor_snap` read 1e-6, which is two rules
+   disagreeing about what standing on the floor means.
+
+   Both sites now snap and gate on the **sole**, which is the model
+   `plant.py` and `check/foot.rs` already carried: the lift puts the lowest of
+   the four sole points at zero. `clip.foot_contact.penetration` then reads
+   **1.3e-6 m at worst across all five clips**, over both sites, where the
+   same three cross-rig fits read 0.0200 to 0.0203 before. `rest_floor` is
+   deleted with the joint datum, and the rule is a tautology at the retarget
+   site once the snap has run, which is what the file site and the synthetic
+   negatives are for.
+
+5. **The foot lock fired where nothing asked it to, and `clip.swing` is what
+   caught it.** Refitting `idle` onto the conformed rig read **0.434 degrees
+   on `RightUpLeg`** against a limit of 0.01. Measured by running the same
+   fit with `hold_still` removed: the lock, not the transfer, moved the leg
+   0.4325 and 0.4517 degrees. Two faults, both closed in `plant.py`:
+
+   - **An in-place clip is never locked.** T9's correction 5 already said an
+     in-place cycle's ground moves under it, so nothing declares the speed a
+     hold would be taken against and `plants` and `skate` report themselves
+     switched off. The lock did not: on `idle`, whose feet really are still,
+     it froze them. Holding a foot at a fixed point is exactly what an
+     in-place run cycle must not do.
+   - **A run the skate gate already accepts is left alone.** Holding a foot
+     costs the leg above it the direction the transfer gave it, and the
+     published limit is what the project calls an acceptable slide. Measured
+     on `strafe_left` with the lock removed: the feet drift **0.0035 and
+     0.0018 m** against a 0.025 limit, so 4.31 degrees of leg swing bought
+     2.9 mm. The lock now corrects only a run over the limit, and on the art
+     that ships it therefore corrects nothing: `clip.swing` reads its storage
+     floor, **0.0015 degrees at worst**, and `clip.foot_contact.skate` reads
+     0.0020 to 0.0120 m.
+
+     That makes the rule a tautology at the retarget site, the way correction
+     4 makes penetration one: any run past the limit is held to about zero
+     drift, so nothing there can fail. What can is the file site, which finds
+     its own plant runs in the delivered keys, and the synthetic 5 cm drag.
+
+   A clip whose feet genuinely slide past 2.5 cm will still trade swing for
+   the hold, and both readings land in one report for a human to weigh. That
+   is the honest shape: the rules disagree only where the art is bad.
+
+6. **`walk_back` was the known-bad clip this file asked to replace, and the
+   design's own tables already named its replacement.** Meshy's action 544
+   ends **6.910 degrees from the pose it started in** and breaks `clip.loop`
+   on nine of its 24 bones, which `art/animations/library.ron` recorded in
+   prose from the beginning and which the limits table carries as
+   `clip.loop`'s `[art]` negative. With the gates required it cannot ship.
+   Every calibration in this document already reads `walk_back` as one of
+   **the three Mixamo clips**, and its FBX has been under
+   `art/staging/downloads/` since T7. So the library entry now names Mixamo's
+   own backward walk, `c9ccc468-b96c-11e4-a802-0aaa78deedf9` at 30 fps
+   traveling 1.414 m, and the fit reads `clip.loop` **0.0006 degrees**. It is
+   not redistributable, so the committed `art/animations/walk_back.glb` is
+   deleted and the file lives in the gitignored `art/animations/local/`
+   beside the two strafes.
+
+7. **Every gate on the regenerated art, with nothing waived.**
+   `cargo art check survivor` reports **0 defects**. Per family:
+
+   | Family | Worst reading | Limit |
+   |---|---|---|
+   | `rig.*`, 14 rules | 19.324 `humerus_angle` | 25 |
+   | `rig.aim_table` | 32.926 `right_hand` | 75 |
+   | `mesh.*` on `bare.glb` | 1094 `self_intersect`, 31 holes | 1500, 200 |
+   | `mesh.*` on `clean.glb` | 1153 `self_intersect`, 18 holes | 1500, 200 |
+   | `mesh.non_manifold_post`, `cleanup_effective` | 17, 19 lt 35 | 20, before |
+   | `source.*`, 5 clips | 97.612 `child_axis` on the old rig's `Hips`, 16.933 on Mixamo's `Neck` | 180 |
+   | `clip.swing` | 0.0015 (`run`, `left_foot`) | 0.01 |
+   | `clip.twist` | 8.929 (`left_forearm`) | 15 |
+   | `clip.posture` | 0.0687 m (`strafe_left`, `spine_upper`) | 0.12 |
+   | `clip.floor_snap` | 2.8e-6 m | 0.005 |
+   | `clip.stride` | 0.0041 percent | 2.0 |
+   | `clip.loop` | 0.487 (`idle`) | 2.0 |
+   | `clip.foot_contact.plants` | 1 to 2 per foot on the three traveling clips | ge 1 |
+   | `clip.foot_contact.skate` | 0.0120 m (`walk_back`) | 0.025 |
+   | `clip.foot_contact.penetration` | 1.3e-6 m | 0.005 |
+   | `bake.non_empty` | 4.3861 percent (`run`) | ge 1.0 |
+   | `bake.in_frame` | 60 px (`strafe_right`) | ge 1.0 |
+   | `bake.pivot` | 1 px, every clip | 2.0 |
+   | `bake.landmark_golden` | 0 px, all 720 landmarks | 1.0 |
+   | `clip.root_travel`, `root_bob` | 5.6e-9 m, 0.0545 m (`run`) | 0.02, 0.15 |
+   | `atlas.*`, 3 rules | 0 defects on five atlases | 0 |
+
+   The goldens were rewritten once with `MARROWFALL_UPDATE_GOLDENS=1` and a
+   second bake with the variable unset read all 720 landmarks at 0 px.
+
+8. **The survivor plays five clips now, and the game already knew.**
+   `spec.ron` gains `strafe_left` and `strafe_right`, which
+   `render/src/draw.rs` has mapped `Locomotion::StrafeLeft/StrafeRight` to
+   since the movement work. The bake renders **1,472 frames** against 848,
+   the pack writes five atlases, and the contact sheet is 4416 by 1410
+   downscaled to 2048 by 654.
+
+9. **A refused fit no longer lands where the bake reads it.** T13's
+   correction 12 left this open: `stages::retarget` wrote its output to
+   `art/animations/` and only then refused it. It writes to
+   `art/staging/fits/<clip>.glb` and copies the file into place after the
+   gates pass, so the staged fit stays behind either way, which is also what
+   lets a clip be its own source, and correction 5's whole diagnosis was read
+   off files that refusal left behind.
+
+10. **`cargo art fetch` owns the refit, because nothing did.** The canonical
+    rig is shared, so replacing it leaves every clip fitted to a rig that is
+    gone. A Meshy clip was `Skipped("arrives with the rig stage")` forever
+    and `stages::rig` skips any clip already in the library, so nothing
+    refitted one. Now a clip with a file on disk takes the same staleness
+    test whoever sold it, and the source is the vendor's own download when
+    one is staged and the committed source under `art/animations/sources/`
+    when there is none, in the canonical convention `[fingerprints]` names it
+    in, never the fitted clip itself: correction 19. Two consequences,
+    both wanted: a Mixamo clip is refitted from the FBX under
+    `art/staging/downloads/` without a browser session, which is what made
+    this task's five refits possible on a machine that cannot log in, and
+    `--force` is still what replaces a file nobody recorded.
+
+11. **`cargo art promote` is the operation `art/skeletons/README.md`
+    described and nobody could run.** `humanoid.glb` is a character's
+    armature, and the README said so without saying how. The verb runs every
+    `rig.*` rule on `model.glb` first, refuses a canonical rig that fails one
+    because every character on the skeleton inherits it, then runs
+    `promote_rig.py`: keep the armature, drop the mesh, the materials and the
+    vendor's bind-pose action, export at rest. Rust reads the result back and
+    refuses any joint further than 1e-4 m from the character's; the committed
+    pair reads **1.02e-5 m**, which is the `f32` a GLB stores a joint
+    position in, and `the_canonical_rig_carries_the_characters_own_joints`
+    pins it. `strip_animation.py` is deleted and `armature.py` holds the
+    skin carrier, `keep_only` and the one export in this repository that
+    carries an armature.
+
+12. **`Stage::Download` runs Blender, so it hashes Blender.** T15a gave it
+    `rigged.glb` and the profile. It also runs `check_source.py` and
+    `retarget_animation.py`, so an edit to either left a bought clip fitted
+    by code that had been fixed. It now hashes `lock::blender_inputs`, the
+    same digest `Bake` and every `Fetched` record push: the canonical rig, the
+    profile, the Blender build and every script. `cargo art status` reads
+    `unknown` for that row on a machine with no Blender, exactly as `Bake`
+    already did.
+
+13. **The concept stage is the one row `status` still calls stale, and no
+    hand fixes it.** Its fingerprint reads the description, the character
+    kind and `pose_instruction`, and none of the four views. All three are
+    byte identical to the initial commit, which is also where the recorded
+    `57766a7c49b5516c` comes from, so what moved is the digest function and
+    not the prompt: T13 destructured the spec and prefixed every stage with
+    its kind. Making it read `done` needs either a regeneration, which spends
+    OpenAI money and returns different art that would invalidate a 30-credit
+    mesh, or a hand-written fingerprint, which is what T13's correction 7
+    forbids. So `cargo art status survivor` reads five of six done and names
+    the sixth, and the honest reading of that row is "the views on disk have
+    never been fingerprinted under this scheme".
+
+14. **What the first pass taught, and the second one fixed.** Three faults
+    only a real regeneration could find, each caught by a gate rather than by
+    eye: the plant lock firing on an in-place clip (correction 5), the floor
+    snap reading a joint where the sole is what touches (correction 4), and
+    `walk_back` failing the loop rule it had been the negative control for
+    (correction 6). Each was fixed in the pipeline and the whole run was
+    repeated; nothing was hand-edited and no limit was widened except
+    `humerus_below_horizontal`, whose headroom is written beside it.
+
+15. **The rule list is 67.** T12's 67 minus `bake.forearm_roll`, which
+    watched a spec field that is gone, plus `clip.posture` from correction 17.
+    `--list-rules` prints 67.
+
+16. **The transfer read a source bone's own axis where the direction to its
+    child belongs, and two of the five clips shipped a hunch.**
+    `reference_pose` aims `CHILD_AXIS`, a bone's local `+Y`, at the table
+    row. That is Blender's own convention and correction 2 holds our rig to
+    it within 0.614 degrees, but no vendor rig is held to anything: the rig
+    `idle.glb` and `run.glb` were authored on points its `Hips` **97.612
+    degrees** off the direction to its own `Spine`, its `Head` 26.002 off
+    `head_end` and its `Spine2` 10.157 off `Neck`, and Mixamo's `Neck` sits
+    16.933 off its `Head`. Aiming such a bone's own axis at the table puts the
+    source rig in a **different body pose** from ours, and the whole
+    difference lands in the keys. Every child's local key compensates, so each
+    bone still points exactly where the source's bone points and `clip.swing`
+    reads its storage floor, while the joints ride the wrong `Hips` frame.
+    Frame 0 of the shipped `idle.glb` read **97.03 degrees** of hips to spine
+    against the 2.56 its own source carries, which on the atlases is a
+    hunched, crouched figure in every frame of every direction of `idle` and
+    `run`.
+
+    The fix is one step in front of the aim, and it is convention free because
+    it reads JOINTS. `transfer.child_basis` measures, per role, the turn that
+    puts `CHILD_AXIS` on the rest direction to the child `[profile.tails]`
+    names, and `transfer.re_rolled` applies it to the source's rest and to
+    every frame of its clip. A rotation on the right moves no joint, so this
+    changes only which direction each source bone calls its own. Then
+    `R_target(t) = R_source(t) @ inv(A_source) @ A_target` is untouched,
+    `swing_twist` still refuses the half turn where no shortest arc exists,
+    and both existing readings hold: `clip.swing` stays a storage floor at
+    **0.0015 degrees** worst of five clips, because the sidecar records the
+    same re-rolled frames the fit was built from, and `clip.twist` reads
+    **8.929**.
+
+    **Our own rig is not re-rolled.** `rig.child_axis` holds it to 2 degrees
+    and reads 0.614 at worst, the clip gates state its bone frames, and
+    correction 17 reads whatever that 0.614 leaves, in meters.
+
+    Refitting the same two library copies with the fix reads hips to spine
+    **2.56** (`idle`) and **23.84** (`run`) degrees, their sources' own
+    reading to two decimals. What is left is a **4.60 degree roll** of `Hips`
+    about the spine axis, which no aim table can pin on a bone with three
+    children and which is the old rig's own roll against the new one's: the
+    other 17 bones of the two files disagree by 0.09 to 2.94 degrees for the
+    same reason.
+
+17. **`clip.posture` is the rule the other thirteen could not be.** Every
+    other `clip.*` rule reads a direction or the root's travel, so a fit whose
+    bones all pointed correctly out of a wrong `Hips` frame passed all of them
+    and shipped. This one reads POSITIONS: per frame, every joint against its
+    own rig's root joint, the source's sized by the femur ratio
+    `clip.stride_ratio` records, worst frame per role, in meters. An ERROR
+    rule at **0.12 m**, with the calibration and both negatives in the limits
+    table.
+
+    Measured in Rust, on the delivered GLB and the sidecar, so it has a
+    negative control in CI with no Blender: the sidecar carries the source's
+    world joints beside its rotations, `check/gltf_clip.rs` composes ours out
+    of the file, and `every_file_side_rule_reports_on_the_synthetic_pair` is
+    what fails if the call that measures is deleted.
+
+    **It is not a second `clip.swing`.** A hand turned 3 degrees moves no
+    joint below it, so `clip.swing` reports the 3 degrees and this reads
+    1e-6; a body displaced 0.25 m with every rotation left alone reads 0.2204
+    m here and nothing there. Both cases are tests in `test_clip.rs`.
+
+18. **What each clip was refit from, and `library.lock` now says so.** The
+    new `from` row records the path, because the digest beside it cannot. A
+    Mixamo clip is refit from the vendor's own FBX under
+    `art/staging/downloads/`; `idle` and `run` are refit from
+    `art/animations/sources/<clip>.glb`, the copies this repository shipped
+    before this task replaced the canonical rig, now committed as sources of
+    their own. Correction 1 measures why there is no third option: this key
+    lists **zero** animation tasks and every recorded animation id answers
+    404.
+
+    **A clip that is its own source can only ever confirm itself**, and that
+    is how the hunch above survived a second run of every gate. The first
+    refit overwrote the only copy of the motion, so the second refit read its
+    own previous output: `source.child_axis` reported **0.000** on `hips` and
+    `retarget.idle.1.source.json` recorded a source rest whose `Hips` sits
+    2.412 degrees off vertical, which is the conformed rig's own reading
+    rather than the old rig's 97.802. The gates were never missing and the
+    rule was never broken. `crates/xtask-art/tests/fixtures/fetch.run.1.json`
+    is the committed proof: read on the library's own `run.glb` before either
+    refit, `source.child_axis` carries **97.6123** on `hips` and 10.1565 on
+    `spine_upper`, and re-recording it after this task's refit reproduces that
+    file byte for byte. What the reports described was the wrong file.
+
+    Fresh Meshy animation tasks on the new rig are the only route to a
+    first-hand source, and this document records no price for
+    `POST /openapi/v1/animations`, so what one would cost is an open question
+    rather than a measurement.
+
+19. **A refit reads a source, and never the clip it is replacing.**
+    `art/animations/sources/idle.glb` and `run.glb` are byte for byte the
+    copies at `HEAD`, LFS tracked, sha256 `95e3c3a5` and `5bca1005`, and
+    `library.lock` records both under `from`. `clip_source` takes the vendor's
+    download first and that file second; the library's own copy is no longer
+    a candidate, and a bought clip whose source is missing is refused with
+    the path to restore. Refitting the five from the sources reproduces every
+    fitted GLB byte for byte, which is what says the committed art is a fit
+    of the purchase rather than a fit of a fit.
+
+    **The Mixamo FBX files do not join them.** Adobe grants the use of the
+    animation and forbids republishing the file, which is what
+    `MotionSource::redistributable` says and why correction 6 deleted the
+    committed `walk_back.glb`. Nothing is lost: a product id and a browser
+    session export the same file again, so the vendor is still first-hand
+    for those three, and the gitignored `art/staging/downloads/` is where
+    they stay.
+
+20. **Two calibrations were read on three clips and now read on five.**
+    `clip.fps_grid` worst **1.6e-6** frames, on `walk_back` in
+    `retarget.walk_back.1.json`, where the three read 9.5e-7, and the limit
+    of 1e-4 sits 62x over it. `framing.py`'s `SAME_BODY` worst **1.007e-5**,
+    every clip's rest span of 166.8788 armature units against the character's
+    166.8805, where the three read 1.227e-6, and the limit of 1e-4 sits 9.9x
+    over it. Both are re-readings of the same rules on the replaced rig, not
+    new rules, and `clip.fps_grid.range` still reads 0 frames on all five.
+
+21. **`spec.ron`'s concept prompt keeps its em-dash and its British
+    spellings.** "armour", "jewellery" and the dash after "hard but underfed"
+    at `spec.ron:9` are inputs to the concept fingerprint, so editing any of
+    them would invalidate the four views and the mesh built from them. The
+    house rule covers the prose we write, not a prompt the art on disk was
+    generated from.
+
+22. **A settings seed is not an import sidecar, and the game measured it.**
+    On a checkout whose import cache did not hold the regenerated atlases,
+    `godot --headless --path project --quit-after 3` printed
+
+    ```text
+    ERROR: [marrowfall] res://assets/characters/survivor/idle.png: can't load
+    resource of class: 'Texture2D' from path:
+    'res://assets/characters/survivor/idle.png'
+       at: render::bridge::GameBridge::load_character (crates/render/src/bridge.rs:332)
+    ```
+
+    The pack wrote a 13 line `.import` file holding `[remap]`, the importer,
+    the type, the `uid` and five `[params]`, and its own doc claimed Godot
+    restores everything else "byte for byte on the next import, so omitting
+    them loses nothing". That is false for the runtime: it resolves a texture
+    through the `path.bptc=` line and the `[deps]` block, and refuses an atlas
+    whose sidecar carries neither. The stub writer predates T15b, which
+    re-exposed it by rewriting all five sidecars.
+
+    **The fix is the pipeline, not the five files.** `stages::pack` seeds the
+    settings it owns, `uid` included, and then hands the whole project to
+    `godot --headless --import --path project`, so what Godot writes is what
+    is committed. `godot.rs` is the one place Godot is invoked, mirroring
+    `blender.rs`. The exit code cannot be the gate: measured on 4.7.2, a PNG
+    Godot fails to import leaves the run at exit 0 and prints `ERROR: Error
+    importing 'res://…'` on stderr only, so the stage fails on that line, and
+    a missing Godot fails the stage rather than shipping seeds.
+
+    **Proof.** Re-running `cargo art run survivor --only pack` on a wiped
+    cache reproduced the five atlases, the manifest, the contact sheet, the
+    ten goldens and `spec.lock` byte for byte, and wrote the six sidecars
+    identical to what `godot --headless --import` had written. A second import
+    pass then leaves `git diff -- 'project/**/*.import'` clean, and the game
+    run above prints no `ERROR` line at all.
+
+    **The lock is unchanged, deliberately.** The Godot build is not in the
+    `pack` row: `cargo art status` has to answer on a machine with neither
+    tool, which is why even the Blender build sits only in the rows that
+    render. The sidecars are output rather than input, and
+    `LOCAL_PIPELINE_VERSION` is not bumped because it is shared with the paid
+    model stage while this re-pack happens here with its output committed and
+    reviewed. `sheet.png.import` joins the commit for the first time, because
+    the import writes one beside the committed contact sheet and committing it
+    is what stops a fresh import minting a new `uid`.
+
+    **A fresh checkout still imports once, and always did.** `.godot/` is
+    gitignored, so the `.ctex` files an atlas is loaded from exist only after
+    an import; running the project without one fails on
+    `res://assets/tiles/ground_atlas.png` too, whose sidecar this branch never
+    touched. `setup.sh`'s `setup_game` already runs that pass, so `README.md`
+    needs no new step.

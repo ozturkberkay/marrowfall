@@ -93,6 +93,15 @@ jobs:
       - name: Test workspace
         run: cargo nextest run --workspace
 
+      # The art a checkout has: the four concept views and the conformed
+      # `model.glb`, so this runs the `concept.*` and `rig.*` families in
+      # Rust, with no Blender. The four stages that read gitignored staging
+      # print no art on disk here, and `clip.*`, `bake.*`, `atlas.*` and
+      # `gltf.validator` reach CI through the workspace tests above, off the
+      # committed clips, goldens and atlases.
+      - name: Measure the committed art
+        run: cargo run --package xtask-art -- check
+
       # The judgment half of the art review. Drawn from the atlases already
       # committed, so no Blender is involved: a reviewer downloads the picture
       # of what ships and the sheet beside the atlas is its thumbnail.

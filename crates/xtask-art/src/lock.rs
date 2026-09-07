@@ -370,7 +370,6 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
         directions,
         render_size,
         sprite_height,
-        forearm_roll,
         trim_start,
     } = bake;
     let paths = Paths::new(root, name);
@@ -405,13 +404,15 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
         }
         Stage::Rig | Stage::Download => {
             parts.push(format!("{height_meters}/{skeleton}/{cleanup}/{symmetry}"));
-            // The download stage renames and conforms what it fetched, so it
-            // reads the vendor's file and the profile that drives both. The
-            // rig stage reads neither: it is the paid one, and editing a
+            // The download stage renames and conforms what it fetched and
+            // fits every bought clip onto the result, so it reads the
+            // vendor's file plus everything a fit reads: the canonical rig,
+            // the profile, the Blender build and the scripts. The rig stage
+            // reads none of it: it is the paid one, and editing a
             // `[profile.tails]` row must not bill.
             if stage == Stage::Download {
                 parts.push(derived_file(&paths.rigged_glb())?);
-                parts.push(committed_file(&Profile::path(root, skeleton))?);
+                parts.push(blender_inputs(root, skeleton, blender.read()?)?);
             }
             // The action ids, not the names: renaming an animation in the
             // library must not trigger a re-rig, which is several charges.
@@ -440,9 +441,7 @@ pub fn fingerprint(stage: Stage, inputs: &Inputs<'_>) -> Result<String> {
             // `sprite_height` is deliberately excluded, it is Pack's input,
             // and re-rendering hundreds of frames to change a downscale
             // target would be pure waste.
-            parts.push(format!(
-                "{directions}/{render_size}/{forearm_roll}/{trim_start}"
-            ));
+            parts.push(format!("{directions}/{render_size}/{trim_start}"));
             parts.push(blender_inputs(root, skeleton, blender.read()?)?);
             // The character it renders. The download stage writes it, so a
             // character that has not reached that stage reads absent.

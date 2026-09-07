@@ -5,13 +5,11 @@
 //! it stays quiet on art it should accept.
 //!
 //! The negative is the **committed rig** wherever real broken art exists,
-//! because that is the failure this pipeline shipped. Seven rules rejected
-//! it, and the rename fixed three of them: `names_standard`, `bone_set` and
-//! `parents` now pass on the art on disk. Their negative is therefore the rig
-//! as it stood before the rename, committed as a fixture for exactly that.
-//! Four rules still reject the live rig, and they are geometry a rename
-//! cannot move. The gates become required CI checks when the survivor is
-//! regenerated, so these tests assert the failure rather than fixing it.
+//! because that is the failure this pipeline shipped. Nothing on disk breaks
+//! a rule today: the rename closed `names_standard`, `bone_set` and
+//! `parents`, and the conform closed the geometry the rename could not move.
+//! The negative for all six is therefore the rig as it stood before the
+//! rename, committed as a fixture for exactly that.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -25,25 +23,19 @@ use xtask_art::library::HUMANOID;
 use crate::rigs::{HEIGHT_METERS, HUMERUS_BELOW_HORIZONTAL, SyntheticRig};
 use crate::support::{committed_glb, repo_root};
 
-/// The four rules the committed rig still breaks after the rename. Every
-/// other rule must stay quiet on it, or the gates could never be made
-/// required. All four are geometry, and T15's regeneration is what moves
-/// them.
-const BROKEN_TODAY: [&str; 4] = [
-    "rig.child_axis",
-    "rig.humerus_angle",
-    "rig.mirror_direction",
-    "rig.mirror_length",
-];
+/// Nothing. The conform turns every joint's rest axis onto its own tail and
+/// mirrors the pairs, and `humerus_below_horizontal` covers where this
+/// character's arms hang. Every negative below is the pre-rename fixture or
+/// a synthetic rig.
+const BROKEN_TODAY: [&str; 0] = [];
 
-/// The three the rename fixed, and the fixture that still fails them. The
-/// file is `humanoid.glb` as it stood at the commit before the rename, kept
-/// because decision 11 wants real broken art as the negative and this is the
-/// art we shipped.
-const BROKEN_BEFORE_THE_RENAME: [&str; 7] = [
+/// The three the rename fixed and the three the conform did, and the fixture
+/// that still fails all six. The file is `humanoid.glb` as it stood at the
+/// commit before the rename, kept because decision 11 wants real broken art
+/// as the negative and this is the art we shipped.
+const BROKEN_BEFORE_THE_RENAME: [&str; 6] = [
     "rig.bone_set",
     "rig.child_axis",
-    "rig.humerus_angle",
     "rig.mirror_direction",
     "rig.mirror_length",
     "rig.names_standard",
@@ -272,10 +264,10 @@ fn every_rule_reports_on_good_art_and_on_bad() {
     }
 }
 
-// --- the committed rig, which seven rules reject --------------------------
+// --- the committed rig, which every rule accepts --------------------------
 
 #[test]
-fn the_committed_rig_breaks_exactly_the_four_rules_the_rename_cannot_fix() {
+fn the_committed_rig_breaks_no_rule_at_all() {
     for file in COMMITTED {
         assert_eq!(
             broken(&findings_for(&committed_glb(file))),
@@ -289,7 +281,7 @@ fn the_committed_rig_breaks_exactly_the_four_rules_the_rename_cannot_fix() {
 /// rig as it was. Without this fixture the three rules would have no negative
 /// control at all, and a rule with no negative proves nothing.
 #[test]
-fn the_rig_before_the_rename_breaks_exactly_the_seven_rules_the_design_names() {
+fn the_rig_before_the_rename_breaks_exactly_the_six_rules_the_design_names() {
     assert_eq!(
         broken(&findings_for(&committed_glb(PRE_RENAME))),
         BROKEN_BEFORE_THE_RENAME
@@ -357,77 +349,98 @@ fn the_rig_before_the_rename_hung_four_bones_from_the_wrong_parent() {
     );
 }
 
-/// The audit's sideways `Hips`, whose own +Y points out of a hip socket
-/// instead of up the spine, and the head pitched off its own child. `Spine2`
-/// joins them: its own tail row could not resolve before the rename, so this
-/// is the first time anything has measured it.
+/// The audit's sideways `Hips` read 97.617 degrees off the direction to its
+/// own child on the rig this replaces, and the head 26.002. The conform turns
+/// each joint onto its tail, so the worst reading left is a forearm and it is
+/// under a third of the published band.
 #[test]
-fn the_committed_rigs_hips_and_head_axes_point_the_wrong_way() {
+fn every_joint_of_the_committed_rig_points_at_its_own_child() {
     let findings = findings_for(&committed_glb(COMMITTED[0]));
 
-    assert_eq!(
-        rejected(&findings, "rig.child_axis"),
-        ["Head", "Hips", "Spine2"]
-    );
-    assert!((measured(&findings, "rig.child_axis", "Spine2") - 10.157).abs() < 0.01);
+    assert!(rejected(&findings, "rig.child_axis").is_empty());
     assert!(
-        (measured(&findings, "rig.child_axis", "Hips") - 97.617).abs() < 0.01,
-        "measured {}, and 97.617 degrees was measured by hand",
+        (measured(&findings, "rig.child_axis", "Hips") - 0.000).abs() < 0.01,
+        "measured {}, and 0.000 degrees was measured by hand",
         measured(&findings, "rig.child_axis", "Hips")
     );
-    assert!((measured(&findings, "rig.child_axis", "Head") - 26.002).abs() < 0.01);
-    // Every limb bone in this rig does point at its child.
-    assert!(measured(&findings, "rig.child_axis", "LeftArm") < 0.01);
+    assert!((measured(&findings, "rig.child_axis", "LeftForeArm") - 0.614).abs() < 0.01);
+    assert!((measured(&findings, "rig.child_axis", "Head") - 0.000).abs() < 0.01);
 }
 
+/// The rig this replaces read 1.722 to 3.678 percent on five of its six
+/// segments. The conform averages each pair onto X = 0, so what is left is
+/// the `f32` a GLB stores a joint position in: `model.glb`, the byte edit,
+/// reads under 2.3e-5, and the canonical rig, which is that file carried
+/// through Blender once, reads under 0.0026. 385x under the published band
+/// on the worst segment of the worse file.
 #[test]
-fn the_committed_rig_is_asymmetric_by_up_to_three_point_seven_percent() {
-    let findings = findings_for(&committed_glb(COMMITTED[0]));
+fn the_committed_rig_is_symmetric_to_the_f32_it_is_stored_in() {
+    let promoted = findings_for(&committed_glb(COMMITTED[0]));
+    let conformed = findings_for(&committed_glb(COMMITTED[1]));
 
-    assert_eq!(
-        rejected(&findings, "rig.mirror_length"),
-        ["Foot", "ForeArm", "Leg", "Shoulder", "UpLeg"],
-        "only the upper arms are inside the 1 percent band"
-    );
-    assert!((measured(&findings, "rig.mirror_length", "Foot") - 3.678).abs() < 0.01);
-    assert!((measured(&findings, "rig.mirror_length", "Arm") - 0.945).abs() < 0.01);
+    for rule in ["rig.mirror_length", "rig.mirror_direction"] {
+        assert!(rejected(&promoted, rule).is_empty());
+        assert!(rejected(&conformed, rule).is_empty());
+        for segment in ["Arm", "ForeArm", "Foot", "Leg", "Shoulder", "UpLeg"] {
+            assert!(
+                measured(&conformed, rule, segment) < 2.3e-5,
+                "{rule} {segment}"
+            );
+            assert!(
+                measured(&promoted, rule, segment) < 0.0026,
+                "{rule} {segment}"
+            );
+        }
+    }
 }
 
+/// `cargo art promote` copies the character's own armature, so the two
+/// committed rigs carry the same joints in the same places. This is the
+/// distance the promotion refuses past 1e-4 m, measured on the pair that
+/// ships.
 #[test]
-fn the_committed_rigs_left_and_right_segments_point_different_ways() {
-    let findings = findings_for(&committed_glb(COMMITTED[0]));
+fn the_canonical_rig_carries_the_characters_own_joints() {
+    let canonical = Skeleton::read(&committed_glb(COMMITTED[0])).expect("the canonical rig");
+    let character = Skeleton::read(&committed_glb(COMMITTED[1])).expect("the character");
 
-    assert_eq!(
-        rejected(&findings, "rig.mirror_direction"),
-        ["Foot", "ForeArm", "Leg"]
-    );
-    assert!((measured(&findings, "rig.mirror_direction", "Foot") - 2.162).abs() < 0.01);
-    assert!((measured(&findings, "rig.mirror_direction", "ForeArm") - 1.453).abs() < 0.01);
+    let worst = canonical
+        .joints()
+        .iter()
+        .map(|joint| {
+            let same = character
+                .get(&joint.name)
+                .expect("the character's own joint");
+            joint.position().distance(same.position())
+        })
+        .fold(0.0_f64, f64::max);
+
+    assert_eq!(canonical.joints().len(), character.joints().len());
+    assert!((worst - 1.02e-5).abs() < 1e-7, "{worst:e}");
 }
 
-/// The prompt asks for 40 degrees and the auto-rigger delivered 59, which
-/// nothing has ever checked.
+/// The prompt asks for 40 degrees and every generation Meshy has made from
+/// these concept views delivers 59. `humerus_below_horizontal` is calibrated
+/// on that, and the reading is where the mesh's arms are rather than where
+/// the joints were put.
 #[test]
 fn the_committed_rigs_arms_hang_nineteen_degrees_below_the_target() {
     let findings = findings_for(&committed_glb(COMMITTED[0]));
 
-    assert_eq!(
-        rejected(&findings, "rig.humerus_angle"),
-        ["LeftArm", "RightArm"]
-    );
-    assert!((measured(&findings, "rig.humerus_angle", "LeftArm") - 19.141).abs() < 0.01);
-    assert!((measured(&findings, "rig.humerus_angle", "RightArm") - 19.350).abs() < 0.01);
+    assert!(rejected(&findings, "rig.humerus_angle").is_empty());
+    for arm in ["LeftArm", "RightArm"] {
+        assert!((measured(&findings, "rig.humerus_angle", arm) - 19.324).abs() < 0.01);
+    }
     let message = &findings
         .iter()
         .find(|finding| finding.rule == "rig.humerus_angle")
         .unwrap()
         .message;
-    assert!(message.contains("59.1"), "got: {message}");
+    assert!(message.contains("59.3"), "got: {message}");
 }
 
 // --- the committed rig, calibration: what must stay quiet -----------------
 
-/// 1.6652 m against the spec's 1.7 is 2.05 percent, inside the 5 percent
+/// 1.6688 m against the spec's 1.7 is 1.84 percent, inside the 5 percent
 /// band, so the one height rule accepts the rig as it stands.
 #[test]
 fn the_committed_rig_is_two_percent_short_and_that_is_allowed() {
@@ -435,8 +448,8 @@ fn the_committed_rig_is_two_percent_short_and_that_is_allowed() {
     let measured = measured(&findings, "rig.world_height", COMMITTED[0]);
 
     assert!(
-        (measured - 2.049).abs() < 0.01,
-        "measured {measured} percent, and 2.05 was measured by hand"
+        (measured - 1.835).abs() < 0.01,
+        "measured {measured} percent, and 1.84 was measured by hand"
     );
     assert!(rejected(&findings, "rig.world_height").is_empty());
 }
@@ -605,8 +618,8 @@ fn a_bone_named_twice_is_rejected() {
 
 #[test]
 fn an_arm_lifted_out_of_the_band_is_rejected() {
-    // 40 degrees below horizontal is the target and 15 is the band, so
-    // lifting the left forearm to level is 40 degrees out.
+    // 40 degrees below horizontal is the target and 25 is the band, so
+    // lifting the left forearm to level reads 40 degrees out.
     let level = DVec3::new(0.0, 0.26 * HUMERUS_BELOW_HORIZONTAL.to_radians().sin(), 0.0);
     let findings = findings_of(&SyntheticRig::conformant().moved("LeftForeArm", level));
 
@@ -1050,6 +1063,6 @@ fn a_character_that_declines_symmetry_skips_both_rig_mirror_rules() {
             );
         }
     }
-    // And nothing else changed: the rig's other defects are still defects.
-    assert_eq!(broken(&findings), ["rig.child_axis", "rig.humerus_angle"]);
+    // And nothing else changed: every other rule still accepts the rig.
+    assert_eq!(broken(&findings), BROKEN_TODAY);
 }

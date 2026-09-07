@@ -199,7 +199,7 @@ fn a_spec_that_declares_neither_flag_loads_with_both_off() {
         remesh: Remesh(target: 30000, quads: true),
         texture: Texture(pbr: true, resolution: K2),
         bake: Bake(directions: 8, render_size: 256, sprite_height: 160,
-                   forearm_roll: 0.0, trim_start: 0.0),
+                   trim_start: 0.0),
     )"#;
 
     let spec: CharacterSpec = ron::from_str(ron).unwrap();

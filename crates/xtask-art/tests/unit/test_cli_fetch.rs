@@ -104,6 +104,7 @@ fn a_record(glb: &[u8]) -> LibraryLock {
             product_id: PRODUCT.to_owned(),
         },
         ClipFiles {
+            from: "art/staging/downloads/walk_back.fbx",
             download: b"the download",
             glb,
         },
@@ -158,6 +159,47 @@ fn motion_that_arrives_another_way_is_skipped_with_the_reason() {
 
     assert!(reason("run").contains("rig stage"), "bought, not fetched");
     assert!(reason("wave").contains("authored"));
+}
+
+/// The rig every clip is fitted onto is shared, so replacing it leaves a
+/// bought clip fitted to a rig that is gone. Nothing can buy it again: the
+/// vendor sells motion attached to a rig task and that task expires, so the
+/// copy in hand is what gets refitted.
+#[test]
+fn a_bought_clip_already_on_disk_is_refitted_when_the_rig_moves() {
+    let library = a_library();
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "run",
+        MotionSource::Meshy { action_id: 15 },
+        ClipFiles {
+            from: "art/animations/run.glb",
+            download: b"the vendor clip",
+            glb: b"the fit",
+        },
+        FITTED_BY,
+        a_verdict(),
+    );
+    let digest = lock.fetched["run"].glb.clone();
+    let plan = |fitted_by: &str| {
+        fetch_plan(
+            &library,
+            &lock,
+            &["run".to_owned()],
+            &OnDisk {
+                glb: BTreeMap::from([("run".to_owned(), digest.clone())]),
+                retarget: BTreeMap::from([(HUMANOID.to_owned(), fitted_by.to_owned())]),
+            },
+            false,
+        )
+        .unwrap()
+    };
+
+    assert_eq!(plan(FITTED_BY), vec![FetchStep::Cached("run".to_owned())]);
+
+    let steps = plan("0123456789abcdef");
+
+    assert!(why(&steps, "run").contains("fitted"), "{steps:?}");
 }
 
 #[test]
@@ -254,6 +296,7 @@ fn an_aim_table_row_sends_every_recorded_clip_back_to_be_fitted() {
             product_id: PRODUCT.to_owned(),
         },
         ClipFiles {
+            from: "art/staging/downloads/walk_back.fbx",
             download: b"the download",
             glb: b"the glb",
         },
@@ -443,13 +486,172 @@ async fn serve_mixamo(server: &MockServer) {
 #[tokio::test]
 async fn a_run_with_nothing_to_fetch_never_asks_for_a_credential() {
     // No token, no base URL: if this touched the network or the browser it
-    // could not pass.
-    let library = AnimationLibrary::template();
+    // could not pass. Every clip here is bought with the rig and none has a
+    // file yet, so the plan skips all of them.
+    let mut library = AnimationLibrary::template();
+    library
+        .animations
+        .retain(|_, animation| matches!(animation.source, MotionSource::Meshy { .. }));
+    assert!(
+        !library.animations.is_empty(),
+        "something has to be skipped"
+    );
     let dir = a_repo(&library);
     let mut env = EnvGuard::new();
     env.remove("MARROWFALL_MIXAMO_TOKEN");
 
     fetch(dir.path(), &[], false).await.unwrap();
+}
+
+/// The rule the download stage already follows, applied to the other
+/// provider: a file on disk is never asked for again. Mixamo needs a browser
+/// session, so a re-fit on a machine that cannot open one must still work.
+///
+/// No token and no base URL here: asking the vendor could not succeed.
+#[tokio::test]
+async fn a_vendor_download_already_on_disk_is_refitted_and_never_asked_for() {
+    let library = a_library();
+    let dir = a_repo(&library);
+    let staged = AnimationLibrary::staged_download(dir.path(), "walk_back", "fbx");
+    std::fs::create_dir_all(staged.parent().unwrap()).unwrap();
+    std::fs::write(&staged, an_fbx()).unwrap();
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.remove("MARROWFALL_MIXAMO_TOKEN")
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(0.0));
+
+    fetch(dir.path(), &["walk_back".to_owned()], false)
+        .await
+        .unwrap();
+
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    assert!(
+        argv.contains(staged.to_str().unwrap()),
+        "fitted from the file already here: {argv}"
+    );
+    assert!(
+        argv.contains("--convention\nmixamo"),
+        "a vendor download is in the vendor's names: {argv}"
+    );
+    assert!(library.glb(dir.path(), "walk_back").exists());
+}
+
+/// A bought clip has no vendor file to fall back on, so the committed source
+/// beside the library is what it is refit from, in the canonical convention
+/// whoever sold the motion.
+///
+/// Never the library's own copy: that file is the previous fit, so a refit
+/// would measure its own output and the motion would drift a little on every
+/// run.
+#[tokio::test]
+async fn a_bought_clip_is_refitted_from_the_committed_source_never_its_own_copy() {
+    let mut library = a_library();
+    // The stub hands back the same open curve every fetch test uses, and it
+    // does not return to its start pose.
+    library.animations.get_mut("run").unwrap().loops = false;
+    let dir = a_repo(&library);
+    let bytes = crate::rigs::SyntheticRig::conformant().to_gltf();
+    let glb = library.glb(dir.path(), "run");
+    std::fs::create_dir_all(glb.parent().unwrap()).unwrap();
+    std::fs::write(&glb, &bytes).unwrap();
+    let source = AnimationLibrary::source_clip(dir.path(), "run");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, &bytes).unwrap();
+    // Recorded as fitted by a rig that is no longer here, which is what the
+    // promotion of a new canonical rig leaves behind.
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "run",
+        MotionSource::Meshy { action_id: 15 },
+        ClipFiles {
+            from: "art/animations/sources/run.glb",
+            download: bytes.as_bytes(),
+            glb: bytes.as_bytes(),
+        },
+        FITTED_BY,
+        a_verdict(),
+    );
+    lock.save(dir.path()).unwrap();
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.remove("MARROWFALL_MIXAMO_TOKEN")
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap())
+        .set(
+            "MARROWFALL_STUB_ARGV",
+            dir.path().join("argv.txt").to_str().unwrap(),
+        )
+        .set("MARROWFALL_STUB_FINDINGS", &a_retarget_report(0.0));
+
+    fetch(dir.path(), &["run".to_owned()], false).await.unwrap();
+
+    let argv = std::fs::read_to_string(dir.path().join("argv.txt")).unwrap();
+    assert!(
+        argv.contains(source.to_str().unwrap()),
+        "the committed source is what a refit reads: {argv}"
+    );
+    assert!(
+        !argv.contains(glb.to_str().unwrap()),
+        "a refit never reads the clip it is about to overwrite: {argv}"
+    );
+    assert!(
+        argv.contains("--convention\nstandard"),
+        "a committed clip is in the canonical names: {argv}"
+    );
+    let fetched = LibraryLock::load(dir.path()).unwrap().fetched["run"].clone();
+    let verdict = fetched
+        .verdict
+        .clone()
+        .expect("a refit is recorded like any other fit");
+    assert_eq!(verdict.worst, Severity::Info);
+    // Which file was fitted, not only its digest: the digest beside it cannot
+    // tell the source apart from the fit it produced.
+    assert_eq!(fetched.from, "art/animations/sources/run.glb");
+}
+
+/// A bought clip whose committed source is gone is refused, not fitted from
+/// itself. The message names the file to restore.
+#[tokio::test]
+async fn a_bought_clip_with_no_committed_source_is_refused() {
+    let mut library = a_library();
+    library.animations.get_mut("run").unwrap().loops = false;
+    let dir = a_repo(&library);
+    let bytes = crate::rigs::SyntheticRig::conformant().to_gltf();
+    let glb = library.glb(dir.path(), "run");
+    std::fs::create_dir_all(glb.parent().unwrap()).unwrap();
+    std::fs::write(&glb, &bytes).unwrap();
+    // Fitted by a rig that is no longer here, so a refit is wanted.
+    let mut lock = LibraryLock::default();
+    lock.record(
+        "run",
+        MotionSource::Meshy { action_id: 15 },
+        ClipFiles {
+            from: "art/animations/sources/run.glb",
+            download: bytes.as_bytes(),
+            glb: bytes.as_bytes(),
+        },
+        FITTED_BY,
+        a_verdict(),
+    );
+    lock.save(dir.path()).unwrap();
+    let stub = a_blender_stub(dir.path());
+    let mut env = EnvGuard::new();
+    env.remove("MARROWFALL_MIXAMO_TOKEN")
+        .set("MARROWFALL_BLENDER_BIN", stub.to_str().unwrap());
+
+    let error = fetch(dir.path(), &["run".to_owned()], false)
+        .await
+        .expect_err("nothing can refit a clip whose only source is itself");
+
+    let said = format!("{error:#}");
+    assert!(
+        said.contains("art/animations/sources/run.glb"),
+        "the refusal names the source to restore: {said}"
+    );
 }
 
 #[tokio::test]
@@ -492,8 +694,12 @@ async fn a_fetched_clip_is_staged_fitted_and_recorded() {
     // Both scripts are told: the source check gates the vendor file's own
     // travel and `clip.stride` reads the fit against it.
     assert_eq!(argv.matches("--travels\ntrue").count(), 2, "got: {argv}");
-    assert!(
-        argv.contains("--children\nhips=spine_lower,"),
+    // Both scripts again, and that is the point: the source gates report how
+    // far a vendor bone sits from the direction to its own child, and the
+    // retarget is what re-rolls it there before either rig is aimed.
+    assert_eq!(
+        argv.matches("--children\nhips=spine_lower,").count(),
+        2,
         "the mapped child per role, off `[profile.tails]`: {argv}"
     );
     assert!(argv.contains("--child-axis\n0,1,0"), "got: {argv}");
@@ -720,7 +926,7 @@ async fn a_retarget_that_reports_but_writes_no_clip_is_refused() {
 
     // The clip gates are what report it: a missing input is an error with a
     // stated reason, never a skip.
-    assert!(error.contains("left 11 defect(s)"), "got: {error}");
+    assert!(error.contains("left 12 defect(s)"), "got: {error}");
     let report = std::fs::read_to_string(
         dir.path()
             .join("art/staging/reports/retarget.walk_back.1.json"),
@@ -761,6 +967,16 @@ async fn a_retarget_that_breaks_a_rule_is_not_recorded_as_fetched() {
             .join("art/staging/reports/retarget.walk_back.1.json")
             .exists(),
         "the report is the diagnostic, so it stays"
+    );
+    assert!(
+        dir.path().join("art/staging/fits/walk_back.glb").exists(),
+        "the fit itself stays too, where the bake never looks"
+    );
+    assert!(
+        !dir.path()
+            .join("art/animations/local/walk_back.glb")
+            .exists(),
+        "a refused fit must not land where the bake reads it"
     );
     assert!(LibraryLock::load(dir.path()).unwrap().fetched.is_empty());
 }

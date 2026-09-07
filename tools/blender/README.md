@@ -34,7 +34,8 @@ under `crates/xtask-art/src/check/`.
 | `mesh_sheet.py` | yes | renders the five views of the model contact sheet |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
 | `bake_sprites.py` | yes | renders the sprite sheet |
-| `strip_animation.py` | yes | the one-triangle skin carrier the retarget exports through. Nothing runs it as a script: the retarget drops the mesh a provider ships with a clip |
+| `promote_rig.py` | yes | writes the skeleton's canonical rig out of a conformed character |
+| `armature.py` | yes | carrying one armature in and out of a GLB, for the two scripts above |
 
 The eight `bpy`-free modules are unit tested by `uv run pytest` at 100
 percent coverage, with no Blender anywhere. That split is not tidiness: `bpy`
@@ -82,7 +83,7 @@ The root bone's `location` channels are in its own rest axes, and on this rig
 and keeping channel 2 therefore sinks a left strafe by 0.32 m and lifts a
 right strafe by 0.39 m, against a real bob of 0.043 m. `strip_root_motion`
 takes every key to world space, pins it there with `framing.pin_horizontally`,
-and brings it back: measured, the three committed clips then read about 2
+and brings it back: measured, the five committed clips then read about 2
 nanometers on both horizontal axes, against 0.0428 m on X under the strip this
 replaces.
 
@@ -232,12 +233,13 @@ cannot clip whatever angle it is seen from.
 `clip.twist` reads its rest term off the joints of the file it is handed, so
 the armature has to leave Blender at its rest position rather than at whatever
 frame the scene is on. The exporter does that by default, and a default can
-move, so `retarget_animation.py` and `strip_animation.py` both state
-`export_rest_position_armature=True`. With it off, a correct `strafe_left` fit
-reads 113.884 degrees where it should read 11.411 and 20 of its 22 roles go
-red. A unit test reads every script here and fails on an export that carries
-an armature and leaves the flag out. `mesh_clean.py` exports no armature at
-all, `export_skins=False`, so it is the one export with no pose to get wrong.
+move, so `armature.py`, which is the one place an armature leaves Blender,
+states `export_rest_position_armature=True`. With it off, a correct
+`strafe_left` fit reads 113.884 degrees where it should read 8.782 and 20 of
+its 22 roles go red. A unit test reads every script here and fails on an
+export that carries an armature and leaves the flag out. `mesh_clean.py`
+exports no armature at all, `export_skins=False`, so it is the one export with
+no pose to get wrong.
 
 ## Running one by hand
 

@@ -374,7 +374,8 @@ fn changing_the_pose_invalidates_the_concept() {
 // --- What the lock reads off disk ----------------------------------------
 
 /// Replacing the canonical rig makes every fitted clip and every baked frame
-/// wrong, and costs the paid stages nothing: they never read it.
+/// wrong, and costs the paid stages nothing: they never read it. The download
+/// stage is one of the two that fit against it.
 #[test]
 fn one_byte_of_the_canonical_rig_invalidates_the_bake_and_not_the_paid_stages() {
     let library = a_library();
@@ -395,6 +396,7 @@ fn one_byte_of_the_canonical_rig_invalidates_the_bake_and_not_the_paid_stages() 
     for (stage, (before, after)) in Stage::all().iter().zip(before.iter().zip(&after)) {
         match stage {
             Stage::Bake => assert_ne!(before, after, "the bake plays clips fitted to that rig"),
+            Stage::Download => assert_ne!(before, after, "the download fits them onto it"),
             _ => assert_eq!(before, after, "{stage} never opens it"),
         }
     }
@@ -524,6 +526,34 @@ fn editing_a_blender_script_invalidates_the_bake() {
     );
 }
 
+/// The download stage runs the source check and the retarget, so a fix to
+/// either script has to re-fit every bought clip. Nothing paid may move.
+#[test]
+fn editing_a_blender_script_re_fits_the_download_and_buys_nothing() {
+    let library = a_library();
+    let spec = spec();
+    let tree = a_tree();
+    let root = tree.path();
+    let before = |stage| fingerprint(stage, &inputs(root, &spec, &library)).unwrap();
+    let (concept, model, rig, download) = (
+        before(Stage::Concept),
+        before(Stage::Model),
+        before(Stage::Rig),
+        before(Stage::Download),
+    );
+
+    flip_a_byte(&root.join("tools/blender/src/retarget_animation.py"));
+
+    assert_ne!(before(Stage::Download), download, "the fit is ours to redo");
+    assert_eq!(
+        before(Stage::Concept),
+        concept,
+        "a script edit must not bill"
+    );
+    assert_eq!(before(Stage::Model), model, "a script edit must not bill");
+    assert_eq!(before(Stage::Rig), rig, "a script edit must not bill");
+}
+
 /// A different Blender renders different frames, and reads no paid stage.
 #[test]
 fn the_blender_build_invalidates_the_bake_and_nothing_paid() {
@@ -544,6 +574,7 @@ fn the_blender_build_invalidates_the_bake_and_nothing_paid() {
         let moved = fingerprint(stage, &other).unwrap();
         match stage {
             Stage::Bake => assert_ne!(same, moved, "the bake is the stage that renders"),
+            Stage::Download => assert_ne!(same, moved, "the download is the stage that fits"),
             _ => assert_eq!(same, moved, "{stage} never starts Blender"),
         }
     }

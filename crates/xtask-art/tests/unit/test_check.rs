@@ -57,7 +57,7 @@ fn every_family_reaches_the_printed_rule_list() {
         ids.len(),
         67,
         "5 concept rules, 14 rig rules, the aim table, 15 mesh rules, 6 source \
-         rules, 13 clip rules, the 3 foot contact ones, 7 bake rules and 3 \
+         rules, 14 clip rules, the 3 foot contact ones, 6 bake rules and 3 \
          atlas rules"
     );
     assert_eq!(
@@ -84,6 +84,7 @@ fn every_family_reaches_the_printed_rule_list() {
         "source.child_axis",
         "source.wander",
         "clip.interpolation",
+        "clip.posture",
         "clip.root_travel",
         "clip.root_bob",
         "clip.floor_snap",
@@ -101,10 +102,10 @@ fn every_family_reaches_the_printed_rule_list() {
 /// side of the contract is a recorded report: the real ones the refit of
 /// `run.glb` and the source check of `run.glb` wrote, committed the way
 /// `mesh.printability`'s recorded response is.
-/// What a refit of our own clip reads for `clip.stride_ratio`, as the Test
-/// Plan row for that rule states it. Not 1: the rig is exported, imported and
-/// exported again, and a GLB stores a joint position as an `f32`.
-const REFIT_RATIO: f64 = 1.000_020_438_473_890_2;
+/// What the refit of `run.glb` reads for `clip.stride_ratio`. Not 1: the
+/// source is `art/animations/sources/run.glb`, authored on the rig T15b
+/// replaced, and this rig's femur is 1.8 percent longer than that one's.
+const REFIT_RATIO: f64 = 1.018_275_702_378_748_3;
 
 fn a_recorded_report(stem: &str) -> Report {
     let path = repo_root()
@@ -120,9 +121,10 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
     assert_eq!((report.stage(), report.item()), ("retarget", "run"));
     assert_eq!(
         report.findings().len(),
-        75,
-        "22 bones on two rules, 21 keys on the grid, its range, the three the \
-         fit's own placement reports, and three per foot on the ground"
+        197,
+        "22 bones on five rules, 21 keys on the grid at each of two sites, its \
+         range, 24 joints on the loop, the three the fit's own placement \
+         reports at each site, and three per foot per site on the ground"
     );
     assert!(!report.has_errors(), "the refit of our own clip is clean");
     assert_eq!(
@@ -131,10 +133,11 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
         "every finding says what `--list-rules` says"
     );
 
-    // Requirement 4 on a refit: the same clip on the same rig, so the femur
-    // ratio is 1 and the snap leaves nothing under the toe. `run` does not
-    // travel, so the declaration switches `clip.stride` off rather than
-    // dividing by a source that never moved.
+    // Requirement 4 on a refit: the snap leaves nothing under the toe, and
+    // the femur ratio is the one this rig's own femur makes against the rig
+    // the source was authored on. `run` does not travel, so the declaration
+    // switches `clip.stride` off rather than dividing by a source that never
+    // moved.
     let placed = |rule: &str| {
         report
             .findings()
@@ -142,7 +145,7 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
             .find(|finding| finding.rule == rule)
             .unwrap_or_else(|| panic!("{rule} reported nothing"))
     };
-    assert_eq!(placed("clip.floor_snap").measured, 0.0);
+    assert!(placed("clip.floor_snap").measured < 1e-6);
     assert_eq!(placed("clip.stride").severity, Severity::Skipped);
     // Not "about 1": the Test Plan states this reading to its last digit,
     // and a fixture drifting off it is the recording going stale.
@@ -154,8 +157,8 @@ fn the_recorded_retarget_report_is_quiet_and_inside_the_registry() {
 }
 
 /// And the bake boundary, where `clip.root_travel` reads the stripped copy
-/// that is never written to disk and the seven `bake.*` rules read the frames
-/// and the goldens. The recorded run is the three committed clips on the
+/// that is never written to disk and the six `bake.*` rules read the frames
+/// and the goldens. The recorded run is the five committed clips on the
 /// committed character, at the 16 directions and 512 px the spec asks for.
 #[test]
 fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
@@ -164,9 +167,9 @@ fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
     assert_eq!((report.stage(), report.item()), ("bake", "survivor"));
     assert_eq!(
         report.findings().len(),
-        31,
-        "three clips by three axes, by the four rules read off the frames and \
-         the two read in Blender, by two goldens each, plus the one patch"
+        50,
+        "five clips by three axes, by the four rules read off the frames and \
+         the two read in Blender, by two goldens each"
     );
 
     assert!(!report.has_errors());
@@ -178,8 +181,8 @@ fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
             continue;
         }
         if finding.subject.ends_with(" z") {
-            // The bob the strip keeps on purpose: 0.0089 on `idle`, 0.0535 on
-            // `run` and 0.0391 on `walk_back`, against a limit of 0.15.
+            // The bob the strip keeps on purpose: 0.0090 on `idle`, 0.0545 on
+            // `run` and 0.0427 on `walk_back`, against a limit of 0.15.
             assert_eq!(finding.rule, "clip.root_bob", "{finding:?}");
             assert!(finding.measured > 0.008, "{finding:?}");
         } else {
@@ -191,10 +194,10 @@ fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
     }
 
     // What `[profile.bake]` is calibrated on, in the report those numbers
-    // were read out of. Only the emptiest frame of each clip is recorded, at
-    // 4.1164, 4.8367 and 4.8912 percent of its own canvas. The tightest sits
-    // 58 px clear of the nearest border, and every opposite pair reflects to
-    // within one pixel.
+    // were read out of. Only the emptiest frame of each clip is recorded, and
+    // the emptiest of the five reads 4.3861 percent of its own canvas. The
+    // tightest sits 60 px clear of the nearest border, and every opposite
+    // pair reflects to within one pixel.
     let worst = |rule: &str| {
         report
             .findings()
@@ -203,8 +206,8 @@ fn the_recorded_bake_report_is_quiet_and_inside_the_registry() {
             .map(|finding| finding.measured)
             .fold(f64::NAN, f64::min)
     };
-    assert_eq!(worst("bake.non_empty"), 4.1164398193359375);
-    assert_eq!(worst("bake.in_frame"), 58.0);
+    assert_eq!(worst("bake.non_empty"), 4.386138916015625);
+    assert_eq!(worst("bake.in_frame"), 60.0);
     assert_eq!(
         report
             .findings()
@@ -465,9 +468,13 @@ fn every_rule_in_the_list_reports_on_the_committed_art() {
             1,
         ),
         clip::compare(
-            &gltf_clip::read(&pair.output_glb(), &bones).unwrap(),
-            &Motion::parse(&pair.source_motion()).unwrap(),
-            &bones,
+            &clip::Compared {
+                output: &gltf_clip::read(&pair.output_glb(), &bones).unwrap(),
+                source: &Motion::parse(&pair.source_motion()).unwrap(),
+                bones: &bones,
+                root: "hips",
+                ratio: Some(1.0),
+            },
             &profile,
             1,
         ),
@@ -1240,4 +1247,42 @@ fn a_rule_with_no_published_limit_can_still_be_switched_off() {
     Report::new(mesh::STAGE, "survivor", 1)
         .add(skipped)
         .expect("a report refuses a limit that is not finite");
+}
+
+/// Decision 11: every gate runs in CI under the one required check. The
+/// `check` command is the `concept.*` and `rig.*` half, on the concept views
+/// and `model.glb`; `clip.*`, `bake.*`, `atlas.*` and `gltf.validator` run in
+/// the workspace tests, off the committed clips, goldens and atlases. One job
+/// aggregates them, and the workflow that runs the rules is selected by a
+/// filter that includes the art itself, or a pull request replacing a GLB
+/// would skip every gate that reads it.
+#[test]
+fn ci_measures_the_committed_art_under_the_one_required_check() {
+    let rust = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../.github/workflows/rust.yml"
+    ));
+    let pr = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../.github/workflows/pr.yml"
+    ));
+
+    assert!(
+        rust.contains("run: cargo run --package xtask-art -- check\n"),
+        "CI measures the concept views and `model.glb` with the concept and rig rules"
+    );
+    assert!(
+        pr.contains("needs: [prepare, lint, unit_test, security_audit, rust]"),
+        "the required job waits on every conditional one"
+    );
+    for path in ["'art/**'", "'project/assets/characters/**'"] {
+        assert!(pr.contains(path), "{path} is not a filtered surface");
+    }
+    let filter = pr
+        .find("steps.filter.outputs.art == 'true'")
+        .expect("an art change selects the workflow that runs the rules");
+    let needed = pr
+        .find("rust_needed:")
+        .expect("through the input the rust job is gated on");
+    assert!(filter > needed, "the art has to reach `rust_needed`");
 }

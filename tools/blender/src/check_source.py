@@ -29,6 +29,7 @@ import source
 from findings import guard, limits_from, write_report
 from retarget_animation import (
     as_mat4,
+    children_from,
     import_armature,
     refuse_unfilled,
     rest_in_world,
@@ -65,7 +66,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         required=True,
         help=(
             "ROLE=CHILD pairs, comma separated: which role each bone's own "
-            "axis must point at. The Rust side reads them off `[profile.tails]`."
+            "axis must point at. The Rust side reads them off `[profile.tails]`, "
+            "and `retarget_animation.py` takes the same table."
         ),
     )
     parser.add_argument(
@@ -94,17 +96,6 @@ def axis_from(entry: str) -> source.Vec3:
     except ValueError:
         sys.exit(f"error: --child-axis needs three numbers, got {entry!r}")
     return (x, y, z)
-
-
-def children_from(entry: str) -> dict[str, str]:
-    """`hips=spine_lower,neck=head` into the map `source.py` reads."""
-    pairs = {}
-    for pair in entry.split(","):
-        role, _, child = pair.partition("=")
-        if not role or not child:
-            sys.exit(f"error: --children needs ROLE=CHILD pairs, got {pair!r}")
-        pairs[role] = child
-    return pairs
 
 
 def hips_path(

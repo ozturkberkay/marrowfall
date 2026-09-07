@@ -14,11 +14,11 @@ Three jobs, all free of `bpy`.
   sits on the grid whatever it read: a 30 fps clip read in a 24 fps scene
   spans 0.8 to 16.8, and rounding that to 1 to 17 drops four frames and
   exports a file nothing downstream can tell from a correct one.
-- **The source motion sidecar.** `clip.swing` and `clip.twist` measure the
-  delivered GLB against the vendor file, and the vendor file is an FBX that
-  the Rust `gltf` reader cannot open. So this run writes the source's own
-  world orientations beside the report, and Rust reads the GLB and the sidecar
-  together.
+- **The source motion sidecar.** `clip.swing`, `clip.twist` and
+  `clip.posture` measure the delivered GLB against the vendor file, and the
+  vendor file is an FBX that the Rust `gltf` reader cannot open. So this run
+  writes the source's own world orientations and joints beside the report, and
+  Rust reads the GLB and the sidecar together.
 
 Reading an F-curve or a pose needs `bpy`. Counting and recording do not, so
 they are here and `retarget_animation.py` only hands over what it read. The
@@ -233,77 +233,66 @@ def whole_range(sampled: range, keys: Iterable[float], rule: Rule) -> Finding:
 
 
 class Ground(Frozen):
-    """One ground joint's world height at one frame of the clip."""
+    """One sole point's world height at one frame of the clip."""
 
     bone: str
     frame: int
     height: float
-    """Meters up, in Blender Z-up world space."""
+    """Meters up, in Blender Z-up world space. Zero is the floor: the rig's
+    rest pose puts every sole point on it by construction."""
 
 
 def ground_from(
     paths: Mapping[str, Sequence[Vec3]], frames: Sequence[int]
 ) -> list[Ground]:
-    """One record per ground joint per frame, out of the heads Blender read."""
+    """One record per sole point per frame, out of what Blender read.
+
+    The sole and not the joint: a joint's rest height is only where the
+    contact patch is while the foot keeps its rest pitch, and a cross-rig fit
+    matches the source's pitch instead. `clip.foot_contact.penetration` reads
+    the same two points, so standing on the floor means one thing.
+    """
     return [
-        Ground(bone=bone, frame=frame, height=head[2])
+        Ground(bone=bone, frame=frame, height=point[2])
         for bone, path in sorted(paths.items())
-        for frame, head in zip(frames, path, strict=True)
+        for frame, point in zip(frames, path, strict=True)
     ]
 
 
-def rest_floor(rest_world: dict[str, Mat4], roles: Iterable[str]) -> float:
-    """The height the rig's own rest pose puts its lowest ground joint at.
-
-    Not zero: on this skeleton the toe joint is the ball of the foot and rests
-    0.0307 m above the sole, so a clip snapped to zero would bury the
-    character. A rig filling none of them has no floor and reads 0, and
-    `on_the_floor` reports that clip as undefined rather than against it.
-    """
-    return min(
-        (mat_translation(rest_world[role])[2] for role in roles if role in rest_world),
-        default=0.0,
-    )
-
-
 def lowest(ground: Sequence[Ground]) -> Ground | None:
-    """The lowest any ground joint gets over the clip.
+    """The lowest any sole point gets over the clip.
 
-    None when the source drives none of them, which `on_the_floor` reports as
-    a measurement that does not exist rather than as a floor already reached.
+    None when the source drives no foot at all, which `on_the_floor` reports
+    as a measurement that does not exist rather than as a floor already
+    reached.
     """
     return min(ground, key=lambda at: at.height) if ground else None
 
 
-def floor_lift(ground: Sequence[Ground], floor: float) -> float:
-    """How far up the clip must move to stand where its own rig rests.
-
-    `floor` is the height that rig's rest pose puts its lowest ground joint
-    at, which is **not** zero: on this skeleton the toe joint is the ball of
-    the foot and rests 0.0307 m above the sole.
+def floor_lift(ground: Sequence[Ground]) -> float:
+    """How far up the clip must move to stand on the floor.
 
     The whole clip and not one frame: a walk that never lifts its right foot
     is still standing on the ground it plants its left one on.
     """
     low = lowest(ground)
-    return 0.0 if low is None else floor - low.height
+    return 0.0 if low is None else -low.height
 
 
-def on_the_floor(ground: Sequence[Ground], floor: float, rule: Rule) -> Finding:
-    """`clip.floor_snap`: what is left under the lowest toe once it is lifted."""
+def on_the_floor(ground: Sequence[Ground], rule: Rule) -> Finding:
+    """`clip.floor_snap`: what is left under the lowest sole once it is
+    lifted."""
     low = lowest(ground)
     if low is None:
         return rule.undefined(
             "the whole clip",
-            "this clip drives no ground joint, so it has no rest height to be "
-            "read against",
+            "this clip drives no foot, so it has no sole to be read against",
         )
-    off = low.height - floor
     return rule.measured(
         f"{low.bone} at frame {low.frame}",
-        abs(off),
-        f"{low.bone} at frame {low.frame} is the lowest any ground joint of "
-        f"the clip gets, {off:.4f} m from the rest height the snap aims at",
+        abs(low.height),
+        f"{low.bone} at frame {low.frame} is the lowest any sole point of "
+        f"the clip gets, {low.height:.4f} m from the floor the snap aims at",
     )
 
 
@@ -364,8 +353,7 @@ class Fit(Frozen):
 
     name: str
     ground: tuple[Ground, ...]
-    floor: float
-    """Where this rig's own rest pose stands, from `rest_floor`."""
+    """Every sole point of every foot, frame by frame."""
     travel: tuple[float, float]
     """How far the fit's root and the source's hips each got, horizontally."""
     segment: tuple[float, float]
@@ -380,7 +368,7 @@ class Fit(Frozen):
 def placed(fit: Fit, limits: dict[str, float]) -> list[Finding]:
     """`clip.floor_snap`, `clip.stride` and `clip.stride_ratio`, on one fit."""
     return [
-        on_the_floor(fit.ground, fit.floor, FLOOR_SNAP.at(limits)),
+        on_the_floor(fit.ground, FLOOR_SNAP.at(limits)),
         stride(
             fit.name,
             fit.travel[0],
@@ -400,13 +388,17 @@ def placed(fit: Fit, limits: dict[str, float]) -> list[Finding]:
 
 
 class Frame(Frozen):
-    """Where the source's bones pointed at one instant of the clip."""
+    """Where the source's bones were at one instant of the clip."""
 
     seconds: float
     """Time from the clip's own first frame. The output GLB stores key times
     in seconds too, so the two align on a quantity neither side indexes."""
     rotations: dict[str, Quat]
     """Role to that bone's world rotation, in Blender Z-up world space."""
+    joints: dict[str, Vec3]
+    """Role to that bone's world head, in meters, in the same space. No
+    rotation rule sees a joint chain, which is the blind spot that shipped a
+    hunched idle, and `clip.posture` holds the fit's own joints to these."""
 
 
 class SourceMotion(Frozen):
@@ -424,9 +416,10 @@ class SourceMotion(Frozen):
     """
 
     rest: dict[str, Quat]
-    """Role to that bone's rest world rotation. `clip.twist` measures each rig
-    against its own rest, which is what makes the 174 degrees of convention
-    difference cancel instead of failing every correct clip."""
+    """Role to that bone's rest world rotation, after the re-roll onto its own
+    children. `clip.twist` measures each rig against its own rest, which is
+    what makes the 174 degrees of convention difference cancel instead of
+    failing every correct clip."""
     frames: tuple[Frame, ...]
     travel: float
     """How far the source's own root got from where it started, horizontally,
@@ -444,12 +437,16 @@ class SourceMotion(Frozen):
         if not self.frames:
             raise ValueError("a source motion with no frame measures nothing")
         for frame in self.frames:
-            if set(frame.rotations) != set(self.rest):
-                odd = sorted(set(frame.rotations) ^ set(self.rest))
-                raise ValueError(
-                    f"the frame at {frame.seconds} s disagrees with the rest "
-                    f"pose about {odd}"
-                )
+            for what, held in (
+                ("rotations", frame.rotations),
+                ("joints", frame.joints),
+            ):
+                if set(held) != set(self.rest):
+                    odd = sorted(set(held) ^ set(self.rest))
+                    raise ValueError(
+                        f"the {what} of the frame at {frame.seconds} s "
+                        f"disagrees with the rest pose about {odd}"
+                    )
         return self
 
     def write(self, path: pathlib.Path) -> None:
@@ -499,6 +496,9 @@ def source_motion(
                 seconds=(frame - first) / rate,
                 rotations={
                     role: mat_rotation(matrix, role) for role, matrix in world.items()
+                },
+                joints={
+                    role: mat_translation(matrix) for role, matrix in world.items()
                 },
             )
             for frame, world in sorted(frames.items())

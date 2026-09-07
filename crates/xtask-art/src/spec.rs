@@ -214,11 +214,6 @@ pub struct Bake {
     pub render_size: u32,
     /// Final in-game sprite height in pixels.
     pub sprite_height: u32,
-    /// Sprite frames sampled per second. Counts follow from this and each
-    /// animation's duration, so every one plays at its authored speed from a
-    /// Degrees of forearm roll correction, for models whose bind pose has
-    /// supinated (palms-forward) arms.
-    pub forearm_roll: f32,
     /// Fraction of each animation skipped at the start, for generated motions that
     /// ramp in from a neutral pose.
     pub trim_start: f32,
@@ -274,7 +269,6 @@ impl CharacterSpec {
                 directions: 8,
                 render_size: 256,
                 sprite_height: 160,
-                forearm_roll: 0.0,
                 trim_start: 0.0,
             },
         }
@@ -488,10 +482,15 @@ impl Paths {
         self.preview.clone()
     }
 
+    /// The Godot project, which is what an import pass is pointed at.
+    pub fn godot_project(&self) -> PathBuf {
+        self.root.join("project")
+    }
+
     /// Game-ready assets consumed by Godot.
     pub fn assets(&self) -> PathBuf {
-        self.root
-            .join(format!("project/assets/characters/{}", self.name))
+        self.godot_project()
+            .join(format!("assets/characters/{}", self.name))
     }
 
     /// Renders an absolute path relative to the repo root, so notes stored in

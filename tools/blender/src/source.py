@@ -2,7 +2,7 @@
 
 Six rules, all of them at the fetch boundary and all of them published in
 `crates/xtask-art/src/check/source.rs`, which is what
-`cargo art check --list-rules` prints. This module holds the maths and builds
+`cargo art check --list-rules` prints. This module holds the math and builds
 the Findings; `check_source.py` is the Blender shell that reads an FBX and
 hands the numbers over.
 

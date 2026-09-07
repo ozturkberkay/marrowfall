@@ -4,9 +4,10 @@ The two counted rules are invariants the transfer holds by construction, so
 each one gets a negative here rather than only in a hand-run Blender mutation:
 a rule with no control that can fail in CI is a rule nobody has seen fail.
 
-The sidecar is the other half. `clip.swing` and `clip.twist` measure the
-delivered GLB against the vendor file, and Rust cannot open an FBX, so what
-this module records is the only way the source reaches those two rules.
+The sidecar is the other half. `clip.swing`, `clip.twist` and
+`clip.posture` measure the delivered GLB against the vendor file, and Rust
+cannot open an FBX, so what this module records is the only way the source
+reaches those three rules.
 """
 
 import json
@@ -24,6 +25,7 @@ from clip import (
     Channel,
     Defects,
     Fit,
+    Frame,
     Ground,
     SourceMotion,
     counted,
@@ -33,7 +35,6 @@ from clip import (
     on_the_floor,
     on_the_grid,
     placed,
-    rest_floor,
     source_motion,
     stride,
     stride_ratio,
@@ -53,6 +54,14 @@ QUARTER_TURN: Mat4 = (
 
 TURNED = (0.7071067811865476, 0.0, 0.7071067811865475, 0.0)
 """The same rotation as `w, x, y, z`, which is what the sidecar carries."""
+
+AT_A_METER: Mat4 = (
+    (1.0, 0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 1.0),
+    (0.0, 0.0, 0.0, 1.0),
+)
+"""A bone standing a meter up, so a joint reading is not zero."""
 
 FRAMES = range(1, 22)
 """What a bought Mixamo clip spans: frames 1 to 21."""
@@ -284,6 +293,39 @@ def test_a_frame_that_leaves_a_role_out_is_refused() -> None:
         )
 
 
+def test_the_sidecar_carries_each_role_s_joint_at_each_frame() -> None:
+    """No rotation rule sees a joint chain, so `clip.posture` reads these."""
+    motion = a_sidecar(
+        rest={"hips": IDENTITY},
+        frames={1: {"hips": AT_A_METER}},
+    )
+
+    assert motion.frames[0].joints == {"hips": (0.0, 0.0, 1.0)}
+
+
+def test_a_frame_whose_joints_leave_a_role_out_is_refused() -> None:
+    """The other half of the same contract: a joint missing from one frame
+    would leave that frame unmeasured by `clip.posture`."""
+    motion = a_sidecar(rest={"hips": IDENTITY}, frames={1: {"hips": IDENTITY}})
+
+    with pytest.raises(ValidationError, match="joints.*disagrees with the rest"):
+        SourceMotion(
+            rest={"hips": (1.0, 0.0, 0.0, 0.0), "head": (1.0, 0.0, 0.0, 0.0)},
+            frames=(
+                Frame(
+                    seconds=0.0,
+                    rotations={
+                        "hips": (1.0, 0.0, 0.0, 0.0),
+                        "head": (1.0, 0.0, 0.0, 0.0),
+                    },
+                    joints=motion.frames[0].joints,
+                ),
+            ),
+            travel=SOURCE_TRAVEL,
+            stride_segment=SOURCE_FEMUR,
+        )
+
+
 def test_a_source_motion_built_by_hand_with_no_frame_is_refused() -> None:
     with pytest.raises(ValidationError, match="no frame"):
         SourceMotion(
@@ -394,36 +436,29 @@ STRIDE_LIMIT = {"clip.stride": 2.0}
 RATIO_LIMIT = {"clip.stride_ratio": 100.0}
 
 
-FLOOR = 0.0307
-"""Where the committed rig's rest pose puts its lowest toe joint, in meters.
-The ball of the foot, not the sole, which is why the floor is not zero."""
-
-
 def a_clip_on_the_ground() -> list[Ground]:
-    """Two toes over two frames, the left one 0.06 m under the floor."""
+    """Two feet over two frames, the left ball 0.06 m under the floor."""
     return [
-        Ground(bone="LeftToeBase", frame=1, height=FLOOR + 0.02),
-        Ground(bone="LeftToeBase", frame=2, height=FLOOR - 0.06),
-        Ground(bone="RightToeBase", frame=1, height=FLOOR + 0.01),
-        Ground(bone="RightToeBase", frame=2, height=FLOOR + 0.30),
+        Ground(bone="LeftToeBase", frame=1, height=0.02),
+        Ground(bone="LeftToeBase", frame=2, height=-0.06),
+        Ground(bone="RightToeBase", frame=1, height=0.01),
+        Ground(bone="RightToeBase", frame=2, height=0.30),
     ]
 
 
-def test_the_lift_is_what_the_lowest_frame_of_any_toe_needs() -> None:
-    assert floor_lift(a_clip_on_the_ground(), FLOOR) == pytest.approx(0.06)
+def test_the_lift_is_what_the_lowest_frame_of_any_sole_needs() -> None:
+    assert floor_lift(a_clip_on_the_ground()) == pytest.approx(0.06)
 
 
-def test_a_clip_that_drives_no_toe_has_nothing_to_lift() -> None:
-    assert floor_lift([], FLOOR) == 0.0
+def test_a_clip_that_drives_no_foot_has_nothing_to_lift() -> None:
+    assert floor_lift([]) == 0.0
 
 
 @pytest.mark.usefixtures("under_a_report")
-def test_a_snapped_clip_leaves_nothing_under_its_lowest_toe() -> None:
+def test_a_snapped_clip_leaves_nothing_under_its_lowest_sole() -> None:
     rule = FLOOR_SNAP.at(FLOOR_LIMIT)
 
-    sits = on_the_floor(
-        [Ground(bone="LeftToeBase", frame=7, height=FLOOR - 1e-9)], FLOOR, rule
-    )
+    sits = on_the_floor([Ground(bone="LeftToeBase", frame=7, height=-1e-9)], rule)
 
     assert (sits.severity, sits.subject) == (Severity.INFO, "LeftToeBase at frame 7")
     assert sits.measured == pytest.approx(1e-9)
@@ -431,11 +466,11 @@ def test_a_snapped_clip_leaves_nothing_under_its_lowest_toe() -> None:
 
 @pytest.mark.usefixtures("under_a_report")
 def test_a_clip_with_the_snap_step_removed_is_rejected() -> None:
-    """The negative: 0.06 m of toe under the floor, which is what the fit
+    """The negative: 0.06 m of sole under the floor, which is what the fit
     reads before it is lifted."""
     rule = FLOOR_SNAP.at(FLOOR_LIMIT)
 
-    sunk = on_the_floor(a_clip_on_the_ground(), FLOOR, rule)
+    sunk = on_the_floor(a_clip_on_the_ground(), rule)
 
     assert (sunk.severity, sunk.subject) == (
         Severity.ERROR,
@@ -443,34 +478,32 @@ def test_a_clip_with_the_snap_step_removed_is_rejected() -> None:
     )
     assert sunk.measured == pytest.approx(0.06)
     assert sunk.message == (
-        "LeftToeBase at frame 2 is the lowest any ground joint of the clip "
-        "gets, -0.0600 m from the rest height the snap aims at"
+        "LeftToeBase at frame 2 is the lowest any sole point of the clip "
+        "gets, -0.0600 m from the floor the snap aims at"
     )
 
 
 @pytest.mark.usefixtures("under_a_report")
-def test_a_toe_left_hanging_above_the_floor_is_rejected_too() -> None:
+def test_a_foot_left_hanging_above_the_floor_is_rejected_too() -> None:
     """The other side: nothing in the clip ever reaches the ground, which is
     what a taller source rig leaves once its hips are copied over."""
     rule = FLOOR_SNAP.at(FLOOR_LIMIT)
 
-    floating = on_the_floor(
-        [Ground(bone="RightToeBase", frame=3, height=FLOOR + 0.0773)], FLOOR, rule
-    )
+    floating = on_the_floor([Ground(bone="RightToeBase", frame=3, height=0.0773)], rule)
 
     assert floating.severity is Severity.ERROR
     assert floating.measured == pytest.approx(0.0773)
 
 
 @pytest.mark.usefixtures("under_a_report")
-def test_a_clip_that_drives_no_toe_reports_undefined_rather_than_zero() -> None:
+def test_a_clip_that_drives_no_foot_reports_undefined_rather_than_zero() -> None:
     rule = FLOOR_SNAP.at(FLOOR_LIMIT)
 
-    nothing = on_the_floor([], FLOOR, rule)
+    nothing = on_the_floor([], rule)
 
     assert nothing.severity is Severity.ERROR
     assert nothing.unit == "undefined measurements"
-    assert "no ground joint" in nothing.message
+    assert "no sole" in nothing.message
 
 
 @pytest.mark.usefixtures("under_a_report")
@@ -515,7 +548,7 @@ def test_a_clip_the_library_declares_in_place_is_skipped_on_its_flag() -> None:
 
 
 @pytest.mark.usefixtures("under_a_report")
-def test_a_travelling_clip_whose_source_stands_still_is_undefined() -> None:
+def test_a_traveling_clip_whose_source_stands_still_is_undefined() -> None:
     """`travels: true` on a source that never moves leaves no travel to take
     a ratio of, and a relative difference against zero is not a number."""
     rule = STRIDE.at(STRIDE_LIMIT)
@@ -539,37 +572,7 @@ def test_the_femur_ratio_is_on_record_beside_the_two_lengths_it_came_from() -> N
     )
 
 
-def a_rest_pose(left: float, right: float) -> dict[str, Mat4]:
-    """Two toe roles at the heights a rig's rest pose puts them."""
-    return {
-        "left_toe": at_height(left),
-        "right_toe": at_height(right),
-        "hips": at_height(0.96),
-    }
-
-
-def at_height(meters: float) -> Mat4:
-    return (
-        (1.0, 0.0, 0.0, 0.0),
-        (0.0, 1.0, 0.0, 0.0),
-        (0.0, 0.0, 1.0, meters),
-        (0.0, 0.0, 0.0, 1.0),
-    )
-
-
-def test_the_floor_is_the_lower_of_the_two_resting_toes() -> None:
-    """The committed rig's own numbers: its two toe joints rest 0.36 mm apart
-    and the lower one is where the character stands."""
-    floor = rest_floor(a_rest_pose(0.031081, 0.030723), ("left_toe", "right_toe"))
-
-    assert floor == pytest.approx(0.030723)
-
-
-def test_a_rig_that_fills_no_ground_role_has_no_floor() -> None:
-    assert rest_floor(a_rest_pose(0.03, 0.03), ("left_flipper",)) == 0.0
-
-
-def test_every_toe_of_every_frame_becomes_one_record() -> None:
+def test_every_sole_of_every_frame_becomes_one_record() -> None:
     paths = {
         "LeftToeBase": [(0.0, 0.0, 0.05), (0.0, 0.0, 0.03)],
         "RightToeBase": [(0.0, 0.0, 0.04), (0.0, 0.0, 0.06)],
@@ -606,8 +609,7 @@ def a_fit() -> Fit:
     """A correct fit of `strafe_left`: on the floor, and 2.0378 m across."""
     return Fit(
         name="strafe_left",
-        ground=(Ground(bone="LeftToeBase", frame=4, height=FLOOR),),
-        floor=FLOOR,
+        ground=(Ground(bone="LeftToeBase", frame=4, height=0.0),),
         travel=(2.0378, 2.3117),
         segment=(0.4123, 0.4677),
         ratio=0.8815,

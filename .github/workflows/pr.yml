@@ -29,10 +29,13 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       javascript: ${{ steps.filter.outputs.javascript }}
       rust: ${{ steps.filter.outputs.rust }}
+      art: ${{ steps.filter.outputs.art }}
       lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.javascript == 'true' || steps.filter.outputs.workflows_any == 'true' }}
       unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
       security_audit_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_security_audit == 'true' }}
-      rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
+      # Art too: every gate is a Rust test that reads the committed art, and
+      # `cargo art check` measures it, so replacing a GLB has to run them.
+      rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.art == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,6 +74,11 @@ jobs:
               - '**/*.py'
               - 'pyproject.toml'
               - 'uv.lock'
+              - 'tools/blender/**'
+            art:
+              - 'art/**'
+              - 'project/assets/characters/**'
+              - 'tools/blender/**'
             javascript:
               - '**/*.mjs'
               - 'package.json'
@@ -127,8 +135,12 @@ jobs:
     # rhysd/actionlint#711.
     uses: ./.github/workflows/rust.yml # zizmor: ignore[self-repository]
     with:
-      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
+      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.art == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
 
+  # The single required check. Every other job is conditional, so this is what
+  # branch protection names: it fails when any job that should have run did
+  # not succeed, and it runs on every pull request. Pin it by `app_id` in the
+  # repository's ruleset, so only GitHub Actions can report it.
   required:
     name: Required
     needs: [prepare, lint, unit_test, security_audit, rust]

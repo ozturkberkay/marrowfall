@@ -86,7 +86,7 @@ const STANDING_ROLES: [&str; 9] = [
 
 /// How much shorter our femur is than the vendor's, which is what every
 /// length of a correct fit is sized by. The real Mixamo pair reads this.
-const FEMUR_RATIO: f64 = 0.8815;
+pub const FEMUR_RATIO: f64 = 0.8815;
 
 /// How many frames the fixture clip runs, and at what rate.
 const FRAMES: usize = 8;
@@ -162,6 +162,9 @@ pub struct CrossRig {
     source_travel: f64,
     /// How far the whole clip is keyed under the floor it stands on.
     sunk: f64,
+    /// How far the sidecar puts every source joint but the root from where
+    /// its own rotations say the body is.
+    source_displaced: DVec3,
 }
 
 impl CrossRig {
@@ -204,6 +207,7 @@ impl CrossRig {
             travel_sized_by: 1.0,
             source_travel: SOURCE_TRAVEL_METERS,
             sunk: 0.0,
+            source_displaced: DVec3::ZERO,
         }
     }
 
@@ -228,6 +232,19 @@ impl CrossRig {
     /// together, so a correct fit still reads nothing on `clip.stride`.
     pub fn creeping(mut self, meters: f64) -> Self {
         self.source_travel = meters;
+        self
+    }
+
+    /// Moves every source joint but the root, leaving every rotation on both
+    /// sides alone.
+    ///
+    /// The shape of the defect T15b shipped: our `Hips` carried a frame
+    /// 97.612 degrees off the direction to its own `Spine`, so every bone
+    /// still pointed exactly where the source's bone pointed and
+    /// `clip.swing` read its own storage floor, while the torso hung 0.2150 m
+    /// off the pelvis. `clip.posture` is the only rule that can see it.
+    pub fn source_displaced_by(mut self, meters: f64) -> Self {
+        self.source_displaced = DVec3::Z * meters;
         self
     }
 
@@ -287,7 +304,7 @@ impl CrossRig {
     /// `pose` runs one full turn over [`FRAMES`], so the frame after the last
     /// is the first one again. `clip.loop` reads exactly that, and
     /// [`CrossRig::without_the_last_frame`] is then a clip cut one frame
-    /// short of coming back round.
+    /// short of coming back around.
     pub fn looping(mut self) -> Self {
         let first = self.frames[0].1.clone();
         let at = OUTPUT_FIRST_FRAME + self.frames.len() as f64;
@@ -373,7 +390,49 @@ impl CrossRig {
     /// A role whose bone this fixture renamed away has no row, so it gets no
     /// channel and the file simply has nothing filling it.
     fn parent_roles(&self) -> BTreeMap<String, Option<String>> {
-        let above: BTreeMap<String, Option<String>> = self.rig.hierarchy().into_iter().collect();
+        self.roles_above(&self.rig)
+    }
+
+    /// Every joint's world position at one frame, in Blender Z-up meters, on
+    /// the pristine rig both sides of the pair share.
+    ///
+    /// **The fixture's own composition, not `gltf_clip`'s**, for the reason
+    /// [`CrossRig::placed`] gives. The root's own lift and travel are left
+    /// out: `clip.posture` reads every joint against the root, where both
+    /// cancel, and the pristine rig is what keeps an output-side mutation
+    /// from moving the source's joints with it.
+    fn joints(&self, posed: &BTreeMap<String, DQuat>, injected: bool) -> BTreeMap<String, DVec3> {
+        let parents = self.roles_above(&SyntheticRig::conformant());
+        let places = SyntheticRig::conformant().rest_positions();
+        let rest: BTreeMap<String, DVec3> = self
+            .rest
+            .keys()
+            .filter_map(|role| Some((role.clone(), *places.get(&self.bones[role])?)))
+            .collect();
+        let carried: BTreeMap<String, DQuat> = posed
+            .iter()
+            .map(|(role, world)| {
+                let turn = if injected {
+                    self.injected.get(role).copied().unwrap_or(DQuat::IDENTITY)
+                } else {
+                    DQuat::IDENTITY
+                };
+                (role.clone(), *world * turn)
+            })
+            .collect();
+        rest.keys()
+            .map(|role| {
+                (
+                    role.clone(),
+                    gltf_to_blender(self.placed(role, &carried, &rest, &parents)),
+                )
+            })
+            .collect()
+    }
+
+    /// Role to the role above it, out of one rig's own bone hierarchy.
+    fn roles_above(&self, rig: &SyntheticRig) -> BTreeMap<String, Option<String>> {
+        let above: BTreeMap<String, Option<String>> = rig.hierarchy().into_iter().collect();
         self.bones
             .iter()
             .filter_map(|(role, bone)| {
@@ -483,7 +542,7 @@ impl CrossRig {
     /// The same output, in `f64`, without ever going through a file.
     ///
     /// The pair against [`CrossRig::output_glb`] is what separates the two
-    /// halves of the calibration: this one carries the maths alone, and the
+    /// halves of the calibration: this one carries the math alone, and the
     /// file adds the `f32` a GLB stores.
     pub fn output_motion(&self) -> Motion {
         let blender = |rotations: &BTreeMap<String, DQuat>, injected: bool| {
@@ -507,6 +566,7 @@ impl CrossRig {
                 .map(|(at, posed)| Frame {
                     seconds: *at,
                     rotations: blender(posed, true),
+                    joints: self.joints(posed, true),
                 })
                 .collect(),
         )
@@ -535,6 +595,23 @@ impl CrossRig {
                 })
                 .collect::<serde_json::Map<String, serde_json::Value>>()
         };
+        // The vendor's body is ours sized by the femur ratio the sidecar
+        // declares, so a correct fit reads nothing on `clip.posture` and what
+        // is left is the `f32` the output GLB stores.
+        let places = |posed: &BTreeMap<String, DQuat>| {
+            self.joints(posed, false)
+                .into_iter()
+                .filter(|(role, _)| !self.source_without.contains(role))
+                .map(|(role, at)| {
+                    let bent = if role == TOP {
+                        DVec3::ZERO
+                    } else {
+                        self.source_displaced
+                    };
+                    (role, point(at / FEMUR_RATIO + bent))
+                })
+                .collect::<serde_json::Map<String, serde_json::Value>>()
+        };
         let last = self.frames.len() - 1;
         let frames: Vec<serde_json::Value> = self
             .frames
@@ -549,6 +626,7 @@ impl CrossRig {
                 serde_json::json!({
                     "seconds": index as f64 / FPS * self.source_rate,
                     "rotations": rows(read, false),
+                    "joints": places(read),
                 })
             })
             .collect();
@@ -609,6 +687,10 @@ fn to_blender(rotation: DQuat) -> DQuat {
 }
 
 /// A rotation as the sidecar writes one: `w, x, y, z`, Blender's own order.
+fn point(at: DVec3) -> serde_json::Value {
+    serde_json::json!([at.x, at.y, at.z])
+}
+
 fn quaternion(rotation: DQuat) -> serde_json::Value {
     serde_json::json!([rotation.w, rotation.x, rotation.y, rotation.z])
 }

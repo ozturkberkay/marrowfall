@@ -1,4 +1,4 @@
-"""The retarget maths.
+"""The retarget math.
 
 Two things are asserted here and nothing else, because everything this module
 replaced was checked against itself.
@@ -29,6 +29,7 @@ from transfer import (
     Quat,
     TransferError,
     aim_rotation,
+    child_basis,
     cross,
     dot,
     length,
@@ -44,6 +45,7 @@ from transfer import (
     quat_inverted,
     quat_multiply,
     quat_normalized,
+    re_rolled,
     reference_pose,
     scaled,
     segment_length,
@@ -501,8 +503,8 @@ def test_the_normalized_axis_form_reads_90_22_on_that_same_twist() -> None:
 
 def test_a_swing_and_a_twist_together_come_back_as_themselves() -> None:
     """`rotation == swing @ twist`, and the order is the whole content of that
-    line: a pure twist and a pure swing both split the same way whichever way
-    round it is composed, so only a rotation carrying both can tell them
+    line: a pure twist and a pure swing both split the same way whichever
+    way around it is composed, so only a rotation carrying both can tell them
     apart. Built from 30 degrees about +X and 40 about +Y, and both come back
     on the axis they went in on."""
     swing_in = quat_from_axis((1.0, 0.0, 0.0), 30.0)
@@ -629,6 +631,207 @@ def test_no_other_joint_lands_on_the_sources_joint() -> None:
         mat_translation(fit.world_out["LeftHand"]),
         mat_translation(fit.world_src["left_hand"]),
     ) == pytest.approx(0.1972, abs=0.0001)
+
+
+# --- a source whose bone axes are not its child directions ----------------
+
+TAILS: dict[str, str] = {
+    "hips": "spine_lower",
+    "spine_lower": "spine_middle",
+    "spine_middle": "neck",
+    "neck": "head",
+    "left_arm": "left_forearm",
+    "left_forearm": "left_hand",
+    "right_arm": "right_forearm",
+    "right_forearm": "right_hand",
+    "left_upper_leg": "left_leg",
+    "right_upper_leg": "right_leg",
+}
+"""Which child each role's own axis must point at, the way `[profile.tails]`
+does it. A branch role needs the row: `hips` has three children here and only
+`spine_lower` continues the body."""
+
+HIP_SOCKET_DEGREES = 95.0
+"""How far a vendor rig may point a bone off the direction to its own child.
+The rig T15b replaced reads 97.612 on its `Hips`, which
+`crates/xtask-art/tests/fixtures/fetch.run.1.json` records, and every Mixamo
+`Neck` sits 16.933 off its own `Head`."""
+
+
+def towards(head: Vec3, tail: Vec3) -> Vec3:
+    return normalized((tail[0] - head[0], tail[1] - head[1], tail[2] - head[2]))
+
+
+def aimed_at_children(spec: tuple[Spec, ...]) -> tuple[Spec, ...]:
+    """`spec` with every bone's rest axis put on the direction to its child.
+
+    Which is what `rig.child_axis` holds our own rig to, within 2 degrees. A
+    role with no mapped child keeps the axis it was written with.
+    """
+    joints = {role: joint for role, _, joint, _, _ in spec}
+    return tuple(
+        (
+            role,
+            parent,
+            joint,
+            towards(joint, joints[TAILS[role]]) if role in TAILS else aim,
+            roll,
+        )
+        for role, parent, joint, aim, roll in spec
+    )
+
+
+CONFORMED: tuple[Spec, ...] = aimed_at_children(OURS)
+"""A rig whose every bone axis does point at its child. `OURS` itself does
+not: its `hips` points out of a hip socket, the way the rig T15 replaced
+did."""
+
+
+def turned(local: dict[str, Mat4], role: str, degrees: float) -> dict[str, Mat4]:
+    """`local` with one bone's rest frame turned across its own axis.
+
+    Its joint does not move and every other bone is untouched, so the two
+    rest BODIES stay identical: the only thing that changes is the frame that
+    bone's keys are written in, and its children's local rests are re-derived
+    from these matrices rather than stored.
+    """
+    turn = _rotation_matrix(quat_from_axis((1.0, 0.0, 0.0), degrees))
+    return {
+        name: mat_multiply(matrix, turn) if name == role else matrix
+        for name, matrix in local.items()
+    }
+
+
+def fit_of(
+    source_local: dict[str, Mat4], re_roll: bool
+) -> tuple[dict[str, Mat4], dict[str, Mat4]]:
+    """One fit of a source rig onto `CONFORMED`: the source's world and ours.
+
+    `re_roll` is the fix: put each source bone's own frame on the direction to
+    its mapped child before the reference pose aims `CHILD_AXIS` at the table.
+    A rotation on the right leaves every translation alone, so the source's
+    joints are the same points either way.
+    """
+    ours_local = rest_local(CONFORMED)
+    world_src = posed_world(CONFORMED, source_local, OUR_OBJECT, A_CLIP, TRAVEL)
+    source_rest = in_world(source_local, OUR_OBJECT)
+    if re_roll:
+        basis = child_basis(source_rest, TAILS)
+        source_rest = re_rolled(source_rest, basis)
+        world_src = re_rolled(world_src, basis)
+    bones = our_bones(ours_local)
+    offset = offsets(
+        reference_pose(in_world(ours_local, OUR_OBJECT), CHAIN, AIM),
+        reference_pose(source_rest, CHAIN, AIM),
+    )
+    poses = transfer(bones, OUR_OBJECT, world_src, offset)
+    return world_src, output_world(bones, poses)
+
+
+def joints_from_root(world: dict[str, Mat4], name: dict[str, str]) -> dict[str, Vec3]:
+    """Every joint against the root's, which is what a body pose is."""
+    root = mat_translation(world[name["hips"]])
+    return {
+        role: (
+            mat_translation(world[bone])[0] - root[0],
+            mat_translation(world[bone])[1] - root[1],
+            mat_translation(world[bone])[2] - root[2],
+        )
+        for role, bone in name.items()
+    }
+
+
+BY_ROLE: dict[str, str] = {role: role for role in BONE_OF_ROLE}
+"""The source's world matrices are keyed by role, ours by bone name."""
+
+
+def worst_joint(source: dict[str, Mat4], out: dict[str, Mat4]) -> tuple[str, float]:
+    """The joint our body puts furthest from where the source's body has it."""
+    theirs = joints_from_root(source, BY_ROLE)
+    ours = joints_from_root(out, BONE_OF_ROLE)
+    role = max(theirs, key=lambda role: apart(ours[role], theirs[role]))
+    return role, apart(ours[role], theirs[role])
+
+
+def test_the_re_roll_puts_our_joints_on_the_sources_joints() -> None:
+    """One rest BODY, one animation and one set of limb lengths, so a correct
+    fit reproduces the source's joints exactly. No other test in this file can
+    say that: everywhere else the source's limbs are longer than ours."""
+    source = turned(rest_local(CONFORMED), "hips", HIP_SOCKET_DEGREES)
+
+    role, off = worst_joint(*fit_of(source, re_roll=True))
+
+    assert off < 1e-6, f"{role} is {off} m out"
+
+
+def test_without_it_the_same_source_bends_the_whole_body() -> None:
+    """What shipped. The hips carry a frame 95 degrees out, so the torso hangs
+    0.1475 m off the pelvis and every joint above it rides that one
+    displacement, which is why they all read alike. Measured on the real file,
+    `art/animations/idle.glb` read 97.03 degrees of hips to spine against the
+    2.56 its own source carries."""
+    source = turned(rest_local(CONFORMED), "hips", HIP_SOCKET_DEGREES)
+
+    _, off = worst_joint(*fit_of(source, re_roll=False))
+
+    assert off == pytest.approx(0.1475, abs=0.0001)
+
+
+def test_a_source_already_pointing_at_its_children_is_left_alone() -> None:
+    """The re-roll is identity on a rig that already points at its children,
+    so a refit of our own clip is unchanged by it."""
+    basis = child_basis(in_world(rest_local(CONFORMED), OUR_OBJECT), TAILS)
+
+    worst = max(quat_degrees(mat_rotation(m, role)) for role, m in basis.items())
+    assert worst == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_role_with_no_mapped_child_keeps_its_own_axis() -> None:
+    """A hand has no child to point at, and nothing about its joints says how
+    it should be rolled."""
+    basis = child_basis(in_world(rest_local(SOURCE), SOURCE_OBJECT), TAILS)
+
+    assert basis["left_hand"] == IDENTITY
+    assert basis["hips"] != IDENTITY
+
+
+def test_a_role_whose_child_this_rig_leaves_out_keeps_its_own_axis() -> None:
+    basis = child_basis(_without(in_world(rest_local(SOURCE), SOURCE_OBJECT)), TAILS)
+
+    assert basis["spine_lower"] == IDENTITY
+
+
+def test_a_child_sitting_on_its_parents_joint_has_no_direction() -> None:
+    rest = in_world(rest_local(SOURCE), SOURCE_OBJECT)
+    rest["spine_lower"] = rest["hips"]
+
+    with pytest.raises(TransferError) as raised:
+        child_basis(rest, TAILS)
+
+    assert (raised.value.code, raised.value.subject) == ("no_direction", "hips")
+
+
+def test_a_child_behind_its_parents_own_axis_is_refused() -> None:
+    """Half a turn has no shortest arc, so every roll gives the same aim and
+    picking one would invent a convention."""
+    rest = in_world(rest_local(CONFORMED), OUR_OBJECT)
+    rest["hips"] = frame(mat_translation(rest["hips"]), DOWN, 0.0)
+
+    with pytest.raises(TransferError) as raised:
+        child_basis(rest, TAILS)
+
+    assert (raised.value.code, raised.value.subject) == ("swing_singular", "hips")
+
+
+def test_a_basis_that_leaves_a_role_out_is_refused() -> None:
+    rest = in_world(rest_local(SOURCE), SOURCE_OBJECT)
+    basis = child_basis(rest, TAILS)
+    del basis["head"]
+
+    with pytest.raises(TransferError) as raised:
+        re_rolled(rest, basis)
+
+    assert (raised.value.code, raised.value.subject) == ("role_unmapped", "head")
 
 
 # --- the mutations, each moving one of those numbers ----------------------
@@ -909,7 +1112,7 @@ def test_a_quaternion_of_no_length_is_refused() -> None:
     assert raised.value.code == "no_direction"
 
 
-# --- the small maths, each with its own answer ----------------------------
+# --- the small math, each with its own answer -----------------------------
 
 
 def test_the_aim_of_a_direction_onto_itself_is_no_rotation() -> None:
@@ -967,7 +1170,7 @@ def test_an_inverse_undoes_its_matrix() -> None:
         assert product[row] == pytest.approx(IDENTITY[row], abs=1e-12)
 
 
-def test_the_small_vector_maths() -> None:
+def test_the_small_vector_math() -> None:
     assert dot((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)) == 32.0
     assert cross((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)) == (0.0, 0.0, 1.0)
     assert length((3.0, 4.0, 0.0)) == 5.0

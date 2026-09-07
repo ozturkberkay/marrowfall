@@ -181,44 +181,6 @@ def plant_runs(
     return runs_of(voted(touching(path, source_fps, scale), vote_width(source_fps)))
 
 
-def locked(
-    path: Sequence[Vec3], runs: Sequence[tuple[int, int]], ramp: int = RAMP_FRAMES
-) -> list[Vec3]:
-    """Where each frame's sole point belongs once every run is held still.
-
-    Inside a run the point is held at the run's first frame. Either side of
-    it the correction fades over `ramp` frames, so the foot arrives and
-    leaves without a step. A frame two runs both reach takes the stronger of
-    the two, which is the nearer run.
-    """
-    held = list(path)
-    for at, point in enumerate(path):
-        weight, target = _strongest(path, runs, at, ramp)
-        if weight == 0.0:
-            continue
-        held[at] = (
-            point[0] + (target[0] - point[0]) * weight,
-            point[1] + (target[1] - point[1]) * weight,
-            point[2],
-        )
-    return held
-
-
-def _strongest(
-    path: Sequence[Vec3], runs: Sequence[tuple[int, int]], at: int, ramp: int
-) -> tuple[float, Vec3]:
-    """The nearest run's pull on one frame, and where it pulls the foot to."""
-    best, target = 0.0, path[at]
-    for start, end in runs:
-        away = max(start - at, at - end, 0)
-        if away > ramp:
-            continue
-        weight = (ramp + 1 - away) / (ramp + 1)
-        if weight > best:
-            best, target = weight, path[start]
-    return best, target
-
-
 def drift(path: Sequence[Vec3], run: tuple[int, int]) -> float:
     """How far the sole wanders from where the run's first frame put it."""
     start, end = run
@@ -248,6 +210,56 @@ class Reach(Frozen):
     """Meters between the ankle asked for and the ankle reached. A leg is a
     triangle, so a target too far out or folded too tight is reported here
     rather than as a NaN two functions away."""
+
+
+def locked(
+    path: Sequence[Vec3],
+    runs: Sequence[tuple[int, int]],
+    travels: bool,
+    slide: float,
+    ramp: int = RAMP_FRAMES,
+) -> list[Vec3]:
+    """Where each frame's sole point belongs once every run is held still.
+
+    Inside a run the point is held at the run's first frame, and either side
+    the correction fades over `ramp` frames. A frame two runs both reach
+    takes the nearer one.
+
+    Two runs are never held. One that drifts less than `slide`, the skate
+    gate's own limit, because holding a foot costs the leg above it the
+    direction the transfer gave it. And every run of an in-place clip, whose
+    ground moves under it, so a hold would freeze a foot the treadmill needs
+    moving: `plants` and `skate` switch off there too.
+    """
+    held = list(path)
+    if not travels:
+        return held
+    runs = [run for run in runs if drift(path, run) > slide]
+    for at, point in enumerate(path):
+        weight, target = _strongest(path, runs, at, ramp)
+        if weight == 0.0:
+            continue
+        held[at] = (
+            point[0] + (target[0] - point[0]) * weight,
+            point[1] + (target[1] - point[1]) * weight,
+            point[2],
+        )
+    return held
+
+
+def _strongest(
+    path: Sequence[Vec3], runs: Sequence[tuple[int, int]], at: int, ramp: int
+) -> tuple[float, Vec3]:
+    """The nearest run's pull on one frame, and where it pulls the foot to."""
+    best, target = 0.0, path[at]
+    for start, end in runs:
+        away = max(start - at, at - end, 0)
+        if away > ramp:
+            continue
+        weight = (ramp + 1 - away) / (ramp + 1)
+        if weight > best:
+            best, target = weight, path[start]
+    return best, target
 
 
 def bend(leg: Leg, move: Vec3) -> Reach:

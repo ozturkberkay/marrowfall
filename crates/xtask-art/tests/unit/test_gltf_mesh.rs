@@ -48,11 +48,11 @@ fn the_weld_distance_sits_on_the_plateau_of_the_merge_histogram() {
     assert_eq!(
         histogram,
         [
-            (1e-9, 27_508),
-            (1e-6, 27_508),
-            (1e-5, 27_508),
-            (1e-4, 27_508),
-            (1e-3, 27_488),
+            (1e-9, 27_761),
+            (1e-6, 27_761),
+            (1e-5, 27_761),
+            (1e-4, 27_761),
+            (1e-3, 27_740),
         ]
     );
     assert!(
@@ -74,14 +74,14 @@ fn the_published_histogram_table_is_measured_cell_by_cell() {
     // (weld distance, vertices, boundary edges, non-manifold edges, islands)
     for (distance, vertices, boundary, non_manifold, islands) in [
         // Unwelded, every seam splits, so no edge is shared by three faces
-        // and the surface falls into 413 pieces instead of 7.
-        (None, 34_490, 13_368, 0, 413),
-        (Some(1e-9), 27_508, 171, 8, 7),
-        (Some(1e-6), 27_508, 171, 8, 7),
-        (Some(1e-5), 27_508, 171, 8, 7),
-        (Some(1e-4), 27_508, 171, 8, 7),
-        (Some(1e-3), 27_488, 164, 45, 7),
-        (Some(1e-2), 9_885, 5, 16_210, 5),
+        // and the surface falls into 444 pieces instead of 1.
+        (None, 35_285, 14_285, 0, 444),
+        (Some(1e-9), 27_761, 18, 17, 1),
+        (Some(1e-6), 27_761, 18, 17, 1),
+        (Some(1e-5), 27_761, 18, 17, 1),
+        (Some(1e-4), 27_761, 18, 17, 1),
+        (Some(1e-3), 27_740, 17, 57, 1),
+        (Some(1e-2), 10_590, 1, 14_740, 1),
     ] {
         let surface = match distance {
             Some(distance) => Surface::from_slice_welded_at(&bytes, distance),
@@ -102,33 +102,33 @@ fn the_published_histogram_table_is_measured_cell_by_cell() {
     }
 }
 
-/// The other end of the plateau. A weld ten times too wide hides 166 of the
-/// 171 holes and invents 16,000 non-manifold edges out of merged geometry,
+/// The other end of the plateau. A weld ten times too wide hides 17 of the
+/// 18 holes and invents 14,000 non-manifold edges out of merged geometry,
 /// which is why the distance is chosen and not guessed.
 #[test]
 fn a_weld_two_orders_too_wide_hides_the_holes_it_should_report() {
     let bytes = calibration_bytes();
     let wide = Surface::from_slice_welded_at(&bytes, 1e-2).expect("the survivor");
 
-    assert_eq!(wide.positions().len(), 9_885);
-    assert_eq!(boundary_edges(&wide), 5);
-    assert_eq!(non_manifold_edges(&wide), 16_210);
+    assert_eq!(wide.positions().len(), 10_590);
+    assert_eq!(boundary_edges(&wide), 1);
+    assert_eq!(non_manifold_edges(&wide), 14_740);
 }
 
 /// The representation the last audit measured, side by side with the right
-/// one. 13,368 boundary edges against 171 is the whole reason the weld comes
+/// one. 14,285 boundary edges against 18 is the whole reason the weld comes
 /// first.
 #[test]
-fn skipping_the_weld_reads_thirteen_thousand_holes_where_there_are_a_hundred_and_seventy_one() {
+fn skipping_the_weld_reads_fourteen_thousand_holes_where_there_are_eighteen() {
     let bytes = calibration_bytes();
 
     let welded = Surface::from_slice(&bytes).expect("the survivor");
     let raw = Surface::unwelded(&bytes).expect("the survivor");
 
-    assert_eq!(welded.positions().len(), 27_508);
-    assert_eq!(raw.positions().len(), 34_490);
-    assert_eq!(boundary_edges(&welded), 171);
-    assert_eq!(boundary_edges(&raw), 13_368);
+    assert_eq!(welded.positions().len(), 27_761);
+    assert_eq!(raw.positions().len(), 35_285);
+    assert_eq!(boundary_edges(&welded), 18);
+    assert_eq!(boundary_edges(&raw), 14_285);
     assert_eq!(welded.weld_meters(), Some(WELD_METERS));
     assert_eq!(raw.weld_meters(), None, "and it says it was not welded");
 }

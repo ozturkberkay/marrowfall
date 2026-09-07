@@ -1,6 +1,6 @@
 //! The three `atlas.*` rules, on the packed atlases and their manifest.
 //!
-//! The positive is the committed survivor: three atlases and the manifest the
+//! The positive is the committed survivor: five atlases and the manifest the
 //! game loads today. Every negative is a manifest edited by hand, because the
 //! packer cannot produce one of them.
 
@@ -12,7 +12,7 @@ use xtask_art::check::{Finding, Severity, atlas};
 
 use crate::support::repo_root;
 
-const CLIPS: [&str; 3] = ["idle", "run", "walk_back"];
+const CLIPS: [&str; 5] = ["idle", "run", "strafe_left", "strafe_right", "walk_back"];
 
 fn profile() -> Profile {
     Profile::of(&repo_root(), xtask_art::library::HUMANOID).expect("the committed profile")
@@ -68,7 +68,7 @@ fn an_edited_manifest(from: &str, to: &str) -> tempfile::TempDir {
     dir
 }
 
-/// The calibration: the three committed atlases and the manifest the game
+/// The calibration: the five committed atlases and the manifest the game
 /// reads, with nothing wrong with them.
 #[test]
 fn the_committed_atlases_hold_every_rule() {
@@ -96,7 +96,7 @@ fn the_committed_atlases_hold_every_rule() {
     }
     assert_eq!(
         one(&findings, "atlas.manifest_schema", &name).message,
-        format!("{name} loads as 3 animation(s) through the reader the game uses")
+        format!("{name} loads as 5 animation(s) through the reader the game uses")
     );
     assert_eq!(
         one(&findings, "atlas.frame_count", "idle").message,
@@ -104,7 +104,7 @@ fn the_committed_atlases_hold_every_rule() {
     );
     assert_eq!(
         one(&findings, "atlas.trim_boxes", "idle").message,
-        "idle indexes a 2164x2048 atlas with 240 rect(s) in 93x240 cells"
+        "idle indexes a 2172x2040 atlas with 240 rect(s) in 95x240 cells"
     );
 }
 
@@ -133,10 +133,13 @@ fn a_manifest_claiming_one_extra_frame_is_refused() {
 #[test]
 fn a_rect_one_pixel_past_the_atlas_is_refused() {
     let atlas = image::open(committed().join("idle.png")).unwrap();
+    // Rect 0 of `idle`, addressed through its own `rects: [`, because another
+    // animation's rect happens to share the same x and `replace` takes every
+    // match it is given.
     let dir = an_edited_manifest(
-        "                FrameRect(\n                    x: 1297,",
+        "            rects: [\n                FrameRect(\n                    x: 827,",
         &format!(
-            "                FrameRect(\n                    x: {},",
+            "            rects: [\n                FrameRect(\n                    x: {},",
             atlas.width() - 1
         ),
     );
@@ -161,8 +164,8 @@ fn a_rect_one_pixel_past_the_atlas_is_refused() {
 #[test]
 fn an_anchor_outside_its_cell_is_refused() {
     let dir = an_edited_manifest(
-        "                x: 47,\n                y: 239,",
-        "                x: 47,\n                y: 240,",
+        "                x: 48,\n                y: 239,",
+        "                x: 48,\n                y: 240,",
     );
 
     let finding = one(
@@ -234,13 +237,13 @@ fn a_manifest_that_was_never_written_is_refused() {
 fn an_animation_the_manifest_left_out_is_undefined() {
     let manifest = committed().join("character.ron");
 
-    let findings = measured(&manifest, &committed(), &["strafe_left"]);
+    let findings = measured(&manifest, &committed(), &["crawl"]);
 
-    let finding = one(&findings, "atlas.frame_count", "strafe_left");
+    let finding = one(&findings, "atlas.frame_count", "crawl");
     assert_eq!(finding.severity, Severity::Error);
     assert_eq!(
         finding.message,
-        "the manifest carries no animation named strafe_left"
+        "the manifest carries no animation named crawl"
     );
 }
 
@@ -372,6 +375,8 @@ fn the_owed_subjects_are_the_manifest_and_every_animation() {
             "project/assets/characters/survivor/character.ron",
             "idle",
             "run",
+            "strafe_left",
+            "strafe_right",
             "walk_back"
         ]
     );

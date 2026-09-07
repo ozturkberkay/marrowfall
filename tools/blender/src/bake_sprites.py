@@ -44,7 +44,6 @@ Conventions:
 import argparse
 import math
 import sys
-from collections.abc import Callable
 from pathlib import Path
 
 import bpy
@@ -60,7 +59,6 @@ from framing import (
     Vec3,
     bone_from_data_path,
     direction_rotation,
-    forearm_roll_sign,
     frame_filename,
     frames_are_keys,
     golden_samples,
@@ -76,7 +74,7 @@ from framing import (
     root_travel,
     sampled_frames,
 )
-from mathutils import Quaternion, Vector
+from mathutils import Vector
 from pydantic import BaseModel, ConfigDict
 
 
@@ -178,13 +176,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Rewrite every golden from this run instead of reading it. The "
         "runner passes this only when MARROWFALL_UPDATE_GOLDENS is set.",
     )
-    parser.add_argument(
-        "--forearm-roll",
-        type=float,
-        default=0.0,
-        help="Degrees to roll the forearm bones, correcting a palms-forward "
-        "bind pose. Positive rotates palms inward.",
-    )
     return parser.parse_args(argv)
 
 
@@ -195,7 +186,6 @@ def settings_from(args: argparse.Namespace) -> BakeSettings:
         fps=parse_rates(args.fps),
         size=args.size,
         trim_start=args.trim_start,
-        forearm_roll=args.forearm_roll,
     )
 
 
@@ -385,75 +375,6 @@ def setup_render(size: int) -> None:
     scene.render.film_transparent = True  # alpha, so sprites composite over tiles
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
-
-
-def apply_forearm_roll(armature: bpy.types.Object, degrees: float) -> None:
-    """Corrects a palms-forward bind pose across every action.
-
-    The roll is composed into the animated rotation curves rather than set on
-    the pose bone: glTF actions drive `rotation_quaternion`, so writing
-    `rotation_euler` (or switching rotation_mode) would be overwritten by the
-    action at best, and freeze the bone at worst.
-    """
-    if not degrees:
-        return
-    matched = [b.name for b in armature.pose.bones if is_forearm(b.name)]
-    if not matched:
-        print(f"warning: --forearm-roll {degrees} given but no forearm bones matched")
-        return
-
-    for action in bpy.data.actions:
-        for name in matched:
-            roll_forearm(action, name, degrees)
-    print(f"applied {degrees} deg forearm roll to {matched}")
-
-
-def roll_forearm(action: bpy.types.Action, bone: str, degrees: float) -> None:
-    """Rolls one forearm about its own length axis (Y in Blender bone space).
-
-    Composed after whatever the animation already does to the bone, which is
-    what makes it a correction rather than a replacement.
-    """
-    roll = Quaternion((0.0, 1.0, 0.0), math.radians(degrees * forearm_roll_sign(bone)))
-    edit_rotation_curves(action, bone, lambda current: current @ roll)
-
-
-def rotation_curves(action: bpy.types.Action, bone: str) -> list[bpy.types.FCurve]:
-    """A bone's four rotation curves in w, x, y, z order, or none at all.
-
-    glTF actions drive `rotation_quaternion`, so a bone either has the whole
-    set or is not rotated by this action.
-    """
-    path = f'pose.bones["{bone}"].rotation_quaternion'
-    curves = sorted(
-        (fc for fc in action_fcurves(action) if fc.data_path == path),
-        key=lambda fc: fc.array_index,
-    )
-    return curves if len(curves) == 4 else []
-
-
-def edit_rotation_curves(
-    action: bpy.types.Action,
-    bone: str,
-    combine: Callable[[Quaternion], Quaternion],
-) -> None:
-    """Rewrites every keyframe of a bone's rotation through `combine`.
-
-    The correction is composed into the curve rather than set on the pose bone:
-    an action drives `rotation_quaternion`, so writing the pose would be
-    overwritten by the action at best, and freeze the bone at worst.
-    """
-    curves = rotation_curves(action, bone)
-    if not curves:
-        return
-    for index in range(len(curves[0].keyframe_points)):
-        current = Quaternion([curve.keyframe_points[index].co[1] for curve in curves])
-        for curve, value in zip(curves, combine(current), strict=True):
-            curve.keyframe_points[index].co[1] = value
-            curve.keyframe_points[index].handle_left[1] = value
-            curve.keyframe_points[index].handle_right[1] = value
-    for curve in curves:
-        curve.update()
 
 
 def rest_points(armature: bpy.types.Object) -> list[Vec3]:
@@ -834,8 +755,6 @@ def main() -> None:
     if missing:
         sys.exit(f"error: no --fps given for {', '.join(missing)}")
 
-    # Fix-ups must run after the actions are in, since they edit F-curves.
-    apply_forearm_roll(character.armature, settings.forearm_roll)
     refuse_another_body(character, animations)
     stripped = not args.keep_root_motion
     if stripped:
