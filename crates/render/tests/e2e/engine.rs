@@ -167,8 +167,17 @@ impl Run {
         );
     }
 
+    /// The argv, where the log is, and its tail. The tail matters in CI,
+    /// where the file is gone by the time anyone reads the failure.
     fn diagnostics(&self) -> String {
-        format!("  argv: {}\n  log:  {}", self.argv, self.log_path.display())
+        let lines: Vec<&str> = self.log.lines().collect();
+        let tail = lines[lines.len().saturating_sub(40)..].join("\n");
+        format!(
+            "  argv: {}\n  log:  {}\n--- last {} line(s) ---\n{tail}",
+            self.argv,
+            self.log_path.display(),
+            lines.len().min(40),
+        )
     }
 }
 

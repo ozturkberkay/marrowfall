@@ -10,12 +10,15 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 slow-timeout = { period = "30s", terminate-after = 2 }
 fail-fast = false
 
-# The e2e tier boots a real Godot and imports the project's atlases from cold,
-# which is minutes on a CI runner rather than the seconds a unit test takes.
+# A cold Godot import of the committed atlases costs 77 CPU-seconds, measured.
+# One at a time, or three of them share a runner's cores and each one's own
+# watchdog fires. The longer period is for the same reason.
 [[profile.default.overrides]]
 filter = 'binary_id(render::e2e)'
+threads-required = "num-cpus"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
 [[profile.ci.overrides]]
 filter = 'binary_id(render::e2e)'
+threads-required = "num-cpus"
 slow-timeout = { period = "60s", terminate-after = 5 }
