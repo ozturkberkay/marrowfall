@@ -11,6 +11,7 @@ cargo art status skeleton                 # what is done, stale or pending
 cargo art check                           # validate the specs, measure the art
 cargo art check --list-rules              # every gate: limit, comparison, unit, space
 cargo art check --sheet                   # draw the contact sheet of the committed atlases
+cargo art posture idle                    # what a clip did to the body, per frame
 cargo art spike-pose skeleton             # measure which pose_mode to send, ~90 credits
 ```
 
@@ -107,6 +108,41 @@ they are two rules with two limits: a residual of 0.02 m and a bob of 0.15.
 The bake scales nothing: the retarget already sized every length, so a clip
 whose own rig is not this character's size is refused there rather than
 rescaled a second time.
+
+## Reading a posture, which gates nothing
+
+`cargo art posture` prints eleven readings a frame, then their min, max and
+mean: skull pitch, neck pitch, spine lean, shoulder roll, and the upper arm,
+elbow bend and wrist bend on each side, plus the hips height for context.
+Joints against joints in Blender Z-up world space, positive leaning forward.
+
+```sh
+cargo art posture idle                 # the fitted clip, on the canonical rig
+cargo art posture --source idle        # the same clip as the vendor sold it
+cargo art posture --rest art/skeletons/humanoid.glb
+cargo art posture idle --frames 0,12,24
+```
+
+It only measures. It has no limits, writes no finding and never appears in
+`--list-rules`.
+`docs/research/2026_09_19_posture_baseline.md` is every clip read this way on
+the art committed on 2026-09-19.
+
+The reading runs in Blender, in `tools/blender/src/read_posture.py` over
+`posture.py`, and the text it writes is kept at
+`art/staging/reports/posture.<item>.1.txt`. One path rather than a Rust
+reader for the GLBs and a Blender one for the FBX: a Mixamo source is an FBX
+that no Rust reader opens, and two implementations would be two definitions
+of the same angle. A fitted clip is played on `art/skeletons/humanoid.glb`
+rather than read off the armature inside the clip, so a clip fitted to a rig
+that has since been replaced reads as what it now is.
+
+The head needs a joint no role names, so `[landmarks]` in
+`art/skeletons/humanoid.toml` names the top of the skull per convention:
+`head_end` on ours and on Meshy rigs, `HeadTop_End` on Mixamo. A role is
+driven by the retarget and a landmark is only measured, which is why it is
+its own table. Both readers of that file validate it, `check/aim.rs` here and
+`tools/blender/src/skeleton.py` there.
 
 ## Gating the bake, and the atlas
 

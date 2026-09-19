@@ -10,6 +10,10 @@ Two files:
   vendor's naming, where every bone must point, and the limits a rig has to
   pass (`[profile]`).
 
+`[conventions]` names a role and `[landmarks]` names a joint that fills none.
+The retarget drives a role. A landmark is only measured: `skull_top` is the
+tip of the head, which `cargo art posture` reads the head against.
+
 `cargo art check` measures a character against `humanoid.toml` and prints one
 line per problem. Zero means it passes.
 

@@ -17,3 +17,10 @@ Your **critical** responsibilities:
 1. Ensure the implementation strictly adheres to the design requirements.
 2. Ensure the implementation stays simple and easy to maintain.
 3. Ensure existing coding standards and practices are followed.
+
+Your rules:
+
+1. Default to not leaving any code comments. Only leave comments for things
+   that are not obvious for people with little to no context, and make sure
+   they are simple and tiny! (~1 line). Assume no context, keep it easy to
+   read, no jargons.

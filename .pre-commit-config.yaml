@@ -50,9 +50,10 @@ repos:
     rev: 38980559e3a605691d6579f96222c30778e5a69e # 3.0.0
     hooks:
       - id: forbid-binary
-        # Committed art (LFS), vendored addons, and two broken-art fixtures
-        # the checks are tested against. Any other binary is an accident.
-        exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|crates/xtask-art/tests/fixtures/(humanoid_before_rename|walk_back_hitching)\.glb$|project/assets/|project/addons/)
+        # Committed art (LFS), vendored addons, and the test fixtures the
+        # checks are proved against: two broken rigs, and the screenshots of
+        # a posture nothing measured. Any other binary is an accident.
+        exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|crates/xtask-art/tests/fixtures/(perception/|(humanoid_before_rename|walk_back_hitching)\.glb$)|project/assets/|project/addons/)
       - id: script-must-have-extension
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: ad1b27d73581aa16cca06fc4a0761fc563ffe8e8 # v1.5.6

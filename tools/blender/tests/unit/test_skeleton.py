@@ -16,6 +16,7 @@ import tomllib
 import pytest
 from pydantic import ValidationError
 from skeleton import (
+    SKULL_TOP,
     Skeleton,
     bare_bone_name,
     mirrored_role,
@@ -45,6 +46,12 @@ spine_upper = "Spine2"
 neck = "Neck"
 left_arm = "LeftArm"
 right_arm = "RightArm"
+
+[landmarks.meshy]
+skull_top = "head_end"
+
+[landmarks.mixamo]
+skull_top = "HeadTop_End"
 
 [retarget_chain]
 spine_lower = "hips"
@@ -429,6 +436,33 @@ def test_a_sided_role_with_no_mirror_row_is_refused() -> None:
         )
 
 
+# --- Landmarks ------------------------------------------------------------
+
+
+def test_a_landmark_is_read_per_convention_the_way_a_role_is() -> None:
+    roles = a_skeleton()
+
+    assert roles.landmarks_of("meshy")[SKULL_TOP] == "head_end"
+    assert roles.landmarks_of("mixamo")[SKULL_TOP] == "HeadTop_End"
+
+
+def test_an_unknown_convention_has_no_landmarks() -> None:
+    with pytest.raises(ValueError, match="unknown.*'meshy', 'mixamo'"):
+        a_skeleton().landmarks_of("maya")
+
+
+def test_a_convention_with_no_landmark_row_is_refused() -> None:
+    with pytest.raises(ValidationError, match="every convention in"):
+        edited(('[landmarks.mixamo]\nskull_top = "HeadTop_End"\n', ""))
+
+
+def test_a_convention_that_names_no_skull_top_is_refused() -> None:
+    """A landmark this table leaves out is a reading that silently goes
+    missing on one rig and not on another."""
+    with pytest.raises(ValidationError, match="landmarks.mixamo names no"):
+        edited(('skull_top = "HeadTop_End"', 'chin = "Chin"'))
+
+
 # --- The committed file ---------------------------------------------------
 
 
@@ -446,6 +480,16 @@ def test_the_committed_skeleton_file_loads() -> None:
     # the one our own `Spine` names.
     assert roles.convention("meshy")["spine_lower"] == "Spine02"
     assert roles.convention("standard")["spine_lower"] == "Spine"
+
+
+def test_every_committed_convention_names_the_top_of_its_skull() -> None:
+    roles = Skeleton.parse(COMMITTED.read_text())
+
+    assert {name: marks[SKULL_TOP] for name, marks in roles.landmarks.items()} == {
+        "meshy": "head_end",
+        "standard": "head_end",
+        "mixamo": "HeadTop_End",
+    }
 
 
 def test_the_committed_aim_table_aims_the_torso_up_and_the_toes_forward() -> None:

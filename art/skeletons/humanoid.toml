@@ -87,6 +87,18 @@ right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
 
+# Joints that fill no role, named per convention. The retarget drives a role.
+# A landmark is only measured: `skull_top` is the tip of the head, and the
+# posture readings take it against the `head` joint below it.
+[landmarks.meshy]
+skull_top = "head_end"
+
+[landmarks.standard]
+skull_top = "head_end"
+
+[landmarks.mixamo]
+skull_top = "HeadTop_End"
+
 # The order the retarget walks, by role. Keyed by role and not by bone, so a
 # source with fewer spine bones still drives ours. `hips` is the top.
 [retarget_chain]

@@ -668,6 +668,11 @@ impl Artifacts {
         self.path("source.json")
     }
 
+    /// The posture readings, as the text `cargo art posture` prints.
+    pub fn readings(&self) -> PathBuf {
+        self.path("txt")
+    }
+
     /// The scene as it stood when the script raised.
     pub fn blend(&self) -> PathBuf {
         self.path("blend")

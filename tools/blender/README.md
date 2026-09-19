@@ -25,11 +25,13 @@ under `crates/xtask-art/src/check/`.
 | `plant.py` | no | where a foot touches the ground: contact, the lock, the leg solve |
 | `clip.py` | no | what the retarget reports: the two counts, the frame grid, where the fit ended up, and the source motion sidecar |
 | `source.py` | no | what a vendor clip is, measured before anything is fitted to it |
+| `posture.py` | no | what a clip did to a body: eleven readings a frame, and the text they print as |
 | `skeleton.py` | no | the skeleton file: roles, the retarget chain, the aim table |
 | `framing.py` | no | the bake's camera geometry, frame sampling, the root strip, and the landmark golden |
 | `findings.py` | no | the Finding record, the rule, the report, and the success sentinel |
 | `actions.py` | yes | the F-curve edits the retarget and the bake both make |
 | `check_source.py` | yes | imports the downloaded FBX and hands it to `source.py` |
+| `read_posture.py` | yes | opens a rig, a clip or both and hands the world matrices to `posture.py` |
 | `mesh_clean.py` | yes | welds, drops debris, fills holes and mirrors the bare mesh |
 | `mesh_sheet.py` | yes | renders the five views of the model contact sheet |
 | `retarget_animation.py` | yes | imports two rigs, drives `transfer.py`, writes keys |
@@ -37,7 +39,7 @@ under `crates/xtask-art/src/check/`.
 | `promote_rig.py` | yes | writes the skeleton's canonical rig out of a conformed character |
 | `armature.py` | yes | carrying one armature in and out of a GLB, for the two scripts above |
 
-The eight `bpy`-free modules are unit tested by `uv run pytest` at 100
+The nine `bpy`-free modules are unit tested by `uv run pytest` at 100
 percent coverage, with no Blender anywhere. That split is not tidiness: `bpy`
 only exists inside Blender, so a module that imports it cannot be tested at
 all.
@@ -50,6 +52,21 @@ plane still produces a leg. Neither needs a scene, only matrices and points,
 so `retarget_animation.py` reads Blender and hands them plain numbers, and
 every case they answer is a pytest one that runs in CI where there is no
 Blender at all.
+
+## Posture readings are not a gate
+
+`read_posture.py` and `posture.py` only measure. They report what a clip did
+to the body, in degrees, and write no finding. Nothing in this pair appears
+in `cargo art check --list-rules`. The readings for every clip are in
+`docs/research/2026_09_19_posture_baseline.md`.
+
+A landmark is what makes the head readable. `[landmarks]` in
+`art/skeletons/humanoid.toml` names the top of the skull per convention,
+`head_end` on ours and on Meshy rigs and `HeadTop_End` on Mixamo. It is not a
+role: the retarget drives a role, and nothing drives this joint. Reading the
+`Head` bone's own axis instead would measure the rigger rather than the body,
+because that axis sits 29.9 degrees off the skull on a Meshy rig and about 20
+on a Mixamo one.
 
 ## Three things a script never does
 

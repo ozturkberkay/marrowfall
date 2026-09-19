@@ -42,6 +42,8 @@ mod test_openai;
 mod test_openai_client;
 mod test_pack;
 mod test_pack_stage;
+mod test_perception;
+mod test_posture;
 mod test_preview;
 mod test_profile;
 mod test_providers;

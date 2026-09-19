@@ -34,6 +34,9 @@ use super::{Comparison, Finding, Rule, relative_to};
 const LEFT: &str = "left_";
 const RIGHT: &str = "right_";
 
+/// The landmark every convention has to name: the tip of the head.
+pub const SKULL_TOP: &str = "skull_top";
+
 /// The same role on the other side, for a role that has one.
 pub fn mirrored_role(role: &str) -> Option<String> {
     match role.strip_prefix(LEFT) {
@@ -63,6 +66,9 @@ pub const RULES: [&Rule; 1] = [&AIM_TABLE];
 pub struct AimTable {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
+    /// Convention to landmark to bone name: the joints that fill no role and
+    /// are only measured.
+    landmarks: BTreeMap<String, BTreeMap<String, String>>,
     /// Convention to the bones a file must have for it to match.
     fingerprints: BTreeMap<String, Vec<String>>,
     /// Role to its aim, as a unit direction in Blender Z-up world space.
@@ -77,6 +83,7 @@ pub struct AimTable {
 struct SkeletonFile {
     canonical: String,
     conventions: BTreeMap<String, BTreeMap<String, String>>,
+    landmarks: BTreeMap<String, BTreeMap<String, String>>,
     fingerprints: BTreeMap<String, Vec<String>>,
     aim_table: BTreeMap<String, Vec<f64>>,
     ground_roles: Vec<String>,
@@ -117,6 +124,7 @@ impl AimTable {
             ground: ground(&roles, file.ground_roles)?,
             stride: stride(&roles, file.stride_segment)?,
             fingerprints: fingerprints(&file.conventions, file.fingerprints)?,
+            landmarks: landmarks(&file.conventions, file.landmarks)?,
             canonical: file.canonical,
             conventions: file.conventions,
         })
@@ -148,6 +156,18 @@ impl AimTable {
     /// feet, and neither one takes a step.
     pub fn stride_segment(&self) -> &[String; 2] {
         &self.stride
+    }
+
+    /// One convention's landmark to bone name map: the joints nothing drives
+    /// and `cargo art posture` measures.
+    pub fn landmarks(&self, convention: &str) -> Result<&BTreeMap<String, String>> {
+        self.landmarks.get(convention).with_context(|| {
+            let known: Vec<&str> = self.landmarks.keys().map(String::as_str).collect();
+            format!(
+                "unknown bone naming convention {convention:?}, known: {}",
+                known.join(", ")
+            )
+        })
     }
 
     /// One convention's role to bone name map.
@@ -202,6 +222,32 @@ impl AimTable {
 /// other half of it.
 pub fn bare_bone_name(bone: &str) -> String {
     bone.rsplit(':').next().unwrap_or(bone).to_lowercase()
+}
+
+/// Every convention's landmarks, refused unless each one names the top of its
+/// own skull.
+///
+/// A rig whose skull top nothing names cannot be measured at all: the head
+/// reading is what this table exists for. The same refusal `skeleton.py`
+/// makes on the other side of this file.
+fn landmarks(
+    conventions: &BTreeMap<String, BTreeMap<String, String>>,
+    rows: BTreeMap<String, BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+    let declared: BTreeSet<&str> = conventions.keys().map(String::as_str).collect();
+    let covered: BTreeSet<&str> = rows.keys().map(String::as_str).collect();
+    ensure!(
+        declared == covered,
+        "landmarks covers {covered:?}, and every convention in {declared:?} needs a row"
+    );
+    for (convention, marks) in &rows {
+        ensure!(
+            marks.contains_key(SKULL_TOP),
+            "landmarks.{convention} names no {SKULL_TOP:?}, so nothing says \
+             where the top of that rig's head is"
+        );
+    }
+    Ok(rows)
 }
 
 /// Every convention's fingerprint, refused unless each one names at least one

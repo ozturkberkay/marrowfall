@@ -13,6 +13,7 @@ pub mod http;
 pub mod library;
 pub mod lock;
 pub mod pack;
+pub mod posture;
 pub mod preview;
 pub mod providers;
 pub mod spec;

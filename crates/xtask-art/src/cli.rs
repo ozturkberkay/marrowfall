@@ -110,6 +110,10 @@ pub enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Print the posture of a clip, frame by frame, with min, max and mean.
+    ///
+    /// Measures only. No limit, no gate, and it never spends.
+    Posture(crate::posture::Asked),
     /// Validate specs and measure the art on disk, without running anything.
     Check {
         /// Defaults to every spec in art/characters.
@@ -670,7 +674,7 @@ fn fitted_skeleton(
 /// replace: reading it would measure the last run's output, and Blender's
 /// import and export round trip is not bit exact, so the motion would drift
 /// a little every time.
-fn clip_source<'a>(
+pub(crate) fn clip_source<'a>(
     root: &Path,
     name: &str,
     animation: &'a Animation,
@@ -1259,6 +1263,7 @@ where
             crate::spike::run(&root, &name, rig, yes, &mut std::io::stdin().lock()).await
         }
         Command::Promote { name } => promote(&root, &name),
+        Command::Posture(asked) => crate::posture::run(&root, &asked),
         Command::Status { name, json } => status(&root, &name, json),
         Command::Check {
             name,

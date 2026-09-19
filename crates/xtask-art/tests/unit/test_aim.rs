@@ -48,6 +48,9 @@ hips = "Hips"
 left_fin = "LeftFin"
 right_fin = "RightFin"
 
+[landmarks.ours]
+skull_top = "head_end"
+
 [fingerprints]
 ours = ["LeftFin"]
 
@@ -400,6 +403,47 @@ fn a_row_that_is_not_three_numbers_is_refused() {
     // A row that is not an array at all never gets that far.
     let error = refused(&[("hips = [0.0, 0.0, 1.0]", "hips = \"up\"")]);
     assert!(error.contains("aim_table"), "got: {error}");
+}
+
+/// `[landmarks]` names the joints nothing drives, so a rig whose skull top is
+/// missing could never be measured. The same refusals `skeleton.py` makes.
+#[test]
+fn every_convention_names_the_top_of_its_own_skull() {
+    let table = table();
+
+    for convention in ["meshy", "standard", "mixamo"] {
+        let marks = table.landmarks(convention).unwrap();
+        assert!(marks.contains_key(aim::SKULL_TOP), "{convention}");
+    }
+    assert_eq!(
+        table.landmarks("mixamo").unwrap()[aim::SKULL_TOP],
+        "HeadTop_End"
+    );
+    assert_eq!(
+        table.landmarks("standard").unwrap()[aim::SKULL_TOP],
+        "head_end"
+    );
+}
+
+#[test]
+fn an_unknown_convention_has_no_landmarks_and_names_the_ones_that_do() {
+    let error = format!("{:#}", table().landmarks("maya").unwrap_err());
+
+    assert!(error.contains("meshy, mixamo, standard"), "got: {error}");
+}
+
+#[test]
+fn a_convention_with_no_landmark_row_is_refused() {
+    let error = refused(&[("[landmarks.ours]", "[landmarks.theirs]")]);
+
+    assert!(error.contains("every convention in"), "got: {error}");
+}
+
+#[test]
+fn a_convention_that_names_no_skull_top_is_refused() {
+    let error = refused(&[("skull_top = \"head_end\"", "chin = \"Chin\"")]);
+
+    assert!(error.contains("names no \"skull_top\""), "got: {error}");
 }
 
 /// `[fingerprints]` is what reads a rig's convention off the rig, so a

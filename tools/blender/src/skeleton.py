@@ -29,6 +29,14 @@ from pydantic import model_validator
 LEFT = "left_"
 RIGHT = "right_"
 
+SKULL_TOP = "skull_top"
+"""The landmark every convention has to name: the tip of the head.
+
+A landmark and not a role, because the retarget drives a role and nothing
+drives this one. It exists so the posture readings can take the head against
+the skull above it rather than against the `Head` bone's own axis, which is
+29.9 degrees off on a Meshy rig and about 20 on a Mixamo one."""
+
 
 def mirrored_role(role: str) -> str | None:
     """The same role on the other side, for a role that has one."""
@@ -68,6 +76,9 @@ class Skeleton(Frozen):
     """The convention the canonical rig itself is named in."""
     conventions: dict[str, dict[str, str]]
     """Convention name to role to bone name."""
+    landmarks: dict[str, dict[str, str]]
+    """Convention name to landmark to bone name. A joint that fills no role
+    and is only measured, such as `skull_top`."""
     retarget_chain: dict[str, str]
     """Role to the role above it, which is not the rig's own bone hierarchy:
     a source with three spine bones drives a target with four."""
@@ -183,6 +194,23 @@ class Skeleton(Frozen):
         return self
 
     @model_validator(mode="after")
+    def every_convention_must_name_the_top_of_its_skull(self) -> "Skeleton":
+        """A rig whose skull top nothing names cannot be measured at all: the
+        head reading is the one this table exists for."""
+        if sorted(self.landmarks) != sorted(self.conventions):
+            raise ValueError(
+                f"landmarks covers {sorted(self.landmarks)}, and every "
+                f"convention in {sorted(self.conventions)} needs a row"
+            )
+        for name, marks in self.landmarks.items():
+            if SKULL_TOP not in marks:
+                raise ValueError(
+                    f"landmarks.{name} names no {SKULL_TOP!r}, so nothing "
+                    f"says where the top of that rig's head is"
+                )
+        return self
+
+    @model_validator(mode="after")
     def every_convention_needs_a_fingerprint_of_its_own(self) -> "Skeleton":
         """A fingerprint that two conventions share tells them apart from
         nothing."""
@@ -240,6 +268,13 @@ class Skeleton(Frozen):
             known = sorted(self.conventions)
             raise ValueError(f"unknown bone naming convention {name!r}, known: {known}")
         return convention
+
+    def landmarks_of(self, name: str) -> dict[str, str]:
+        """One convention's landmark to bone name map."""
+        if (marks := self.landmarks.get(name)) is None:
+            known = sorted(self.landmarks)
+            raise ValueError(f"unknown bone naming convention {name!r}, known: {known}")
+        return marks
 
     def aim(self, role: str) -> Vec3:
         """Where one role's bone must point, as a unit direction."""
