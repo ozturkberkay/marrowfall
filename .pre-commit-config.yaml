@@ -50,11 +50,8 @@ repos:
     rev: 38980559e3a605691d6579f96222c30778e5a69e # 3.0.0
     hooks:
       - id: forbid-binary
-        # Art is committed on purpose and tracked by Git LFS, the vendored
-        # addons ship their own icons, and two test fixtures are art we
-        # shipped and replaced: `humanoid.glb` before the bones were renamed,
-        # and the backward walk that hitches. Each is the only negative
-        # control its rules have. Everywhere else a binary is an accident.
+        # Committed art (LFS), vendored addons, and two broken-art fixtures
+        # the checks are tested against. Any other binary is an accident.
         exclude: ^(art/animations/|art/brand/|art/characters/|art/skeletons/|crates/xtask-art/tests/fixtures/(humanoid_before_rename|walk_back_hitching)\.glb$|project/assets/|project/addons/)
       - id: script-must-have-extension
   - repo: https://github.com/Lucas-C/pre-commit-hooks
@@ -93,7 +90,6 @@ repos:
         language: script
         types: [rust]
         pass_filenames: false
-
       # PYTHON
       - id: ruff-format
         name: Ruff Format
@@ -115,9 +111,15 @@ repos:
         pass_filenames: false
 
       # JAVASCRIPT
-      - id: prettier
-        name: Prettier
-        entry: bun run prettier --check
+      - id: oxfmt
+        name: Oxfmt
+        entry: bun run oxfmt
+        language: system
+        types: [javascript]
+        files: \.mjs$
+      - id: oxlint
+        name: Oxlint
+        entry: bun run oxlint --deny-warnings
         language: system
         types: [javascript]
         files: \.mjs$

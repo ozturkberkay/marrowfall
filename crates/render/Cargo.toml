@@ -19,6 +19,13 @@ sprites.workspace = true
 [lints]
 workspace = true
 
+[dev-dependencies]
+image.workspace = true
+
 [[test]]
 name = "unit"
 path = "tests/unit/mod.rs"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/mod.rs"

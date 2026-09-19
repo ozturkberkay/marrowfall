@@ -13,12 +13,10 @@
 /art/staging/
 /art/preview/
 
-# Motion we may use but not redistribute: Adobe's licence allows the animation
-# in the game and forbids publishing the file. `cargo art fetch` puts a copy
-# here on each machine.
+# Bought motion we may use but not republish. `cargo art fetch` puts it here.
 /art/animations/local/
 
-# JavaScript (the glTF-Validator only, bun-managed)
+# JavaScript
 /node_modules/
 
 # Python (Blender scripts; uv-managed)

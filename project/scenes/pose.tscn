@@ -1,0 +1,13 @@
+[gd_scene format=3]
+
+; The visual harness `crates/render/tests/e2e` drives. Not the game: it poses
+; the survivor for one loop of one clip so a human can judge the atlases.
+
+[node name="Pose" type="PoseHarness"]
+
+; The dark ground the art pipeline judges sprites against, so the sheets from
+; here and the sheet beside the atlas share a backdrop.
+[node name="Backdrop" type="ColorRect" parent="."]
+offset_right = 2560.0
+offset_bottom = 1440.0
+color = Color(0.227451, 0.211765, 0.180392, 1)

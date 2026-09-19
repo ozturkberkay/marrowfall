@@ -56,10 +56,6 @@ A single-player isometric action-RPG sandbox set in a dying medieval world.
     godot --path project
     ```
 
-    WASD moves the survivor relative to the screen, and the mouse points him,
-    so he can back away from something while still facing it. The keys are bound
-    by physical location, so they stay in the same place on a non-QWERTY layout.
-
 ### Testing
 
 Three-tier test architecture. Every crate keeps its tests in a sibling
@@ -71,7 +67,16 @@ is what lets one command run a whole tier across the workspace:
 | ----------- | ------------------------------------- | -------------------------------------------------- | --------------------------- |
 | Unit | Mocks and local stubs, no remote service | `cargo nextest run --workspace --test unit` | `game`, `host`, `render`, `sprites`, `worldgen`, `xtask-art`, `xtask-world` |
 | Integration | Real threads and channels, no engine | `cargo nextest run --workspace --test integration` | `host` |
-| E2E | Black box, launches `godot --headless` | `cargo nextest run --workspace --test e2e` | nothing yet |
+| E2E | Black box, launches `godot --headless` | `cargo nextest run --workspace --test e2e` | `render` |
 
-> **gdext gotcha:** after recompiling Rust, restart the Godot editor, the
-> running editor does not reliably pick up a rebuilt library.
+#### Looking at the character
+
+Tests prove the game runs. They cannot tell you the character looks right.
+This opens the game, poses him through every animation, and saves the frames
+to `art/preview/e2e/` so a person (or an AI) can look at them:
+
+```bash
+MARROWFALL_VISUAL_HARNESS=1 cargo nextest run --workspace --test e2e
+```
+
+Local only, because a headless Godot draws no pixels.

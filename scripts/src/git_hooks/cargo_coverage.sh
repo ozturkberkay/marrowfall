@@ -16,15 +16,17 @@ REQUIRED_COVERAGE=96
 # to be tested. `crates/game` is at 100% and should stay there. Raise this
 # number when the game grows, not by faking either.
 #
-# Two files cannot be reached from a plain test binary:
+# These files cannot be reached from a plain test binary:
 #
 #   render/src/bridge.rs    a Godot node. Instantiating it needs a running
 #                           engine, so it is exercised by launching the game,
 #                           not by the test harness.
+#   render/src/pose.rs      a Godot node too, and the e2e tier is what drives
+#                           it, through `project/scenes/pose.tscn`.
 #   xtask-art/src/main.rs   the binary entry point, which exists only to call
 #                           `cli::run_from_args`. That function IS covered.
 #   xtask-world/src/main.rs the same, for the world preview tool.
-IGNORE='(render/src/bridge\.rs|xtask-art/src/main\.rs|xtask-world/src/main\.rs)'
+IGNORE='(render/src/(bridge|pose)\.rs|xtask-art/src/main\.rs|xtask-world/src/main\.rs)'
 
 for tool in cargo-llvm-cov cargo-nextest; do
   if ! command -v "${tool}" &> /dev/null; then

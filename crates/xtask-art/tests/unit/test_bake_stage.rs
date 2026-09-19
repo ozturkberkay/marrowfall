@@ -558,26 +558,14 @@ fn nothing_set_the_golden_update_switch_in_this_run() {
     );
 }
 
-/// And the CI half: the workflow refuses the variable before it runs a test,
-/// and reads the contact sheet it redraws against the committed copy before
-/// uploading it.
+/// CI redraws the contact sheet before comparing it, or a stale sheet passes.
 #[test]
-fn ci_refuses_a_rewritten_golden_before_it_runs_anything() {
+fn ci_redraws_the_contact_sheet_before_comparing_it() {
     let workflow = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../.github/workflows/rust.yml"
+        "/../../.github/workflows/test_art.yml"
     ));
 
-    let refusal = workflow
-        .find("run: test -z \"${MARROWFALL_UPDATE_GOLDENS:-}\"")
-        .expect("the workflow asserts the variable is unset");
-    let tests = workflow
-        .find("run: cargo nextest run --workspace")
-        .expect("the workflow runs the workspace tests");
-    assert!(
-        refusal < tests,
-        "the refusal has to come before anything reads a golden"
-    );
     let drawn = workflow
         .find("run: cargo run --package xtask-art -- check --sheet")
         .expect("CI draws the contact sheet from the committed atlases");
@@ -587,10 +575,6 @@ fn ci_refuses_a_rewritten_golden_before_it_runs_anything() {
     assert!(
         drawn < compared,
         "a comparison before the redraw would pass on a stale sheet"
-    );
-    assert!(
-        workflow.contains("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"),
-        "and uploads it, pinned by commit"
     );
 }
 

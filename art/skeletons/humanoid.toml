@@ -1,38 +1,18 @@
-# Which bone fills each role, per naming convention.
-#
-# Retargeting matches by role, never by name. A provider is a table here plus
-# a `MotionSource` variant, tied together by `MotionSource::bone_convention`.
-#
-# Three tables: what Meshy ships, what Mixamo ships, and what this project
-# ships. Meshy numbers its spine from the top and Mixamo from the bottom, so
-# their `Spine` is not the same bone. `[fingerprints]` is what says which
-# table a file in hand is named in.
+# Which bone fills each body part, per vendor naming. Retargeting matches by
+# role, never by name, because vendors number their spines differently.
 
 canonical = "standard"
 
-# Roles a source rig is allowed to leave out. Every other role must be in
-# every convention, or a clip arrives with nothing to drive that bone. All
-# three conventions below fill all 22, so nothing is optional yet.
+# Roles a source rig may leave out. None so far.
 optional_roles = []
 
-# The two roles whose joints root travel is sized by: a clip authored for a
-# longer thigh takes a longer step, and a step is what the femur measures.
-# Total height carries the head and the feet, and neither one takes a step.
+# Step length is sized by the thigh, not by total height.
 stride_segment = ["left_upper_leg", "left_leg"]
 
-# The roles that stand on the floor. The retarget lifts every clip until the
-# lowest SOLE POINT of these feet over the whole clip reaches zero, and
-# `clip.floor_snap` reports what is left under it. The sole and not the
-# joint: a joint's rest height is only where the contact patch is while the
-# foot keeps its rest pitch, and a cross-rig fit matches the source's pitch
-# instead. `clip.foot_contact.penetration` reads the same two points per
-# foot, under the ankle and under the toe.
+# The feet. Every clip is lifted until the lowest sole point touches zero.
 ground_roles = ["left_toe", "right_toe"]
 
-# What Meshy's rigger ships, measured on every file it has returned here:
-# `crates/xtask-art/tests/fixtures/humanoid_before_rename.glb` and the three
-# rigs of the `pose_mode` spike. Its spine is numbered from the top, so
-# `Spine02` is the lowest of the three and `Spine` the highest.
+# Meshy's names. Its spine is numbered from the top.
 [conventions.meshy]
 hips = "Hips"
 spine_lower = "Spine02"
@@ -57,9 +37,7 @@ right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
 
-# What this project ships, which is the Mixamo and HumanIK standard with the
-# spine numbered from the bottom. The rename step in `crates/xtask-art/src/
-# conform.rs` is what puts a bought rig into these names.
+# Ours: the Mixamo/HumanIK standard, spine numbered from the bottom.
 [conventions.standard]
 hips = "Hips"
 spine_lower = "Spine"
@@ -84,8 +62,7 @@ right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
 
-# What Mixamo ships, which is the same standard under a namespace the
-# comparison strips.
+# Mixamo's names: ours under a namespace the comparison strips.
 [conventions.mixamo]
 hips = "Hips"
 spine_lower = "Spine"
@@ -110,11 +87,8 @@ right_leg = "RightLeg"
 right_foot = "RightFoot"
 right_toe = "RightToeBase"
 
-# The retargeting hierarchy, by role. This is not the rig's own bone
-# hierarchy, which is `[profile.parents]`: a source with three spine bones
-# drives a target with four, so the chain is keyed by role and the transfer
-# walks it, stepping over any role a convention leaves out. `hips` is the top
-# and has no row.
+# The order the retarget walks, by role. Keyed by role and not by bone, so a
+# source with fewer spine bones still drives ours. `hips` is the top.
 [retarget_chain]
 spine_lower = "hips"
 spine_middle = "spine_lower"
@@ -138,42 +112,17 @@ right_leg = "right_upper_leg"
 right_foot = "right_leg"
 right_toe = "right_foot"
 
-# Which bones a file must have for a convention to match it: every one of
-# them, so a row of two is an "and". This is what reads a file's convention
-# off the file, and the rename step is the caller.
-#
-# Measured, not guessed. `Spine02` is Meshy's alone. `HeadTop_End` is
-# Mixamo's alone. The standard needs two, because no single bone separates it
-# from both of the others: `Spine1` is not in a Meshy file and `headfront` is
-# not in a Mixamo one. Matched with the namespace and the case stripped, so
-# `mixamorig:HeadTop_End` counts.
+# How we tell whose rig a file is. All bones in a row must be present.
 [fingerprints]
 meshy = ["Spine02"]
 standard = ["Spine1", "headfront"]
 mixamo = ["HeadTop_End"]
 
-# The absolute world direction each role's bone must point in, which is the
-# reference pose the retarget aims both rigs to before it measures the offset
-# between them. One row per role, torso included: the code this replaces
-# corrected only bones with exactly one mapped child, so it silently skipped
-# `Hips`, the spine, `Head`, both hands and both toes.
+# The shared pose both rigs are aimed at before the retarget measures the
+# offset between them. One row per role, torso included.
 #
-# Blender Z-up world space, the character facing -Y, so +X is his left. Each
-# row is a direction and not a unit vector, so the reader normalizes it. Left
-# and right rows are exact reflections across X = 0, which is why every row is
-# whole numbers.
-#
-# The arms sit 45 degrees below horizontal because the aim has to describe
-# both rigs: measured against this table, our A-posed rig is worst at 32.93
-# degrees (`right_hand`) and a T-posed Mixamo rig is worst at 45.01 (the
-# arms), both inside `max_bind_deviation_degrees`. A T-pose table would put
-# our hands at 75.16 and 76.40, outside it. Our `Hips` reads 2.41, where the
-# rig this replaces read 97.80 out of a hip socket.
-#
-# Every figure for our own rig is asserted in `test_aim.rs` against the
-# committed `humanoid.glb`. The Mixamo one is a HAND MEASUREMENT, read off
-# `art/staging/downloads/strafe_left.fbx` in Blender 5.2.1: that directory is
-# gitignored, so no test can open the file and CI cannot re-derive the number.
+# Blender Z-up, facing -Y, so +X is his left. Directions, not unit vectors.
+# Arms sit halfway between an A-pose and a T-pose so the table fits both.
 [aim_table]
 hips = [0.0, 0.0, 1.0]
 spine_lower = [0.0, 0.0, 1.0]
@@ -198,16 +147,9 @@ right_foot = [0.0, -1.0, -1.0]
 left_toe = [0.0, -1.0, 0.0]
 right_toe = [0.0, -1.0, 0.0]
 
-# Every published rig limit, as data. `crates/xtask-art/src/check/rig.rs` is
-# the only reader, and `cargo art check --list-rules` prints it.
-#
-# Bone names are the Mixamo and HumanIK standard, with the spine numbered from
-# the bottom, so `Spine` is the lowest of the three. `[conventions.standard]`
-# is the same set by role, and the rename step is what puts a bought rig into
-# it.
+# Every rig limit, as data. `cargo art check --list-rules` prints them all.
 [profile]
-# The exact bone set. `head_end` and `headfront` fill no role, and they are
-# listed because they are part of this rig.
+# The exact bone set. `head_end` and `headfront` fill no role.
 bones = [
     "Hips",
     "Spine",
@@ -236,21 +178,12 @@ bones = [
 ]
 # The ancestor of every other bone.
 single_root = "Hips"
-# Mesh objects a character file may hold. Read by the mesh gates, which run on
-# the character rather than on this skeleton.
-#
-# One object, three names, one per file the gates read. Meshy's
-# `multi-image-to-3d` GLB leaves its mesh node **unnamed**, so `node 0` is what
-# `check/gltf_world.rs::node_name` calls it; Blender names it `Mesh_0` on
-# import and the fixer exports that; and the rigger renames it `char1`.
-#
-# `node 0` is a position, and safe as one because a bare mesh holds exactly one
-# object: a second lands on another index and is a `mesh.stray_object` finding.
+# One mesh, three names: unnamed out of Meshy, `Mesh_0` out of Blender,
+# `char1` out of the rigger. Anything else is a stray object.
 meshes = ["node 0", "Mesh_0", "char1"]
 # In Blender, after the glTF Y-up import.
 up_axis = "z"
-# In glTF Y-up, which is the space Meshy's rigger states its facing in. The
-# same direction is minus Y in Blender, where the bake camera sits.
+# In glTF Y-up. The same direction is -Y in Blender.
 facing_axis_gltf = "+z"
 # Which bone axis points from a joint to its child, and how far it may stray.
 child_axis = "y"
@@ -260,265 +193,96 @@ height_tolerance_percent = 5.0
 # Left against right, on segment lengths and on segment directions.
 mirror_tolerance_percent = 1.0
 mirror_tolerance_degrees = 1.0
-# How far the root chain may lean from the up axis. Wide on purpose: it catches
-# a rig lying down, not an A-pose, because the bind pose stays an art choice.
+# How far the spine may lean. Wide: it catches a rig lying down, not a pose.
 max_bind_deviation_degrees = 75.0
-# The upper arm, measured below the horizontal plane.
-#
-# The tolerance is calibrated on art that exists rather than on the 40 the
-# prompt asked for. Every rig Meshy has returned from these four concept
-# views reads 19.1 to 19.5 degrees out, because the views draw the arms
-# hanging: the committed rig reads 19.324 on both arms, so 25 leaves 5.676
-# degrees of headroom, 29 percent. It still rejects the only lever T12 found
-# that moves the arm angle, `pose_mode: "t-pose"`, which reads 31.7 and 30.6.
-#
-# The rule is a proxy for how far the retarget must turn a shoulder from
-# rest, and the two rules that measure that directly pass with room: on the
-# five fitted clips `clip.swing` reads 6e-5 degrees on every arm bone against
-# a limit of 0.01, and `clip.twist` reads 8.929 at worst against 15.
+# How far the upper arm hangs below horizontal. Tolerance is wide because
+# Meshy always returns arms about 19 degrees off what the prompt asks for.
 humerus_below_horizontal = { target = 40.0, tolerance = 25.0 }
 
-# Every published concept limit. Read by
-# `crates/xtask-art/src/check/concept.rs`, on the four committed views under
-# `art/characters/survivor/concept/`, which are the only concept art this
-# repository holds. Every number below is what those four read plus the
-# headroom written beside it, and every negative reading is from the fixtures
-# in `crates/xtask-art/tests/unit/concepts.rs`.
-#
-# `concept.single_figure` has no row: its limit is one figure, and a count of
-# figures has nothing to tune.
+# Concept-art limits, calibrated on the four committed views.
 [profile.concept]
-# How uneven the fill behind the figure may be, in levels of 0 to 255. front
-# and left read 3, back and right 6, so this sits 2x over the worst of them.
-# The reading saturates near twice the 12 levels the silhouette is classified
-# at, so it refuses any ramp wider than about 12 levels and cannot tell a
-# large one from a larger: a 30 percent ramp added to front.png reads 24. It
-# reads only the region the border fill reaches, and `concept.cross_view` is
-# what catches a second backdrop tone the fill stopped at.
+# How uneven the backdrop may be, 0 to 255. Real views read 3 to 6.
 background_spread_levels = 12
-# What share of the torso band's rows must show both arms clear of the body.
-# front reads 86.054 percent and back 86.316, and the 14 percent that do not
-# are the shoulder rows at the top of the band, where an A-posed arm still
-# touches the ribcage. This sits 11 points under the worst of the two, and
-# front with the gaps painted shut reads 0.000. A floor, not a ceiling: the
-# only limit here that a reading must reach rather than stay under.
+# Share of torso rows where both arms are clear of the body. A floor, not a
+# ceiling. Real views read 86 percent.
 arm_gap_rows_percent = 75.0
-# How far a view's silhouette may sit from its own reflection, as a percent of
-# its width, at the 99th percentile of its rows. front reads 1.167 and back
-# 1.062, so this sits 2x over the worst of them, and front with its left half
-# stretched 15 percent reads 6.394. Neither the mean nor the outright worst
-# row: the mean reads 0.301 against 1.260, less separation, and the worst row
-# reads 4.669 against 6.522, which is hair against a stretched limb.
+# How lopsided a view may be, percent of its width. Real views read ~1.1.
 mirror_percent = 2.4
-# How far two views may disagree about the figure's height or where its weight
-# sits, as a percent of the mean of the two heights. The worst of the six
-# pairs is front against back at 3.256 percent, so this sits 1.8x over it,
-# and the left view at 92 percent of its size reads 10.549 against the front.
+# How far two views may disagree on height or balance. Worst real pair 3.3.
 cross_view_percent = 6.0
 
-# Every published mesh limit. Read by `crates/xtask-art/src/check/mesh.rs`.
-#
-# Calibrated on a real bare mesh, `art/staging/survivor/spike/unset/`, which
-# T12 generated from the survivor's own concept views with the same request
-# that built him. Every reading is beside its limit below, and they come from
-# `art/staging/reports/{mesh,cleaned,cleanup}.survivor-unset.1.json`.
-#
-# The `unset` mesh is the calibration subject because it is the one the
-# pipeline ships. Setting `pose_mode` makes the topology far worse, measured:
-# `a-pose` reads 1288 holes and `t-pose` 999, against this mesh's 31. Those
-# readings are the spike's answer, not a reason to widen a limit.
-#
-# Measured welded at 1e-5 m in world space, with the headroom each limit
-# leaves. The plateau that chose 1e-5 is in the design document. Six of the
-# nine rows are calibrations. The other three are not: `triangles` is Meshy's
-# stated rigging limit, `printability_edges` is the edge count the design
-# records for `print/analyze`, and `height_percent` is a band wide enough for
-# a body nothing has scaled yet.
+# Mesh limits, calibrated on a real Meshy mesh. Readings are beside each row.
 [profile.mesh]
 holes = 200                  # boundary edges. bare.glb reads 31, clean.glb 18
 non_manifold_edges = 10      # edges shared by 3+ faces. bare.glb reads 6
 islands = 8                  # connected pieces. bare.glb reads 4, clean.glb 1
-# The row the fixer moves the wrong way: mirroring a mesh copies the crossings
-# of the half it keeps. Read on the pair and not on the bare mesh alone, so
-# this covers what the fixer leaves: 1094 arrives and 1153 survives the mirror,
-# and 1500 is 30 percent over the worse of the two.
+# Rises through cleanup: mirroring copies the crossings of the half it keeps.
 self_intersections = 1500    # faces that meet. bare.glb 1094, clean.glb 1153
 mirror_percent = 3.5         # of the width. bare.glb reads 3.257, model.glb 3.021
-# Meshy's stated limit for rigging, not a calibration.
+# Meshy's stated rigging limit, not a calibration.
 triangles = 300000           # bare.glb reads 54,909 and clean.glb 55,553
-# Meshy's own count, which adds boundary and non-manifold edges together.
+# Meshy's own count: boundary plus non-manifold edges.
 printability_edges = 200     # model.glb is recorded at 179
-# After the fixer, which is its own ceiling: filling a hole closes it with a
-# face that can meet two others, so this rises where `non_manifold_edges` is
-# read before any of that.
+# After cleanup. Filling a hole can create a new non-manifold edge.
 non_manifold_post = 20       # clean.glb reads 17, so 3 spare
-# How far the mesh's own height may sit from `spec.subject.height_meters`.
-# Its own band, not the rig's 5 percent: `height_meters` is a parameter of the
-# RIGGING call, so nothing before it scales the body. Meshy returns a bare
-# mesh in its own frame, centered on the origin, and the three T12 generations
-# read 1.8970, 1.8914 and 1.8982 m against the 1.7 asked for: 11.26 to 11.66
-# percent. 25 leaves 2.1x over the worst of them and still rejects the 100x
-# node scale of fact 7, which reads 9900 percent.
+# Height against the spec. Wide, because nothing scales the mesh until the
+# rigging call: Meshy returns it about 11 percent tall.
 height_percent = 25.0        # bare.glb reads 11.588 and clean.glb 11.435
 
-# What the fixer runs on. Read by `crates/xtask-art/src/stages.rs`, which puts
-# every one of them on Blender's argv, so no script holds a copy.
-#
-# Not ceilings: the fixer measures nothing. The weld distance is not here
-# either, because `check/gltf_mesh.rs` already owns it and two copies of one
-# distance drift apart.
+# Settings the mesh fixer runs on. Not limits: the fixer measures nothing.
 [profile.cleanup]
-# An island under this is debris the rigger would be paid to skin. About a
-# 1 cm cube: `tools/blender/tests/unit/test_cleanup.py` measures one at
-# exactly 1e-6.
+# Smaller than this is debris to delete. About a 1 cm cube.
 smallest_island_cubic_meters = 1e-6
-# How far a vertex may sit from its own reflection and still be mirrored onto
-# it. 1 mm on a 1.7 m body.
+# How far a vertex may sit from its mirror and still be snapped onto it.
 symmetrize_meters = 0.001
 
-# Every published bake limit. Read by `crates/xtask-art/src/check/bake.rs`
-# on the PNGs the bake leaves in `art/staging/<character>/`, and published to
-# `bake_sprites.py` for the one rule that needs the scene camera.
-#
-# Every number below is measured on the 1,472 rendered frames of that
-# directory: 16 directions x 15 idle, 20 run, 25 walk_back and 16 frames of
-# each strafe, rendered at 512 px from the committed `model.glb` and the five
-# committed clips. The run they come from is
-# `crates/xtask-art/tests/fixtures/bake.survivor.1.json`.
-#
-# `bake.frame_count` and `bake.sampled_frames_are_keys` have no row. The
-# first counts what must be absent and the second counts frames nobody
-# keyed, and a count of defects has no tunable limit.
+# Limits on the rendered sprite frames, measured on all 1,472 of them.
 [profile.bake]
-# How little of its own canvas a frame may cover. The emptiest frame of each
-# committed clip reads 4.3861 to 5.3108 percent, so this sits 4.4x under the
-# emptiest of them, and a frame that rendered nothing reads 0.0000.
+# How little of the canvas a frame may cover. Catches a frame that rendered
+# nothing. Real frames read 4.4 percent and up.
 frame_coverage_percent = 1.0
-# How close content may come to the canvas border. The tightest frame of each
-# clip is 60 to 78 px clear of one, and a pose the camera cut off reads 0.
+# Catches a pose the camera cut off. Real frames stay 60+ px clear.
 in_frame_pixels = 1.0
-# How far two opposite directions may sit from being each other's reflection
-# about the canvas center. An orthographic camera centered on the axis of
-# rotation makes that exact, whatever the pose: the worst of the 736 opposite
-# pairs of the five clips reads 1 px, so this leaves a pixel of rasterization
-# headroom and still rejects a frame offset 20 px by 10x.
+# Opposite directions must mirror about the canvas center. Catches a camera
+# that drifted off the turntable axis.
 pivot_pixels = 2.0
-# How far a projected joint may sit from the pixel the committed golden
-# records for it. A golden holds whole pixels, so this is one rounding step:
-# it absorbs a joint that lands on a half-pixel boundary and floats to either
-# side of it. Every one of the 720 committed landmarks reads 0, and a wrist
-# 0.6 m out from its shoulder turned 30 degrees moves 21 px.
+# How far a joint may move from where `art/goldens/` says it landed last time.
+# One pixel: enough for rounding, not enough to hide a changed pose.
 landmark_pixels = 1.0
 
-# Every published clip limit. Read by `crates/xtask-art/src/check/clip.rs`.
-#
-# Both are calibrated, not assumed. The calibration asset is a synthetic
-# cross-rig pair in `crates/xtask-art/tests/unit/clips.rs`: a second rig whose
-# legs sit 174 degrees of pure roll from ours, exactly the difference fact 3
-# measures against Mixamo, driven by a hand-built motion. On that pair both
-# expected values are 0 and what the rules read is the `f32` the GLB stores.
-#
-# The real pair was measured by hand as well, in Blender 5.2.1, on the three
-# Mixamo clips under `art/staging/downloads/`. That directory is gitignored, so
-# no test can open those files and CI cannot re-derive these numbers.
+# Limits on a fitted animation clip.
 [profile.clip]
-# Worst per bone over the clip. The synthetic pair reads 4.3e-6 and the five
-# fitted clips read 1.5e-3 at worst, all of it `f32` storage rather than
-# math. The pre-rename shipped output reads 97.797 on the hips, so this limit
-# clears the worst real reading by 6.6x and sits 9,780x under the defect it
-# exists to catch.
-#
-# Both sides of the comparison point their CHILD_AXIS at their own child:
-# `transfer.re_rolled` puts the source's bones there before anything is
-# aimed, and `rig.child_axis` holds ours within 2 degrees. Without that this
-# rule would read the vendor rig's own axis error, 7.051 to 16.933 degrees on
-# a Mixamo file, and gate nothing.
+# How far a fitted bone may point away from the source's. Real fits read 1.5e-3.
 swing_degrees = 0.01
-# Worst per bone over the clip. The synthetic pair reads 3.5e-6, because two
-# rigs whose bones differ by a roll agree exactly and only the file rounds. The
-# three Mixamo clips read 8.929 on `left_forearm`, which is not a defect: our
-# A-pose forearm rests 59.3 degrees from Mixamo's T-posed one, and aiming
-# both at one table gives that swing a roll of its own. 15.0 leaves 6.071
-# degrees, 40 percent, over the worst real reading.
+# How far a fitted bone may be twisted about its own length from the source's.
+# Real fits read 8.9, because our A-pose forearm rests far from a T-posed one.
 twist_degrees = 15.0
-# How far a key may sit off a whole frame of the clip's own `source_fps`. The
-# five fitted clips read under 2e-6 frames, worst 1.6e-6, which is the `f32` a
-# GLB stores key times in. Read on another rate's grid the same clips read
-# 0.5, so this sits 5,000x under the defect it exists to catch.
+# Keys must land on whole frames of the clip's own rate. Catches a wrong rate.
 fps_grid_frames = 1e-4
-# How far the root may still drift on either horizontal axis after the bake
-# strips its horizontal motion. The five fitted clips read up to 5.6
-# nanometers, which is the `f32` an F-curve stores; the shipped `strafe_left`
-# output reads 0.0428 m on X under the strip this replaces.
+# Leftover sideways drift after the bake pins the character in place.
 root_travel_meters = 0.02
-# How far the root may move on the up axis, which the strip keeps on purpose
-# because a bob is animation. Measured on the five fitted clips: 0.0090
-# (idle), 0.0259 (strafe_right), 0.0384 (strafe_left), 0.0427 (walk_back) and
-# 0.0545 (run). This sits 2.8x over the worst of those and still rejects the
-# 0.2911 m that pinning the root's own channels 0 and 1 sinks a left strafe
-# by.
+# How much the body may bob up and down. Kept on purpose: a bob is animation.
 root_bob_meters = 0.15
-# How far the lowest sole point may sit from the floor the snap puts it on.
-# Read at two sites on the five fitted clips: the retarget's own pose gives
-# 8.7e-7 m at worst and the delivered GLB 2.8e-6 m, all of it `f32` storage
-# rather than a real gap. This sits 1,778x over the worst of them and still
-# rejects the 0.0486 m `strafe_left` leaves with the lift removed.
+# How far the lowest sole may float above the floor.
 floor_snap_meters = 0.005
-# How far a fitted clip's travel may sit from the source's travel sized by the
-# femur ratio, as a percent of that expected travel. The same three fits read
-# 1.4e-6 to 6.4e-6 percent at the retarget and 0.0041 on the delivered file,
-# so this sits 492x over the worst of them, and a fit sized five percent out
-# reads 5.0. `strafe_left` travels 2.3117 m on the vendor rig and our femur
-# is 0.8976 of theirs, so 2.0748 m is what the fit has to reproduce.
+# The fit must cover the source's distance, scaled by the thigh-length ratio.
+# A shorter character takes a proportionally shorter step.
 stride_percent = 2.0
-# How far a fitted joint may sit from the source's own, each read against its
-# own rig's root joint and the source's sized by the femur ratio. The one rule
-# that reads a JOINT CHAIN: every other clip rule reads a bone's own frame, and
-# a fit that pointed every bone correctly out of a hips frame 97.612 degrees
-# off the direction to its own spine passed all thirteen of them.
-#
-# The five fitted clips read 0.0192 (idle), 0.0199 (run), 0.0686
-# (strafe_right) and 0.0687 (strafe_left and walk_back), which is the torso
-# proportion one femur ratio cannot size. This sits 1.75x over the worst of
-# them, 0.0513 m of headroom, and 1.8x under the 0.2150 m that defect read on
-# `left_toe`: a hand measurement, taken during T15b on a refit of the same
-# idle with the re-roll switched off, which no committed file holds.
+# How far a fitted joint may sit from where the source put it. The only rule
+# that reads the whole body at once, so it is what catches a hunch.
 posture_meters = 0.12
-# How far a looping clip's last pose may sit from its first, per bone. The
-# five fitted clips read 0.487 (`idle`) and under 0.001 degrees each.
-# `crates/xtask-art/tests/fixtures/walk_back_hitching.glb`, Meshy's action
-# 544 as it shipped until T15b, reads 6.910 on nine of its bones: the hitch
-# `art/animations/library.ron` recorded in prose all along.
+# A loop's last pose must match its first, or the animation hitches.
 loop_degrees = 2.0
-# How often each foot must come to rest on the ground over one cycle. A clip
-# the library declares in place has a ground that moves under it, so its feet
-# must slide and both stance rules report themselves switched off.
+# Each foot must plant this many times a cycle. Off for in-place clips.
 foot_plants = 1
-# How far a planted foot may slide while it is down, and what the lock in
-# `plant.py` corrects a run against: a foot already inside this reading is
-# left where the transfer put it, because holding it costs the leg above it
-# the direction the source gave it. The three traveling fits read 0.0020
-# (strafe_left), 0.0070 (strafe_right) and 0.0120 m (walk_back), so none of
-# them is held and `clip.swing` reads its own storage floor on every leg.
+# How far a planted foot may slide. This is the ice-skating check.
 foot_skate_meters = 0.025
-# How far the lowest point of a sole may go under the ground plane at zero.
-# The vendor's own `strafe_left.fbx` reads 0.0000 m at every planted frame and
-# 0.0038 at worst. The five fitted clips read 1.3e-6 m at worst over both
-# sites, because the snap stands the lowest sole point of each on the floor:
-# this rule is a tautology at the retarget once that has run, and the file
-# site and the synthetic negatives are what keep it honest.
+# How far a foot may sink through the floor.
 foot_penetration_meters = 0.005
 
-# Every published source limit, read at fetch time before a clip is fitted to
-# anything. `crates/xtask-art/src/check/source.rs` publishes them and
-# `tools/blender/src/check_source.py` measures them.
+# Limits on a vendor clip as bought, before anything is fitted to it.
 [profile.source]
-# The line `travels` in `art/animations/library.ron` draws, read on the hips
-# from the vendor file's first frame to its last, horizontally. `strafe_left.fbx`
-# measures 2.3117 m and the committed `run.glb` measures 0.0000, so this sits
-# two orders from either side of the question it decides. How far the hips
-# wander on the way is `source.wander`, which records rather than gates and
-# therefore reads against a ceiling in `check/source.rs` instead.
+# The line between "travels" and "runs in place" in `library.ron`.
 travel_meters = 0.02
 
 # The real hierarchy. Read by `rig.parents` and `rig.single_root`.
@@ -547,10 +311,8 @@ RightLeg = "RightUpLeg"
 RightFoot = "RightLeg"
 RightToeBase = "RightFoot"
 
-# The child each bone's `child_axis` must point at, the way Godot's
-# `SkeletonProfile` carries a tail beside every parent. A branch bone needs it:
-# `Hips` has three children and only one of them continues the body. Every row
-# here must also be a row of `[profile.parents]`, the other way around.
+# Which child each bone must point at. Needed where a bone branches: `Hips`
+# has three children and only `Spine` continues the body.
 [profile.tails]
 Hips = "Spine"
 Spine = "Spine1"

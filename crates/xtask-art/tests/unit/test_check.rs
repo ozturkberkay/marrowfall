@@ -1249,18 +1249,14 @@ fn a_rule_with_no_published_limit_can_still_be_switched_off() {
         .expect("a report refuses a limit that is not finite");
 }
 
-/// Decision 11: every gate runs in CI under the one required check. The
-/// `check` command is the `concept.*` and `rig.*` half, on the concept views
-/// and `model.glb`; `clip.*`, `bake.*`, `atlas.*` and `gltf.validator` run in
-/// the workspace tests, off the committed clips, goldens and atlases. One job
-/// aggregates them, and the workflow that runs the rules is selected by a
-/// filter that includes the art itself, or a pull request replacing a GLB
-/// would skip every gate that reads it.
+/// Decision 11: every gate runs in CI under the one required check. An art
+/// change has to select the workflow that runs them, or a pull request
+/// replacing a GLB would skip every gate that reads it.
 #[test]
 fn ci_measures_the_committed_art_under_the_one_required_check() {
-    let rust = include_str!(concat!(
+    let art = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../.github/workflows/rust.yml"
+        "/../../.github/workflows/test_art.yml"
     ));
     let pr = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1268,21 +1264,25 @@ fn ci_measures_the_committed_art_under_the_one_required_check() {
     ));
 
     assert!(
-        rust.contains("run: cargo run --package xtask-art -- check\n"),
+        art.contains("run: cargo run --package xtask-art -- check\n"),
         "CI measures the concept views and `model.glb` with the concept and rig rules"
     );
     assert!(
-        pr.contains("needs: [prepare, lint, unit_test, security_audit, rust]"),
+        art.contains("run: cargo nextest run --package xtask-art --package sprites"),
+        "and runs the gates that read the committed clips, goldens and atlases"
+    );
+    assert!(
+        pr.contains("needs: [prepare, lint, unit_test, security_audit, rust, art]"),
         "the required job waits on every conditional one"
     );
-    for path in ["'art/**'", "'project/assets/characters/**'"] {
+    for path in ["'art/**'", "'project/assets/**'"] {
         assert!(pr.contains(path), "{path} is not a filtered surface");
     }
     let filter = pr
         .find("steps.filter.outputs.art == 'true'")
         .expect("an art change selects the workflow that runs the rules");
     let needed = pr
-        .find("rust_needed:")
-        .expect("through the input the rust job is gated on");
-    assert!(filter > needed, "the art has to reach `rust_needed`");
+        .find("art_needed:")
+        .expect("through the input the art job is gated on");
+    assert!(filter > needed, "the art has to reach `art_needed`");
 }

@@ -1,36 +1,9 @@
-// Every animation available to every character.
+// Every animation available to every character. A character spec lists names.
 //
-// Motion is bought or authored once and shared: the skeleton it drives, whether
-// it repeats, and where it came from all belong to the animation rather than to
-// whoever plays it. A character spec lists names only.
-//
-// `skeleton` is what makes sharing safe. Animations address bones by name, so
-// a motion only fits a character rigged onto the same skeleton. "humanoid"
-// here means this project's standard biped: 24 bones, no fingers, under the
-// Mixamo and HumanIK names, which a hand-built rig must match to be
-// interchangeable. Those names are in `art/skeletons/humanoid.toml`.
-//
-// `fps` is the sprite sampling rate and `source_fps` is the clip's own rate.
-// The two are unrelated: `idle` is sampled 8 times a second out of a clip
-// authored at 24. Both `source_fps` and `travels` are measurements, and the
-// design document records what each was read on.
-//
-// `source` says who sold the motion. WHICH FILE the fit read is `from`, in
-// `library.lock`, per clip, and the two are not the same question. A Mixamo
-// clip is refit from the vendor's own FBX under the gitignored
-// `art/staging/downloads/`, which a browser session can export again from
-// the product id, and which Adobe's license forbids republishing.
-//
-// A Meshy clip cannot be asked for again, measured: this account lists zero
-// animation tasks and every recorded id answers 404. So `idle` and `run` are
-// refit from `art/animations/sources/<clip>.glb`, the copies this repository
-// shipped before the canonical rig was replaced, committed because they are
-// the only first-hand motion left.
-//
-// Never from the fitted clip beside them: a fit of a fit carries the previous
-// fit's defects, and Blender's round trip is not bit exact, so the motion
-// would drift a little every run. `clip.posture` is the gate that reads what
-// a fit of a fit lost.
+// - `skeleton`: which rig it drives. A clip only fits a character on the same one.
+// - `fps`: how many sprite frames a second we bake. `source_fps`: the clip's own rate.
+// - `travels`: true when the clip moves across the ground, false when it runs in place.
+// - `source`: who sold the motion. Which file the fit read is `from`, in `library.lock`.
 AnimationLibrary(
     animations: {
         "idle": Animation(
@@ -39,7 +12,7 @@ AnimationLibrary(
             fps: 8,
             // Key times 1/24 s apart in the committed GLB.
             source_fps: 24,
-            // Its hips end 0.000 m from where they started, wandering 0.011 m.
+            // Runs in place: hips end where they started.
             travels: false,
             source: Meshy(action_id: 251),
         ),
@@ -48,27 +21,18 @@ AnimationLibrary(
             loops: true,
             fps: 24,
             source_fps: 24,
-            // Measured, not assumed: the hips end 0.000 m from where they
-            // started. They sway 0.028 m sideways on the way, which is a run
-            // cycle in place rather than travel.
+            // Runs in place: hips end where they started.
             travels: false,
             source: Meshy(action_id: 15),
         ),
-        // Mixamo motion. The file may not be redistributed, so these live in
-        // the gitignored `art/animations/local/` and every machine fetches
-        // its own with `cargo art fetch`.
-        //
-        // `walk_back` was Meshy's action 544 until T15b. That clip ends 6.910
-        // degrees from the pose it started in and breaks `clip.loop` on nine
-        // of its bones, which is the hitch this file recorded in prose before
-        // anything could measure it, and Mixamo's own backward walk is the
-        // replacement the note asked for.
+        // Mixamo motion. Not redistributable, so it lives in the gitignored
+        // `art/animations/local/`. Each machine runs `cargo art fetch`.
         "walk_back": Animation(
             skeleton: "humanoid",
             loops: true,
             fps: 20,
             source_fps: 30,
-            // 1.414 m backwards, and the export is requested traveling.
+            // Travels 1.414 m backwards.
             travels: true,
             source: Mixamo(product_id: "c9ccc468-b96c-11e4-a802-0aaa78deedf9"),
         ),
@@ -76,10 +40,8 @@ AnimationLibrary(
             skeleton: "humanoid",
             loops: true,
             fps: 24,
-            // Mixamo renders every export at the rate the request asks for,
-            // and the export asks for this one.
             source_fps: 30,
-            // 2.312 m sideways, and the export is requested traveling.
+            // Travels 2.312 m sideways.
             travels: true,
             source: Mixamo(product_id: "c9c97b90-b96c-11e4-a802-0aaa78deedf9"),
         ),

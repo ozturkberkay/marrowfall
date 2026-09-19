@@ -23,6 +23,7 @@ jobs:
       workflows_unit_test: ${{ steps.filter.outputs.workflows_unit_test }}
       workflows_security_audit: ${{ steps.filter.outputs.workflows_security_audit }}
       workflows_rust: ${{ steps.filter.outputs.workflows_rust }}
+      workflows_art: ${{ steps.filter.outputs.workflows_art }}
       workflows_any: ${{ steps.filter.outputs.workflows_any }}
       shell: ${{ steps.filter.outputs.shell }}
       markdown: ${{ steps.filter.outputs.markdown }}
@@ -33,9 +34,8 @@ jobs:
       lint_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.markdown == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.javascript == 'true' || steps.filter.outputs.workflows_any == 'true' }}
       unit_test_needed: ${{ steps.filter.outputs.shell == 'true' || steps.filter.outputs.python == 'true' || steps.filter.outputs.workflows_unit_test == 'true' }}
       security_audit_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_security_audit == 'true' }}
-      # Art too: every gate is a Rust test that reads the committed art, and
-      # `cargo art check` measures it, so replacing a GLB has to run them.
-      rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.art == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
+      rust_needed: ${{ steps.filter.outputs.rust == 'true' || steps.filter.outputs.workflows_rust == 'true' }}
+      art_needed: ${{ steps.filter.outputs.art == 'true' || steps.filter.outputs.workflows_art == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,6 +62,8 @@ jobs:
               - '.github/workflows/security_audit.yml'
             workflows_rust:
               - '.github/workflows/rust.yml'
+            workflows_art:
+              - '.github/workflows/test_art.yml'
             workflows_any:
               - '.github/workflows/**'
               - '.github/dependabot.yaml'
@@ -77,7 +79,7 @@ jobs:
               - 'tools/blender/**'
             art:
               - 'art/**'
-              - 'project/assets/characters/**'
+              - 'project/assets/**'
               - 'tools/blender/**'
             javascript:
               - '**/*.mjs'
@@ -91,7 +93,7 @@ jobs:
               - 'clippy.toml'
               - 'deny.toml'
               - '.cargo/**'
-              # The glTF-Validator gate is a Rust test that spawns this.
+              - 'project/**'
               - 'package.json'
               - 'bun.lock'
               - 'tools/gltf_validator/**'
@@ -99,8 +101,6 @@ jobs:
   lint:
     needs: prepare
     if: needs.prepare.outputs.lint_needed == 'true'
-    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
-    # rhysd/actionlint#711.
     uses: ./.github/workflows/lint.yml # zizmor: ignore[self-repository]
     with:
       shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_lint == 'true' }}
@@ -112,8 +112,6 @@ jobs:
   unit_test:
     needs: prepare
     if: needs.prepare.outputs.unit_test_needed == 'true'
-    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
-    # rhysd/actionlint#711.
     uses: ./.github/workflows/unit_test.yml # zizmor: ignore[self-repository]
     with:
       shell: ${{ needs.prepare.outputs.shell == 'true' || needs.prepare.outputs.workflows_unit_test == 'true' }}
@@ -122,8 +120,6 @@ jobs:
   security_audit:
     needs: prepare
     if: needs.prepare.outputs.security_audit_needed == 'true'
-    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
-    # rhysd/actionlint#711.
     uses: ./.github/workflows/security_audit.yml # zizmor: ignore[self-repository]
     with:
       rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_security_audit == 'true' }}
@@ -131,19 +127,18 @@ jobs:
   rust:
     needs: prepare
     if: needs.prepare.outputs.rust_needed == 'true'
-    # zizmor wants `$/` here. actionlint 1.7.12 rejects it, see
-    # rhysd/actionlint#711.
     uses: ./.github/workflows/rust.yml # zizmor: ignore[self-repository]
     with:
-      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.art == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
+      rust: ${{ needs.prepare.outputs.rust == 'true' || needs.prepare.outputs.workflows_rust == 'true' }}
 
-  # The single required check. Every other job is conditional, so this is what
-  # branch protection names: it fails when any job that should have run did
-  # not succeed, and it runs on every pull request. Pin it by `app_id` in the
-  # repository's ruleset, so only GitHub Actions can report it.
+  art:
+    needs: prepare
+    if: needs.prepare.outputs.art_needed == 'true'
+    uses: ./.github/workflows/test_art.yml # zizmor: ignore[self-repository]
+
   required:
     name: Required
-    needs: [prepare, lint, unit_test, security_audit, rust]
+    needs: [prepare, lint, unit_test, security_audit, rust, art]
     if: always()
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 5
@@ -154,5 +149,6 @@ jobs:
           (needs.prepare.outputs.lint_needed == 'true' && needs.lint.result != 'success') ||
           (needs.prepare.outputs.unit_test_needed == 'true' && needs.unit_test.result != 'success') ||
           (needs.prepare.outputs.security_audit_needed == 'true' && needs.security_audit.result != 'success') ||
-          (needs.prepare.outputs.rust_needed == 'true' && needs.rust.result != 'success')
+          (needs.prepare.outputs.rust_needed == 'true' && needs.rust.result != 'success') ||
+          (needs.prepare.outputs.art_needed == 'true' && needs.art.result != 'success')
         run: exit 1

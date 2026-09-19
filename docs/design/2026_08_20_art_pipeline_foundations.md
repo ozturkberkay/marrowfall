@@ -1695,9 +1695,13 @@ combinations of `cleanup` and `symmetry` are unit tests instead, through
 `cargo art check`: no thread and no channel is involved, so the tier the
 design named for them buys nothing.
 
-**End to end, `cargo nextest --test e2e`:** T16 launches Godot headless, loads
-every atlas and manifest, and greps the log, because Godot exits 0 on a script
-error (`research_godot_ci_e2e_testing.md`). Loading only, never pixels.
+**End to end, `cargo nextest --test e2e`:** T16 imports the project, asserts
+the committed `.import` sidecars come back unchanged, then boots the game
+headless and greps the log, because Godot exits 0 on a script error
+(`research_godot_ci_e2e_testing.md`). The log has to say the atlases loaded as
+well as stay clean, and a manifest whose frame count is wrong fails the gate.
+Loading only, never pixels: what the player sees is the windowed visual
+harness, which is a local verb.
 
 **Cross-reference to Out of Scope:** no test asserts color pixels, loads a
 quadruped profile, calls Meshy's paid repair, checks a concept arm angle,
@@ -3773,8 +3777,9 @@ bytes. T15a moves no committed art at all.
   recipe in it cannot work and the recalibration it was for is done, and says
   where a submitted task id waits while that task is in flight.
 - `README.md`: `cargo art check`, the two new spec fields, one line saying
-  gates run at stage boundaries, and the E2E tier row changes from "nothing
-  yet" to `render`.
+  gates run at stage boundaries, and the E2E tier row names `render`. **T16
+  adds** what that tier reads, why it needs `godot` on `PATH`, the one command
+  that asks for the visual harness, and where its sheets land.
 - `tools/blender/README.md` (new, short): why `transfer.py` and `plant.py`
   never import `bpy`, why the fixer measures nothing, the rules each module
   reports, why a script never names a limit, and why the root strip works in
@@ -3800,6 +3805,10 @@ bytes. T15a moves no committed art at all.
   `gltf` gains its `utils` feature, which adds the accessor readers the mesh
   gates need and pulls in no new dependency. `parry3d` is pinned at 0.30.2
   with default features off.
+- `image` becomes a shared workspace dependency rather than the art pipeline's
+  own, because **T16's e2e tier** crops and composites what Godot recorded.
+  It joins `crates/render/Cargo.toml` under `[dev-dependencies]`, so the
+  GDExtension library the game ships does not carry it.
 - `[profile.mesh]` names the file each row was read on. Six of its nine rows
   are calibrations, measured by T12 on the real bare mesh and the file the
   fixer wrote from it. The other three are not calibrations: `triangles` is
@@ -3836,8 +3845,13 @@ bytes. T15a moves no committed art at all.
   `MARROWFALL_BLENDER_BIN`, through one shared `tool_binary`. **Correction 22
   added it**: the pack stage runs `godot --headless --import`, and finds Godot
   on `PATH` unless this names it. No install step is new, `Brewfile` already
-  carries `cask "godot"` and `setup.sh` already imports the project.
-- No new CI runner. Nothing added to CI needs Blender or a GPU.
+  carries `cask "godot"` and `setup.sh` already imports the project. **T16's
+  e2e tier reads the same variable**, so one name says where Godot is for both.
+- `MARROWFALL_VISUAL_HARNESS`, unset by default, which is what asks for T16's
+  windowed harness. Unset it is a printed skip, because the harness opens a
+  window that no unattended run wants and no CI runner has.
+- No new CI runner. The e2e job runs on `ubuntu-24.04-arm` beside the others
+  and installs Godot, which needs no Blender and no GPU.
 
 ## Tasks
 
@@ -3884,7 +3898,7 @@ T5,T6,T7,T8,T9,T10,T11,T12,T13,T14 ──▶ T15a rename + conform
 | T14 | Bake and atlas gates, sheet, goldens | 2 d | Seven `bake.*` rules including `sampled_frames_are_keys`, and three `atlas.*` rules. Commit the downscaled contact sheet under `project/assets/characters/<char>/` and upload the full one as a CI artifact. Landmark goldens, 3 frames by 2 directions per clip. Route the clip audition into the fetch report. | Every `bake.*` and `atlas.*` row rejects its negative fixture. A wrong arm shows as a changed number in the diff. A missing golden fails. The audition numbers survive an unattended run in `reports/fetch.<clip>.1.json`. CI asserts `MARROWFALL_UPDATE_GOLDENS` is unset. | T1, T6, T7 |
 | T15a | The rename and the conform steps | 1.5 d, 0 credits | The pipeline half of T15, and it moves no committed art. `[conventions.meshy]` says what Meshy ships again, `[conventions.standard]` is the canonical table, and `[fingerprints]` is what tells a file's convention apart. `stages::conform_rig` runs between the download and `model.glb`: the 14 `rig.*` rules on `rigged.glb` under the `rig` stage as a record, a JSON-chunk rename by role, a conform that turns each joint's rest axis onto its own tail and mirrors the pairs `rig.mirror_length` compares, then the same 14 rules under the `conformed` stage as the gate. Every clip Meshy animated then takes the path a Mixamo clip takes, `check_source` then `retarget --convention meshy` onto the canonical rig, and the fit is what lands in `art/animations/`. `Stage::Download` joins the version guard and fingerprints `rigged.glb` and the profile, and keeps the vendor's own files so re-running it asks the provider for nothing. | Three name rules fail on `humanoid_before_rename.glb` and pass on what the rename writes, with the BIN chunk byte identical. A downloaded Meshy clip leaves an argv with `--convention meshy` against `art/skeletons/humanoid.glb`, and the library file is the retarget's output rather than the download. A file already on disk is never asked for again. A copy of the committed `model.glb` goes from 14 defects to 2, both of them `rig.humerus_angle`, which no rig edit can move; every vertex accessor is byte identical, the furthest rest vertex moves 1.57e-7 m, and Blender draws the two files 0.00786 percent of a component apart. `--list-rules` still prints 67. | T2, T4, T12, T13 |
 | T15b | Regenerate the survivor, flip gates to required | 1.5 d, ~35 credits | **T15a already built the rename and the conform, and this keeps every one of them**: the regeneration runs through `stages::conform_rig` rather than renaming anything by hand. One deliberate operation on the `bare.glb` **that T12's winner produced**: clean, symmetrize, re-rig, promote to `art/skeletons/humanoid.glb` per its README, let the download stage refit `idle.glb`, `run.glb` and `walk_back.glb` onto it, refetch the three Mixamo clips traveling, re-bake, re-pack, re-golden, re-sheet. Delete `apply_forearm_roll`. Then make the `required` aggregator the single required check, pinned by `app_id`. **Regenerate a second time if the first pass teaches something.** | Every gate passes on the regenerated art with zero waivers. Cost recorded: paid is rigging 5 credits plus image-to-3d 20 to 30 only if T12 adopted a `pose_mode`, about 0.45 USD at 0.013 per credit. Free is `print/analyze`, the cleanup, the Mixamo refetch, the retarget, the bake, the pack and the goldens. `model.glb`, `humanoid.glb`, `idle.glb`, `run.glb`, every atlas under `project/assets/characters/` and the sheet move in one PR. | T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15a |
-| T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: launch Godot headless, load every atlas and manifest, grep the log for `SCRIPT ERROR`, a load failure and a leaked object. Add the `pkill` watchdog, because Godot hangs rather than exits on a fatal error. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. | T14, T15b |
+| T16 | Godot e2e smoke test | 2 d | Fill the empty e2e tier: import the project, assert its committed sidecars come back unchanged, boot the game headless and grep the log for `SCRIPT ERROR`, an `ERROR:` line and a leaked object. The watchdog is Rust's own kill on the child it spawned, because Godot hangs rather than exits on a fatal error and macOS ships no `timeout`. Then the windowed visual harness, a local verb, because a headless Godot renders nothing. | A deliberately corrupted manifest fails the test. Headless loads only, never pixels. The `README.md` tier table names `render`. Every locomotion state draws a full loop in two facings, and a stuck one fails. | T14, T15b |
 
 ### Corrections T15b made to this document
 
@@ -4307,3 +4321,126 @@ goldens and the contact sheet. **0 Meshy credits: 1056 before, 1056 after.**
     `res://assets/tiles/ground_atlas.png` too, whose sidecar this branch never
     touched. `setup.sh`'s `setup_game` already runs that pass, so `README.md`
     needs no new step.
+
+### Corrections T16 made to this document
+
+The e2e tier was empty and is now four tests in `crates/render/tests/e2e/`,
+plus a windowed harness that draws every locomotion state for a human. No new
+rule: `cargo art check --list-rules` still prints **67**.
+
+1. **The entry is the game's own main scene, and a printed line is the gate.**
+   A smoke scene of its own would need a second reader of the manifest, which
+   is the duplication `crates/sprites` exists to prevent, so the tier boots
+   `res://scenes/main.tscn` and reads what the runtime says. `load_character`
+   now says it: `res://assets/characters/survivor/character.ron: 5 of 5
+   atlases loaded`, counted against what `sprites::parse` finds in every
+   `project/assets/characters/*/character.ron` the test reads for itself. A
+   quiet log is also what a Godot that loaded no extension leaves, so the gate
+   wants three more lines out loud: `Initialize godot-rust`, `sim thread live
+   at tick 1` and `world streaming: 25 chunks painted`. Both of those are a
+   worker thread racing the frame loop, and both land by frame 10 here, so
+   `--quit-after 600` is the margin a slower runner gets to spend: 600 frames
+   take 4.4 s. The art loads before frame one.
+
+2. **Every phrase was provoked once, and none was guessed.** All of them on
+   4.7.2, and every one of them at **exit 0**, which is the whole reason the
+   log is the gate:
+
+   | Phrase | Provoked by | What Godot printed |
+   |---|---|---|
+   | `ERROR:` | the idle clip claiming 16 frames of the 15 it has rects for | `ERROR: [marrowfall] res://…/character.ron: animation "idle" is invalid: rects must hold one entry per direction per frame` |
+   | `ERROR:` | an atlas name the directory does not hold | `ERROR: [marrowfall] res://…/gone.png: can't load resource of class: 'Texture2D'` |
+   | `ERROR:` | a copy of the project with no `.godot/` | `ERROR: Failed loading resource: res://assets/tiles/ground_atlas.png.` and then `ERROR: Cannot get class 'GameBridge'` |
+   | `SCRIPT ERROR` | a GDScript calling a method on `null` | `SCRIPT ERROR: Invalid call. Nonexistent function 'explode' in base 'Nil'.` |
+   | `ObjectDB instance` | a GDScript allocating a `Node` and dropping the reference | `WARNING: 1 ObjectDB instance was leaked at exit` and, for three, `WARNING: 3 ObjectDB instances were leaked at exit` |
+
+   The leak line is a WARNING and not an ERROR, and its wording changes with
+   the count, which is why the gate holds that one substring rather than a
+   whole line. The last two are a fixture the tests write into a scratch copy,
+   `fixtures/probe.gd`, because the game ships no script of its own and a
+   deliberately broken one has no business in the project.
+
+3. **The watchdog is Rust killing the child it spawned.** The row said
+   `pkill`, which on a developer's machine would also kill the Godot he is
+   working in, and macOS ships no `timeout` to lean on instead. So the tier
+   spawns Godot itself and kills it after **180 s**, polling every 50 ms, with
+   the log going to a file rather than a pipe: a poll loop and a pipe nobody
+   drains deadlock each other. `run_within` takes a limit of the caller's own,
+   which is what gives the watchdog a negative control that runs in **5 s**
+   against a GDScript spinning in `_ready`.
+
+4. **Building the test target leaves the library Godot loads stale.**
+   Measured with a marker string compiled into a live function: after
+   `cargo build -p render --tests` the shared library does not carry it, and
+   after `cargo build -p render` it does. So the tier runs the plain build
+   itself and `cargo nextest run --workspace --test e2e` needs nothing before
+   it. It is the same staleness the `README.md` gotcha is about.
+
+5. **An architecture Godot is not running on is refused outright.** Measured
+   by renaming `macos.debug` to `macos.debug.x86_64` on this arm64 machine:
+   `ERROR: No GDExtension library found for current OS and architecture
+   (macos.arm64)`, then `Cannot get class 'GameBridge'`. Renamed again to
+   `macos.debug.arm64` it loads. `target/debug` holds one library, for
+   whatever the host built, so the Linux rows of `rust.gdextension` carry no
+   architecture at all and the arm64 CI runner finds the extension.
+
+6. **The import runs first, and what it writes is asserted.** Correction 22
+   left the sidecars committed; this reads them back. The tier imports, then
+   asserts `git diff --exit-code -- 'project/**/*.import'` over the eight
+   files that pathspec matches, so a stage that ships a stub sidecar fails
+   here rather than in a player's log. Measured: a cold import of this project
+   takes **8.2 s** and a warm one **1.8 s**, and deleting one sidecar is what
+   proves the assertion, because the import mints a fresh `uid` for it.
+
+7. **The visual harness is windowed, and one atlas frame is one movie frame.**
+   `--headless --write-movie` renders nothing: exit 134, `ERROR: Parameter "t"
+   is null.`, and only `frame.wav` on disk. The same run with a window wrote
+   real frames. So `project/scenes/pose.tscn` and `crates/render/src/pose.rs`
+   are a local verb behind `MARROWFALL_VISUAL_HARNESS`, and the headless smoke
+   test stays the gate. What was measured about the writer: given a path
+   ending in `frame.png` it writes `frame%08d.png` from 0 beside a
+   `frame.wav`, it will not create the directory it writes into, and it
+   recorded 2560x1440, the project's base resolution. Nothing depends on
+   that number: the harness puts the ground
+   anchor at the middle of the viewport and the crop is the atlas cell around
+   the middle of whatever frame came back. Determinism is `--fixed-fps` at the
+   clip's own rate, atlas frame `n` on frame `n` with no clock read, and
+   `--quit-after` at the frame count the manifest declares. Ten runs, **184
+   frames** (15, 20, 16, 16 and 25 per facing), **22 s**.
+
+8. **The three ways a loop is broken with nothing having errored.** Frames
+   missing, a frame that is only backdrop, and a frame equal to the one
+   before it. The movie writer records the backdrop too, so "empty" is a flat
+   frame rather than a transparent one. Measured on the committed atlases: of
+   all ten loops, **no consecutive pair of frames is equal**, so the check is
+   the strict one, every pair differs, rather than the weaker "not all of them
+   are equal". Each of the three was shown red: `--quit-after` one frame
+   short, a crop 600 px off the character, and the harness not advancing its
+   frame.
+
+9. **Every locomotion state is covered through the renderer's own map.**
+   `Clip::for_locomotion` is total over the five states, so driving the five
+   draws the five clips, and the frames land under the state's name rather
+   than the clip's. Two facings each, in tile space: `(1, 1)` is row 0, `s`,
+   and `(-1, -1)` is row 8, `n`. The harness reports the row it drew and the
+   test computes the same row from the same function, so the line in the log
+   is where the two readings meet.
+
+10. **CI pins Godot by version against the vendor's own manifest, and no
+    digest could be recorded here.** This machine may not fetch anything, so
+    the SHA512 of `Godot_v4.7.2-stable_linux.arm64.zip` was not read and
+    cannot be written into the workflow. The step downloads the archive and
+    `SHA512-SUMS.txt` from the same pinned release and verifies one against
+    the other, which is a version pin plus an integrity check rather than a
+    digest pin. The asset name and the manifest's format are the two things
+    only the first CI run can confirm; both fail the job loudly rather than
+    quietly.
+
+11. **A skip may not stand in for a missing engine.** The tier prints one line
+    and does nothing when `godot` is absent, which is right for a laptop and
+    wrong for a gate, so the job runs `godot --version` in a step of its own
+    before any test. The `e2e` job sits in `rust.yml` beside the others, so
+    the `required` aggregator already covers it: a reusable workflow reports
+    failure when any of its jobs fails. `pr.yml`'s `rust` filter gains
+    `project/**`, because this tier boots that project, tables and scenes
+    included.

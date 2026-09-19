@@ -7,9 +7,13 @@
 
 mod bridge;
 
+// The visual harness Godot loads as a scene, never part of the game itself.
+mod pose;
+
 // Public so the separate unit-test crate can reach them. All of these hold pure
-// logic, which leaves `bridge.rs` the only unmeasured file: it is a Godot node,
-// and instantiating one needs a running engine.
+// logic, which leaves the two Godot nodes above the only unmeasured files:
+// instantiating one needs a running engine, so the e2e tier is what drives
+// them.
 pub mod draw;
 pub mod iso;
 pub mod origin;

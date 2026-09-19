@@ -9,3 +9,9 @@ art = "run --release --package xtask-art --"
 # be tuned without launching the game. Release, because it paints millions of
 # tiles and a debug build makes that a coffee break.
 world = "run --release --package xtask-world --"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

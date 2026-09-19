@@ -336,17 +336,8 @@ fn pointed(aim: Option<&Aim>) -> Option<Vec2> {
     aim.map(|Aim(aim)| *aim).filter(|aim| *aim != Vec2::ZERO)
 }
 
-/// Which way `travel` goes against `aim`. One function, used to pick the speed
-/// and to publish the stride, so those two can never disagree about which way
-/// he is going.
-///
-/// Neither vector has to be unit length: the comparison and both signs are
-/// scale invariant. `travel` is what a velocity *asks* for and not the motion
-/// that survived, so a character shoving into a wall still reports his stride.
-///
-/// A zero aim means nothing points him anywhere, so he travels forward by
-/// definition. That is the shared path for an NPC, a test, the cursor resting
-/// inside its dead radius, and a lost window focus.
+/// Which way `travel` goes against `aim`. Picking the speed and publishing the
+/// stride share it, so they cannot disagree. No aim means forward.
 fn stride_of(travel: WorldVec, aim: Vec2) -> Locomotion {
     if travel == WorldVec::ZERO {
         return Locomotion::Idle;
