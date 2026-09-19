@@ -730,10 +730,14 @@ async fn run_stops_at_the_first_stage_that_cannot_proceed() {
         .save(&Paths::new(dir.path(), "survivor").spec())
         .unwrap();
     let mut env = EnvGuard::new();
-    env.with_api(&server.uri());
+    env.with_api(&server.uri()).set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
-    // Bake shells out to Blender, which is not available here, so the run gets
-    // as far as it can and then reports why.
+    // A Blender that answers its version and nothing else: the preflight
+    // passes, so the run reaches the bake and fails there, whether or not the
+    // machine has a real Blender.
     let outcome = xtask_art::cli::run(
         dir.path(),
         "survivor",
@@ -850,7 +854,11 @@ async fn the_entry_point_dispatches_fetch() {
     let dir = a_repo();
     a_library().save(dir.path()).unwrap();
     let mut env = EnvGuard::new();
-    env.set("CARGO_MANIFEST_DIR", dir.path().to_str().unwrap());
+    env.set("CARGO_MANIFEST_DIR", dir.path().to_str().unwrap())
+        .set(
+            "MARROWFALL_BLENDER_BIN",
+            a_version_only_blender(dir.path()).to_str().unwrap(),
+        );
 
     // Every entry in the template library is bought with the rig, so this
     // reaches the command and finds nothing to do.
