@@ -145,7 +145,10 @@ jobs:
   e2e:
     name: End to End
     if: inputs.rust
-    runs-on: ubuntu-24.04-arm
+    # x86, unlike every other job here. Godot imports the host's preferred
+    # texture format, which is ETC2/ASTC on ARM, and the committed sidecars
+    # are the desktop S3TC/BPTC ones the game ships.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -174,13 +177,13 @@ jobs:
           GODOT: 4.7.2-stable
         run: |
           set -euo pipefail
-          zip="Godot_v${GODOT}_linux.arm64.zip"
+          zip="Godot_v${GODOT}_linux.x86_64.zip"
           base="https://github.com/godotengine/godot-builds/releases/download/${GODOT}"
           curl -fsSLO "${base}/${zip}"
           curl -fsSLO "${base}/SHA512-SUMS.txt"
           grep -F "${zip}" SHA512-SUMS.txt | sha512sum --check --strict -
           unzip -q "${zip}"
-          sudo install -m 755 "Godot_v${GODOT}_linux.arm64" /usr/local/bin/godot
+          sudo install -m 755 "Godot_v${GODOT}_linux.x86_64" /usr/local/bin/godot
 
       # The tier is quiet on a machine with no Godot, which is right for a
       # laptop and wrong for a gate. This is the step that refuses to let a
