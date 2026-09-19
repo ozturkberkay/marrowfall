@@ -53,7 +53,8 @@ move_right={
 
 [rendering]
 
-; Pin the desktop texture family. Without it an ARM CI host imports ETC2/ASTC
-; only, and a desktop export from that host ships textures the GPU has to
-; decompress on the CPU.
+; Pin the desktop texture family on every host. Godot defaults these by CPU
+; architecture, so an ARM machine would otherwise import an extra ASTC copy
+; and rewrite every committed sidecar.
 textures/vram_compression/import_s3tc_bptc=true
+textures/vram_compression/import_etc2_astc=false
