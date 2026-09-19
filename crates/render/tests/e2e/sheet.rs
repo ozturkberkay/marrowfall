@@ -16,6 +16,15 @@ pub fn cell(recorded: &Path, atlas: &AnimationAtlas) -> RgbaImage {
         .unwrap_or_else(|error| panic!("reading {}: {error}", recorded.display()))
         .to_rgba8();
     let middle = (frame.width() / 2, frame.height() / 2);
+    assert!(
+        atlas.anchor.x <= middle.0 && atlas.anchor.y <= middle.1,
+        "anchor ({}, {}) sits outside the middle of a {}x{} frame, so there is \
+         no cell to crop",
+        atlas.anchor.x,
+        atlas.anchor.y,
+        frame.width(),
+        frame.height()
+    );
     imageops::crop_imm(
         &frame,
         middle.0 - atlas.anchor.x,
