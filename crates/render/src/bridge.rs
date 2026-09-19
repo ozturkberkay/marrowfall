@@ -30,8 +30,9 @@ use crate::tiles;
 /// Fixed development seed; replaced by the new-game/save flow later.
 const DEV_SEED: u64 = 0x4D61_7272_6F77; // "Marrow"
 
-/// The only character there is, so every entity draws him.
-const CHARACTER_DIR: &str = "res://assets/characters/survivor";
+/// The only character there is, so every entity draws him, and the visual
+/// harness poses him.
+pub(crate) const CHARACTER_DIR: &str = "res://assets/characters/survivor";
 
 /// Where the tuning tables live. `res://` maps to `project/`, so these are the
 /// files under `project/data`.
@@ -307,7 +308,9 @@ impl GameBridge {
 
     /// One texture per clip the manifest has. A clip it does not have is only a
     /// warning, because the bake has not produced every one of them yet.
-    fn load_character(dir: &str) -> Option<(CharacterAssets, HashMap<Clip, Gd<Texture2D>>)> {
+    pub(crate) fn load_character(
+        dir: &str,
+    ) -> Option<(CharacterAssets, HashMap<Clip, Gd<Texture2D>>)> {
         let manifest = format!("{dir}/character.ron");
         let assets = match sprites::parse(&FileAccess::get_file_as_string(&manifest).to_string()) {
             Ok(assets) => assets,
@@ -334,6 +337,13 @@ impl GameBridge {
                 }
             };
         }
+        // Said out loud because a silent load and a load that never ran read
+        // the same in a log, and the e2e tier gates on this line.
+        godot_print!(
+            "[marrowfall] {manifest}: {} of {} atlases loaded",
+            textures.len(),
+            assets.animations.len()
+        );
         Some((assets, textures))
     }
 
@@ -462,7 +472,7 @@ fn held_direction(focused: bool) -> Vector2 {
 
 /// A sprite that draws one frame out of an atlas, with its origin on the
 /// entity's tile.
-fn new_sprite() -> Gd<Sprite2D> {
+pub(crate) fn new_sprite() -> Gd<Sprite2D> {
     let mut sprite = Sprite2D::new_alloc();
     sprite.set_centered(false);
     sprite.set_region_enabled(true);

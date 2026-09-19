@@ -1664,6 +1664,7 @@ dependencies = [
  "game",
  "godot",
  "host",
+ "image",
  "sprites",
  "worldgen",
 ]

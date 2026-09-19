@@ -109,28 +109,16 @@ pub fn placement(atlas: &AnimationAtlas, rect: &FrameRect) -> Placement {
     }
 }
 
-/// Half the height the survivor is baked at (`sprite_height` in his art spec),
-/// so the middle of his body above the feet his node origin sits on.
+/// Half his baked height: the middle of his body, above the feet he stands on.
 pub const BODY_MIDDLE: f32 = 120.0;
 
-/// How close to the middle of his body the cursor may sit before it stops
-/// asking for a direction at all.
-///
-/// Small on purpose. He is drawn 240 pixels tall and a tile is 96 pixels deep,
-/// so a disc that covered all of him would also cover the tile in front of him
-/// and make a near enemy impossible to point at.
+/// Dead zone around his body. Small, or it would swallow the tile in front of
+/// him and a near enemy could not be pointed at.
 pub const DEAD_RADIUS: f32 = 24.0;
 
-/// Where the cursor sits relative to the survivor's body, in screen pixels, or
-/// zero when it is too close to ask for a direction.
-///
-/// The camera pins his *feet* to the middle of the viewport, because the node
-/// origin is the sprite's ground anchor. So the middle of the screen is not the
-/// middle of him, and the dead zone has to be lifted onto his body: otherwise
-/// resting the cursor on his chest reads as a hard push north.
-///
-/// Both points are in the viewport's own coordinates, whose scale a stretched
-/// window does not change.
+/// Where the cursor sits relative to his body, or zero when it is too close to
+/// mean a direction. The camera centres his feet, so the dead zone is lifted
+/// onto his body.
 #[must_use]
 pub fn cursor_offset(mouse: Vector2, viewport: Vector2) -> Vector2 {
     // Up the screen is negative y.
@@ -142,14 +130,8 @@ pub fn cursor_offset(mouse: Vector2, viewport: Vector2) -> Vector2 {
     offset
 }
 
-/// Which atlas row shows `aim`, out of however many rows the atlas has.
-///
-/// Quantised in tile space, never on screen: the ring is evenly spaced there,
-/// and the projection would skew it. Row 0 is south, which is tile `(1, 1)`, 45
-/// degrees round from `+x`, and the ring runs from there in the order the bake
-/// wrote it.
-///
-/// Render-only, so `atan2` is fine here. The simulation never does this.
+/// Which atlas row shows `aim`. Quantised in tile space, where the ring is even.
+/// Row 0 is south. Render-only, so `atan2` is fine.
 #[must_use]
 pub fn row_for_aim(atlas: &AnimationAtlas, aim: Vec2) -> Option<usize> {
     let count = atlas.directions.len();
@@ -162,14 +144,8 @@ pub fn row_for_aim(atlas: &AnimationAtlas, aim: Vec2) -> Option<usize> {
     Some(index.rem_euclid(count as i32) as usize)
 }
 
-/// One full stride, in seconds: `run`'s own cycle, its 20 frames at its 24 fps.
-///
-/// Written as the division so the run keeps its authored rate exactly. Every
-/// other locomotion clip plays over this same cycle, whatever its own length, so
-/// the fraction through the stride carries across a clip change and the legs do
-/// not jump mid step. Unreal's Sync Groups scale every follower to the leader
-/// the same way. The cost is that a clip authored at another rate plays a little
-/// fast or slow, so its foot slide differs from the run's.
+/// One stride, in seconds: `run`'s 20 frames at 24 fps. Every locomotion clip
+/// plays over this cycle, so the legs do not jump when the clip changes.
 pub const GAIT_SECONDS: f64 = 20.0 / 24.0;
 
 /// Which frame of `atlas` shows `seconds` into the shared gait cycle.

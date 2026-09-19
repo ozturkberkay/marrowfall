@@ -11,35 +11,19 @@ use godot::builtin::Vector2;
 
 use crate::origin::Origin;
 
-/// How much of the isometric foreshortening to cancel out of walking speed.
-///
-/// The 2:1 diamond means the two cannot both be constant, so this picks where
-/// on that scale to sit:
-///
-/// - `0.0` holds *world* speed constant. Every direction crosses the same
-///   number of tiles per second, and sideways covers twice the screen pixels.
-///   This is what Diablo II does, and it is the honest projection.
-/// - `1.0` holds *screen* speed constant. Every direction covers the same
-///   pixels per second, and walking up the screen crosses twice the tiles.
-/// - Anything between splits the difference.
+/// How much isometric foreshortening to cancel out of walking speed.
+/// `0.0` keeps world speed even (Diablo II), `1.0` keeps screen speed even.
 pub const ISO_SPEED_COMPENSATION: f32 = 0.5;
 
 /// One tile's diamond, in pixels.
 pub const TILE_WIDTH: f32 = 192.0;
 pub const TILE_HEIGHT: f32 = 96.0;
 
-/// Screen pixels per height step.
-///
-/// One quarter of the tile's screen height, which is the same ratio OpenTTD uses
-/// against its own tile. Belongs here and not in `worldgen`: a pixel is an art
-/// fact, and that crate is the one with no pixels in it.
+/// Screen pixels per height step. A quarter tile, the ratio OpenTTD uses.
 pub const HEIGHT_STEP: f32 = TILE_HEIGHT / 4.0;
 
-/// Where the center of `tile` sits on screen, relative to `origin`.
-///
-/// The subtraction happens in `f64` and the narrowing to `Vector2` is the last
-/// operation. That order is the whole point: doing it the other way round would
-/// throw away the precision the wider world position exists to keep.
+/// Where the center of `tile` sits on screen, relative to `origin`. Subtracts in
+/// `f64` and narrows last, or the wider world position buys nothing.
 #[must_use]
 pub fn tile_to_screen(tile: WorldVec, origin: Origin) -> Vector2 {
     ground_to_screen(tile, 0, origin)

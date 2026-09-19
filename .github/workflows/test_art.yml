@@ -1,0 +1,57 @@
+name: Test Art
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Without this the art checks out as LFS pointers.
+          lfs: true
+
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+        with:
+          tool: cargo-nextest
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Install the pinned JavaScript packages
+        run: bun install --frozen-lockfile
+
+      # The gates that read the committed clips, goldens and atlases.
+      - name: Test the art gates
+        run: cargo nextest run --package xtask-art --package sprites
+
+      # Measures the committed art against `art/skeletons/humanoid.toml`.
+      - name: Measure the committed art
+        run: cargo run --package xtask-art -- check
+
+      # Redraws the thumbnail beside each atlas. Deterministic, so a diff means
+      # the picture in the pull request is not the art that ships.
+      - name: Redraw the contact sheet
+        run: cargo run --package xtask-art -- check --sheet
+
+      - name: Refuse a stale contact sheet
+        run: git diff --exit-code -- 'project/assets/characters/*/sheet.png'

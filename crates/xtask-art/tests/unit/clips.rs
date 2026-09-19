@@ -1,37 +1,10 @@
-//! The synthetic cross-rig clip: one correct fit, and every way to break it.
+//! A fake pair of rigs: one correct fit, and every way to break it.
 //!
-//! `clip.swing` and `clip.twist` need two rigs, and the real second rig is a
-//! Mixamo FBX that this repository may not redistribute and that no Rust
-//! reader opens. So the calibration pair is built here instead. It is
-//! deterministic, it needs no download, there is no license to track, and
-//! both expected values are hand-computable rather than measured.
-//!
-//! **What the vendor rig is.** Our own conformant rig with two differences
-//! per bone, which are the two differences fact 3 and decision 6 measure
-//! against Mixamo.
-//!
-//! - A **roll** about the bone's own +Y. The four leg bones a side carry
-//!   [`LEG_ROLL_DEGREES`], which is fact 3's "171 to 175 degrees of pure roll
-//!   at rest".
-//! - A **tilt** about the bone's own +X, in the rest pose only, so the two
-//!   rigs' bones point in different directions the way an A-pose and a T-pose
-//!   do. The arms carry 62 degrees, which is what our rig and a Mixamo rig
-//!   really measure apart.
-//!
-//! **Why both answers are zero.** Write the vendor's rest as
-//! `S_rest = O_rest @ Ry(-roll) @ Rx(-tilt)` and its motion as
-//! `S(t) = O(t) @ Ry(-roll)`, where `O` is our own output. Then
-//!
-//! - `S(t)^-1 @ O(t) = Ry(roll)`, whose swing is nothing, because a rotation
-//!   about +Y cannot move +Y. So `clip.swing` is **0**.
-//! - `S_rest^-1 @ O_rest = Rx(tilt) @ Ry(roll)`, which is already a swing
-//!   times a twist about +Y, so its roll is `roll` and the frames' roll is
-//!   `roll`. So `clip.twist` is **0**.
-//!
-//! What the rules actually read on the fixture is the `f32` the GLB stores,
-//! and that is the calibration. The rest-direction residual a real aim table
-//! adds is not synthetic and cannot be: it is 11.411 degrees, a hand
-//! measurement on the three Mixamo clips, recorded in `[profile.clip]`.
+//! `clip.swing` and `clip.twist` compare two rigs. The real second rig is a
+//! Mixamo file we may not redistribute, so this builds a stand-in: our rig,
+//! plus the two differences a Mixamo rig really has (a roll about each bone's
+//! own axis, and an A-pose against a T-pose). Both rules must read 0 on it,
+//! which is what makes it a calibration.
 
 use std::collections::BTreeMap;
 

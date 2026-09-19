@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       javascript:
-        description: Format-check the glTF-Validator driver
+        description: Format-check JavaScript
         type: boolean
         default: false
       actions:
@@ -132,8 +132,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Nothing here pushes, so the token must not be left in .git/config
-          # where a later step or a compromised action could read it.
           persist-credentials: false
 
       - name: Install Bun
@@ -144,10 +142,11 @@ jobs:
       - name: Install the pinned JavaScript packages
         run: bun install --frozen-lockfile
 
-      # The JavaScript only. markdownlint owns the markdown and ruff the
-      # Python, and two formatters over one file would fight.
-      - name: Prettier
-        run: bun run prettier --check "**/*.mjs"
+      - name: Oxfmt
+        run: bun run oxfmt --check "**/*.mjs"
+
+      - name: Oxlint
+        run: bun run oxlint --deny-warnings
 
   actions_lint:
     name: Actions Lint

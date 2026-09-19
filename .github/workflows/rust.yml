@@ -58,8 +58,6 @@ jobs:
           # Nothing here pushes, so the token must not be left in .git/config
           # where a later step or a compromised action could read it.
           persist-credentials: false
-          # The glTF-Validator gate reads the committed GLBs, and without this
-          # they check out as 130-byte LFS pointers.
           lfs: true
 
       - name: Cache
@@ -70,7 +68,7 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # The glTF-Validator gate spawns Bun, which no runner image ships.
+      # Some tests spawn the glTF validator, which no runner image ships.
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -79,12 +77,6 @@ jobs:
       - name: Install the pinned JavaScript packages
         run: bun install --frozen-lockfile
 
-      # A golden records where every joint of the survivor lands on screen,
-      # and this variable rewrites one instead of reading it. Nothing in CI
-      # may accept new art by regenerating what it is measured against.
-      - name: Refuse a rewritten golden
-        run: test -z "${MARROWFALL_UPDATE_GOLDENS:-}"
-
       # `crates/game` is the whole simulation and depends on nothing external,
       # so this is the fast signal that matters most.
       - name: Test simulation
@@ -92,35 +84,6 @@ jobs:
 
       - name: Test workspace
         run: cargo nextest run --workspace
-
-      # The art a checkout has: the four concept views and the conformed
-      # `model.glb`, so this runs the `concept.*` and `rig.*` families in
-      # Rust, with no Blender. The four stages that read gitignored staging
-      # print no art on disk here, and `clip.*`, `bake.*`, `atlas.*` and
-      # `gltf.validator` reach CI through the workspace tests above, off the
-      # committed clips, goldens and atlases.
-      - name: Measure the committed art
-        run: cargo run --package xtask-art -- check
-
-      # The judgment half of the art review. Drawn from the atlases already
-      # committed, so no Blender is involved: a reviewer downloads the picture
-      # of what ships and the sheet beside the atlas is its thumbnail.
-      - name: Draw the contact sheet
-        run: cargo run --package xtask-art -- check --sheet
-
-      # Redrawing is deterministic, so the committed thumbnail has to come
-      # back byte for byte. If it does not, the picture in the diff is not the
-      # atlases that ship and the sign-off was on the wrong art. The checkout
-      # above passes `lfs: true`, without which this would compare a pointer.
-      - name: Refuse a stale contact sheet
-        run: git diff --exit-code -- 'project/assets/characters/*/sheet.png'
-
-      - name: Upload the contact sheet
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: contact-sheet
-          path: art/preview/*/sheet.png
-          if-no-files-found: error
 
   coverage:
     name: Coverage
@@ -134,7 +97,6 @@ jobs:
           # Nothing here pushes, so the token must not be left in .git/config
           # where a later step or a compromised action could read it.
           persist-credentials: false
-          # As in the test job: the validator gate needs the real GLBs.
           lfs: true
 
       - name: Cache
@@ -145,7 +107,7 @@ jobs:
         with:
           tool: cargo-llvm-cov,cargo-nextest
 
-      # The glTF-Validator gate spawns Bun, which no runner image ships.
+      # Some tests spawn the glTF validator, which no runner image ships.
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -179,3 +141,56 @@ jobs:
       # shows up here rather than at runtime.
       - name: Build
         run: cargo build --workspace --locked
+
+  e2e:
+    name: End to End
+    if: inputs.rust
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token must not be left in .git/config
+          # where a later step or a compromised action could read it.
+          persist-credentials: false
+          # The tier boots the game on the committed atlases, and without this
+          # they check out as LFS pointers no importer can read.
+          lfs: true
+
+      - name: Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+        with:
+          tool: cargo-nextest
+
+      # The engine the tier drives. Pinned to the version `project.godot`
+      # names, and checked against the release's own SHA512 manifest, because
+      # the vendor publishes no digest a workflow could hold instead.
+      - name: Install Godot
+        env:
+          GODOT: 4.7.2-stable
+        run: |
+          set -euo pipefail
+          zip="Godot_v${GODOT}_linux.arm64.zip"
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT}"
+          curl -fsSLO "${base}/${zip}"
+          curl -fsSLO "${base}/SHA512-SUMS.txt"
+          grep -F "${zip}" SHA512-SUMS.txt | sha512sum --check --strict -
+          unzip -q "${zip}"
+          sudo install -m 755 "Godot_v${GODOT}_linux.arm64" /usr/local/bin/godot
+
+      # The tier is quiet on a machine with no Godot, which is right for a
+      # laptop and wrong for a gate. This is the step that refuses to let a
+      # skip stand in for a missing engine.
+      - name: Prove Godot answers
+        run: godot --version
+
+      # Godot loads this, and building the test target does not write it.
+      - name: Build the extension
+        run: cargo build --package render --locked
+
+      - name: Test end to end
+        run: cargo nextest run --workspace --test e2e
