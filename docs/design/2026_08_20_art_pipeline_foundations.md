@@ -208,7 +208,7 @@ known-answer test that compared against a large expected value.
 #### ❌ Option 2: Round trips, higher coverage, and a second implementation
 
 ```python
-assert retarget(retarget(clip, A, B), B, A) == clip   # the trap
+assert retarget(retarget(clip, A, B), B, A) == clip  # the trap
 ```
 
 **Pros:** cheap, and it reads like thorough testing.
@@ -469,7 +469,7 @@ nothing needs it, and the two spec flags below cover the one real case.
 #### ❌ Option 2: Strict T-pose re-bind, or a hand-authored skeleton
 
 ```python
-bpy.ops.pose.armature_apply()   # "Actions on this armature will be destroyed"
+bpy.ops.pose.armature_apply()  # "Actions on this armature will be destroyed"
 ```
 
 **Pros:** guaranteed conformant, and it matches every published standard.
@@ -1098,9 +1098,8 @@ at 1e-6, which is a 1 cm cube measured exactly in `test_cleanup.py`, and
 
 ```python
 class TransferError(Exception):
-    code: str      # "role_unmapped" | "aim_row_missing" | "bone_missing"
-                   # | "swing_singular"
-    subject: str   # the role or bone name
+    code: str  # "role_unmapped" | "aim_row_missing" | "bone_missing" | "swing_singular"
+    subject: str  # the role or bone name
 ```
 
 **The command surface** grows one verb, and the Blender invocation is built by
@@ -1179,31 +1178,36 @@ def swing_twist(q, axis, bone):
     worst NEAR IDENTITY (proof_swing_twist_vector_part.md).
     """
     proj = axis * Vector((q.x, q.y, q.z)).dot(axis)
-    if abs(q.w) < 1e-9 and proj.length < 1e-9:   # 180 deg of swing
+    if abs(q.w) < 1e-9 and proj.length < 1e-9:  # 180 deg of swing
         raise TransferError(code="swing_singular", subject=bone)
     twist = Quaternion((q.w, *proj)).normalized()
-    return q @ twist.inverted(), twist           # swing, twist
+    return q @ twist.inverted(), twist  # swing, twist
+
 
 def reference_pose(rig, aim_table):
     """Aim each bone as the table says, keep the rig's OWN twist."""
     for bone in parents_first(rig):
         role = role_of(bone)
-        if role is None:                        # head_end, headfront: not driven
+        if role is None:  # head_end, headfront: not driven
             continue
         want = desired_local(bone, aim_table[role]).to_quaternion()
         swing, _ = swing_twist(want, Vector((0, 1, 0)), bone.name)
         bone.matrix_basis = swing.to_matrix().to_4x4()
-    return {b.name: world(b) for b in rig.pose.bones}   # ref_world_ours/_src
+    return {b.name: world(b) for b in rig.pose.bones}  # ref_world_ours/_src
+
 
 def offsets(ref_world_ours, ref_world_src):
     """One rotation per role. Never fed the aim table."""
-    return {r: ref_world_src[r].to_quaternion().inverted()
-               @ ref_world_ours[r].to_quaternion()
-            for r in ref_world_ours}
+    return {
+        r: ref_world_src[r].to_quaternion().inverted()
+        @ ref_world_ours[r].to_quaternion()
+        for r in ref_world_ours
+    }
+
 
 def local(bone, world_out, rest, parent_world_out):
     """L = (R_parent^-1 R_bone)^-1 @ M_parent^-1 @ M_bone. No depsgraph."""
-    if parent(bone) is None:                    # the root lives in object space
+    if parent(bone) is None:  # the root lives in object space
         return rest[bone].inverted() @ world_out[bone]
     basis = rest[parent(bone)].inverted() @ rest[bone]
     return basis.inverted() @ parent_world_out.inverted() @ world_out[bone]
@@ -1233,27 +1237,40 @@ and 37):
 
 ```python
 first = world_head(hips, frames[0])
-worst = [max(abs(world_head(hips, f)[i] - first[i]) for f in frames)
-         for i in range(3)]
+worst = [max(abs(world_head(hips, f)[i] - first[i]) for f in frames) for i in range(3)]
 for axis, value in zip("xyz", worst):
-    rule, limit = ("clip.root_bob", 0.15) if axis == "z" else \
-                  ("clip.root_travel", 0.02)
-    finding(rule, measured=value, limit=limit, comparison="le",
-            subject=f"{clip} {axis}",
-            measured_on="world space, after strip_root_motion")
+    rule, limit = ("clip.root_bob", 0.15) if axis == "z" else ("clip.root_travel", 0.02)
+    finding(
+        rule,
+        measured=value,
+        limit=limit,
+        comparison="le",
+        subject=f"{clip} {axis}",
+        measured_on="world space, after strip_root_motion",
+    )
 
-ratio = femur_length(ours) / femur_length(theirs)   # not total height
-for key in every_location_key(action):              # the same operation
+ratio = femur_length(ours) / femur_length(theirs)  # not total height
+for key in every_location_key(action):  # the same operation
     key.co[1] *= ratio
 # The floor is where our own rest pose stands, not zero: the toe joint is the
 # ball of the foot and rests 0.0307 m above the sole.
 floor = min(world_z(toe, rest) for toe in GROUND)
 lift = floor - min(world_z(toe, f) for toe in GROUND for f in frames)
 offset_root_by(lift)
-finding("clip.floor_snap", measured=abs(lowest_after - floor), limit=0.005,
-        comparison="le", subject=f"{toe} at frame {f}")
-finding("clip.stride", measured=percent(travel(root), travel(hips) * ratio),
-        limit=2.0, comparison="le", subject=clip)
+finding(
+    "clip.floor_snap",
+    measured=abs(lowest_after - floor),
+    limit=0.005,
+    comparison="le",
+    subject=f"{toe} at frame {f}",
+)
+finding(
+    "clip.stride",
+    measured=percent(travel(root), travel(hips) * ratio),
+    limit=2.0,
+    comparison="le",
+    subject=clip,
+)
 ```
 
 `clip.stride` holds the fit to the source it was bought from: the root travels
@@ -1283,16 +1300,16 @@ why, and correction 2 has how the sole is derived on a clip with no mesh.
 
 ```python
 scale = rig_joint_span_m / 1.80
-speed = lambda f: step_xy(ball, f) * source_fps       # meters per second
-contact = [f for f in frames
-           if world_z(ball, f) < 0.03 * scale and speed(f) < 0.30 * scale]
-width = max(3, round(5 * source_fps / 60) | 1)   # odd and >= 3, or no majority
+speed = lambda f: step_xy(ball, f) * source_fps  # meters per second
+contact = [
+    f for f in frames if world_z(ball, f) < 0.03 * scale and speed(f) < 0.30 * scale
+]
+width = max(3, round(5 * source_fps / 60) | 1)  # odd and >= 3, or no majority
 contact = majority_vote(contact, width)
 runs = consecutive(contact)
-finding("clip.foot_contact.plants", measured=len(runs), limit=1,
-        comparison="ge")
+finding("clip.foot_contact.plants", measured=len(runs), limit=1, comparison="ge")
 for run in runs:
-    lock_xy(ball, run, ramp_in=2, ramp_out=2)         # two bone analytic IK
+    lock_xy(ball, run, ramp_in=2, ramp_out=2)  # two bone analytic IK
 ```
 
 **The fps invariant** (requirement 3). `source_fps` is the clip's own rate,
@@ -1302,13 +1319,23 @@ Findings, not bare asserts, which would vanish under `python -O`.
 ```python
 scene.render.fps = animation.source_fps
 lo, hi = round(action.frame_range[0]), round(action.frame_range[1])
-for t in key_times(action):                  # float32 seconds, so a tolerance
-    finding("clip.fps_grid", measured=abs(t - round(t)), limit=1e-4,
-            comparison="le", unit="frame", subject=f"key at {t}",
-            measured_on=f"scene fps {scene.render.fps} = source_fps")
-finding("clip.fps_grid.range", comparison="eq", limit=0,
-        measured=int((scene.frame_start, scene.frame_end) != (lo, hi)),
-        subject=f"render range {lo}..{hi}")
+for t in key_times(action):  # float32 seconds, so a tolerance
+    finding(
+        "clip.fps_grid",
+        measured=abs(t - round(t)),
+        limit=1e-4,
+        comparison="le",
+        unit="frame",
+        subject=f"key at {t}",
+        measured_on=f"scene fps {scene.render.fps} = source_fps",
+    )
+finding(
+    "clip.fps_grid.range",
+    comparison="eq",
+    limit=0,
+    measured=int((scene.frame_start, scene.frame_end) != (lo, hi)),
+    subject=f"render range {lo}..{hi}",
+)
 ```
 
 **There is no divisibility rule between the two rates.** The invariant wanted
@@ -1324,10 +1351,10 @@ family carries a 100x node scale, so the transform comes first and every
 constant is world-space meters.
 
 ```python
-bm.transform(obj.matrix_world)                  # world space, once, up front
-bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)      # meters
+bm.transform(obj.matrix_world)  # world space, once, up front
+bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)  # meters
 drop_objects_not_in(profile.meshes)
-drop_islands_under(1e-6)                        # m3, about a 1 cm cube
+drop_islands_under(1e-6)  # m3, about a 1 cm cube
 fill_holes(bm)
 if spec.symmetry:
     bpy.ops.mesh.symmetrize(direction="POSITIVE_X", threshold=0.001)

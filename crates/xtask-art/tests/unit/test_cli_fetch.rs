@@ -21,7 +21,7 @@ use crate::stubs::{
     a_blender_stub, a_blender_stub_of, a_convention, a_profile, a_retarget_report, a_source_report,
     a_stub, as_findings, reporting, writes_a_report,
 };
-use crate::support::{BLENDER, EnvGuard, a_tree, edit_an_aim_row};
+use crate::support::{BLENDER, EnvGuard, a_tree, a_version_only_blender, edit_an_aim_row};
 
 const PRODUCT: &str = "c9ccc468-b96c-11e4-a802-0aaa78deedf9";
 
@@ -498,7 +498,10 @@ async fn a_run_with_nothing_to_fetch_never_asks_for_a_credential() {
     );
     let dir = a_repo(&library);
     let mut env = EnvGuard::new();
-    env.remove("MARROWFALL_MIXAMO_TOKEN");
+    env.remove("MARROWFALL_MIXAMO_TOKEN").set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
     fetch(dir.path(), &[], false).await.unwrap();
 }
@@ -856,7 +859,10 @@ async fn a_file_nobody_recorded_is_reported_and_left_where_it_is() {
     std::fs::create_dir_all(glb.parent().unwrap()).unwrap();
     std::fs::write(&glb, b"put here by hand").unwrap();
     let mut env = EnvGuard::new();
-    env.remove("MARROWFALL_MIXAMO_TOKEN");
+    env.remove("MARROWFALL_MIXAMO_TOKEN").set(
+        "MARROWFALL_BLENDER_BIN",
+        a_version_only_blender(dir.path()).to_str().unwrap(),
+    );
 
     // No token and no server: reaching either would fail this.
     fetch(dir.path(), &[], false).await.unwrap();

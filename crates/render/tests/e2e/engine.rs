@@ -37,16 +37,21 @@ pub fn godot_or_skip() -> Option<String> {
     None
 }
 
-/// Builds the shared library Godot loads.
+/// Builds the shared library Godot loads, once per test binary.
 ///
 /// Only a plain build writes it: see the gdext gotcha in this tier's own docs.
+/// Once, because these tests run in parallel and five cargo invocations would
+/// queue on the same build lock.
 pub fn build_extension(root: &Path) {
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--package", "render"])
-        .current_dir(root)
-        .status()
-        .expect("running cargo build --package render");
-    assert!(status.success(), "cargo build --package render failed");
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    BUILT.call_once(|| {
+        let status = Command::new(env!("CARGO"))
+            .args(["build", "--package", "render"])
+            .current_dir(root)
+            .status()
+            .expect("running cargo build --package render");
+        assert!(status.success(), "cargo build --package render failed");
+    });
 }
 
 /// Imports every asset in `project`, which is what writes the `.import`
