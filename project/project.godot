@@ -53,8 +53,9 @@ move_right={
 
 [rendering]
 
-; Pin the desktop texture family on every host. Godot defaults these by CPU
-; architecture, so an ARM machine would otherwise import an extra ASTC copy
-; and rewrite every committed sidecar.
+; The desktop texture family, which is what ships. These settings only ever
+; ADD a format: Godot imports the host's preferred one whatever they say, and
+; that is ETC2/ASTC on any ARM machine except a Mac. So the sidecars a
+; checkout carries are the ones an x86 host writes, and the e2e gate runs
+; there.
 textures/vram_compression/import_s3tc_bptc=true
-textures/vram_compression/import_etc2_astc=false
