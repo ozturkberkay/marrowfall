@@ -56,7 +56,7 @@ gltf = { version = "1.4.1", default-features = false, features = ["names", "util
 # Self-intersection counting: the broad-phase `Bvh` plus triangle queries.
 # `spade` is Delaunay triangulation for convex decomposition, which no gate
 # does, so the default features are off and only `dim3` + `f32` + `std` stay.
-parry3d = { version = "0.30.2", default-features = false, features = [
+parry3d = { version = "0.31.1", default-features = false, features = [
     "alloc",
     "required-features",
     "std",
